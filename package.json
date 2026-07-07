@@ -53,8 +53,8 @@
     "@ai-sdk/openai": "^4.0.8",
     "@ai-sdk/xai": "^4.0.7",
     "ai": "^7.0.16",
-    "commander": "^13.1.0",
-    "gpt-tokenizer": "^2.9.0"
+    "commander": "15.0.0",
+    "gpt-tokenizer": "3.4.0"
   },
   "homepage": "https://github.com/naoeosavio/AI-scripts#readme",
   "devDependencies": {

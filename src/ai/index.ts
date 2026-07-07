@@ -1,6 +1,8 @@
 import { generateText } from 'ai';
 import { getModel, MODELS, type ResolvedModelSpec, resolveModelSpec } from './models';
 
+(globalThis as any).AI_SDK_LOG_WARNINGS = false;
+
 export type { ResolvedModelSpec };
 export { MODELS, resolveModelSpec };
 

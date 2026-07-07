@@ -261,24 +261,10 @@ async function runScripts(scripts: string[], yes: boolean, execEnabled: boolean,
   return results.join('\n\n');
 }
 
-// ── Stdout suppression ─────────────────────────────────────────────────────────
-/** Suppress process.stdout for the duration of an async operation. */
-async function suppressStdout<T>(fn: () => Promise<T>): Promise<T> {
-  const stdout = process.stdout;
-  const original = stdout.write;
-  stdout.write = () => true; // discard all writes, report success
-  try {
-    return await fn();
-  } finally {
-    stdout.write = original;
-  }
-}
-
 async function tellSilently(ai: AskInstance, message: string, options: PromptOptions = {}): Promise<string> {
-  const ask = (input: string, opts: { system: string; stream: false }) => ai.ask(input, opts) as Promise<string>;
   process.stderr.write('\x1b[2mThinking...\x1b[0m');
   try {
-    return await suppressStdout(() => ask(message, { system: getSystemPrompt(options), stream: false }));
+    return (await ai.ask(message, { system: getSystemPrompt(options), stream: false })) as string;
   } finally {
     process.stderr.write('\r\x1b[K');
   }
