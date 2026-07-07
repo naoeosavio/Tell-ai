@@ -73,7 +73,7 @@ async function runTell(args, response, opts = {}) {
 
   const moduleObj = { exports: {} };
   function mockRequire(name) {
-    if (name === './ai/index') {
+    if (name === './ai/index' || name === './ai') {
       return {
         MODELS: { d: 'deepseek:deepseek-v4-pro:medium', g: 'openai:gpt-5.5:medium' },
         resolveModelSpec: (spec) => {

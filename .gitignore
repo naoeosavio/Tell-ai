@@ -6,6 +6,7 @@
 !examples/
 !src/*
 !src/ai/*
+!src/**/*
 !src/
 !test/*
 !test/

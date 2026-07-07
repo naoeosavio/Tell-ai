@@ -8,6 +8,7 @@ import { createFireworks } from '@ai-sdk/fireworks';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createXai } from '@ai-sdk/xai';
+import { API_KEYS, API_URLS, type ApiKeys } from '../config/env';
 
 export type ThinkingLevel = 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'auto';
 
@@ -107,17 +108,15 @@ const SUPPORTED_VENDORS = new Set([
   'deepseek',
 ]);
 
-const API_KEY_ENV_VARS: Record<string, string[]> = {
-  openai: ['OPENAI_API_KEY'],
-  anthropic: ['ANTHROPIC_API_KEY'],
-  google: ['GOOGLE_API_KEY', 'GEMINI_API_KEY'],
-  openrouter: ['OPENROUTER_API_KEY'],
-  xai: ['XAI_API_KEY'],
-  cerebras: ['CEREBRAS_API_KEY'],
-  fireworks: ['FIREWORKS_API_KEY'],
-  deepseek: ['DEEPSEEK_API_KEY'],
-  vast: [],
-  local: [],
+const VENDOR_KEY: Record<string, keyof ApiKeys> = {
+  openai: 'openai',
+  anthropic: 'anthropic',
+  google: 'google',
+  xai: 'xai',
+  deepseek: 'deepseek',
+  fireworks: 'fireworks',
+  cerebras: 'cerebras',
+  openrouter: 'openrouter',
 };
 
 const CEREBRAS_MODELS = new Set([
@@ -131,11 +130,8 @@ const CEREBRAS_MODELS = new Set([
 ]);
 
 async function getApiKey(vendor: string): Promise<string | undefined> {
-  const envCandidates = API_KEY_ENV_VARS[vendor] ?? [`${vendor.toUpperCase()}_API_KEY`];
-  for (const envVar of envCandidates) {
-    const value = process.env[envVar]?.trim();
-    if (value) return value;
-  }
+  const keyName = VENDOR_KEY[vendor];
+  if (keyName && API_KEYS[keyName]) return API_KEYS[keyName];
   try {
     const token = (await readFile(join(homedir(), '.config', `${vendor}.token`), 'utf8')).trim();
     if (token) return token;
@@ -167,11 +163,7 @@ const _localProviders: Record<string, any> = {};
 async function getOpenrouterProvider(): Promise<any> {
   if (_openrouter) return _openrouter;
   const apiKey = await getApiKey('openrouter');
-  _openrouter = createOpenAI({
-    apiKey,
-    baseURL: 'https://openrouter.ai/api/v1',
-    name: 'openrouter',
-  });
+  _openrouter = createOpenAI({ apiKey, baseURL: API_URLS.openrouter, name: 'openrouter' });
   return _openrouter;
 }
 
@@ -253,20 +245,16 @@ export function resolveModelSpec(spec: string): ResolvedModelSpec {
   return parseModelSpecRaw(spec);
 }
 
-async function getVastProvider(baseURLEnvVar: string): Promise<any> {
-  const key = baseURLEnvVar;
-  if (_vastProviders[key]) return _vastProviders[key];
-  const baseURL = process.env[baseURLEnvVar] ?? '';
-  _vastProviders[key] = createOpenAI({ apiKey: 'not-needed', baseURL, name: 'vast' });
-  return _vastProviders[key];
+async function getVastProvider(baseURL: string): Promise<any> {
+  if (_vastProviders[baseURL]) return _vastProviders[baseURL];
+  _vastProviders[baseURL] = createOpenAI({ apiKey: 'not-needed', baseURL, name: 'vast' });
+  return _vastProviders[baseURL];
 }
 
-async function getLocalProvider(baseURLEnvVar: string): Promise<any> {
-  const key = baseURLEnvVar;
-  if (_localProviders[key]) return _localProviders[key];
-  const baseURL = process.env[baseURLEnvVar] ?? '';
-  _localProviders[key] = createOpenAI({ apiKey: 'not-needed', baseURL, name: 'local' });
-  return _localProviders[key];
+async function getLocalProvider(baseURL: string): Promise<any> {
+  if (_localProviders[baseURL]) return _localProviders[baseURL];
+  _localProviders[baseURL] = createOpenAI({ apiKey: 'not-needed', baseURL, name: 'local' });
+  return _localProviders[baseURL];
 }
 
 async function handleCerebras(model: string, reasoning: string, fast: boolean): Promise<ModelHandle> {
@@ -329,23 +317,13 @@ async function handleOpenrouter(model: string, reasoning: string, fast: boolean)
   const provider = await getOpenrouterProvider();
   return { model: provider(model), reasoning, fast };
 }
-
 async function handleVast(model: string, reasoning: string, fast: boolean): Promise<ModelHandle> {
-  const modelName = model.toLowerCase();
-  const envVar = modelName.includes('qwen3.6')
-    ? 'QWEN_BASE_URL'
-    : modelName.includes('gemma-4')
-      ? 'VAST_GEMMA_BASE_URL'
-      : 'VAST_BASE_URL';
-  const provider = await getVastProvider(envVar);
+  const provider = await getVastProvider(API_URLS.vast);
   return { model: provider(model), reasoning, fast };
 }
 
 async function handleLocal(model: string, reasoning: string, fast: boolean): Promise<ModelHandle> {
-  const modelName = model.toLowerCase();
-  const envVar =
-    modelName.includes('gemma4') || modelName.includes('gemma-4') ? 'GEMMA_CLUSTER_BASE_URL' : 'LOCAL_OPENAI_BASE_URL';
-  const provider = await getLocalProvider(envVar);
+  const provider = await getLocalProvider(API_URLS.local);
   return { model: provider(model), reasoning, fast };
 }
 
