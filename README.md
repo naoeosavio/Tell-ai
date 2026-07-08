@@ -62,14 +62,37 @@ Tell logs conversations under `~/.ai/tell_history`.
 API Keys
 --------
 
-API keys go in `~/.config/<vendor>.token`, for example:
+Set environment variables (preferred) or use `~/.config/<vendor>.token` files as fallback.
+
+```bash
+export OPENAI_API_KEY="sk-..."
+export ANTHROPIC_API_KEY="sk-ant-..."
+export GOOGLE_API_KEY="..."        # or GEMINI_API_KEY
+export XAI_API_KEY="..."
+export DEEPSEEK_API_KEY="..."
+export FIREWORKS_API_KEY="..."
+export CEREBRAS_API_KEY="..."
+export OPENROUTER_API_KEY="..."
+```
+
+Token files (fallback):
 
 ```bash
 ~/.config/openai.token
 ~/.config/anthropic.token
 ~/.config/google.token
 ~/.config/xai.token
+~/.config/deepseek.token
 ~/.config/fireworks.token
+~/.config/cerebras.token
+~/.config/openrouter.token
+```
+
+Self-hosted endpoints (optional):
+
+```bash
+export VAST_BASE_URL="http://..."
+export LOCAL_OPENAI_BASE_URL="http://localhost:8080/v1"
 ```
 
 Security Tests
