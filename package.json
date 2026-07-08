@@ -18,7 +18,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/naoeosavio/AI-scripts.git"
+    "url": "git+https://github.com/naoeosavio/Tell-ai.git"
   },
   "keywords": [
     "tell",
@@ -40,9 +40,9 @@
     "gemini"
   ],
   "author": "it is not savio",
-  "license": "MIT",
+  "license": "GPL-3.0",
   "bugs": {
-    "url": "https://github.com/naoeosavio/AI-scripts/issues"
+    "url": "https://github.com/naoeosavio/Tell-ai/issues"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.8",
@@ -56,7 +56,7 @@
     "commander": "15.0.0",
     "gpt-tokenizer": "3.4.0"
   },
-  "homepage": "https://github.com/naoeosavio/AI-scripts#readme",
+  "homepage": "https://github.com/naoeosavio/Tell-ai#readme",
   "devDependencies": {
     "@biomejs/biome": "2.2.6",
     "@types/node": "26.1.0",

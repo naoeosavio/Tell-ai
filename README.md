@@ -53,8 +53,8 @@ tell --chain "find out why the build is failing and fix it"
 Include piped input with a prompt:
 
 ```bash
-npm run build 2>&1 | tell -i "what should I fix first?"
-git diff | tell --input "review this change"
+npm run build 2>&1 | tell --chain  -i "what should I fix first?"
+git diff --staged | tell --input "review this change"
 ```
 
 Tell logs conversations under `~/.ai/tell_history`.
@@ -84,4 +84,6 @@ npm run test:security
 License
 -------
 
-MIT2
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+
+This project is licensed under the **GNU General Public License v3.0** - see the [LICENSE](LICENSE) file for more details.
