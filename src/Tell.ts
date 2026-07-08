@@ -426,11 +426,19 @@ async function runTell(model: string, prompt: string, opts: CliOptions): Promise
     const log = logFile();
     appendLog(log, `Model: ${label}\nUser:\n${prompt}`);
 
+  try {
     const ai = await createAskAI(model);
     await runResponseLoop(ai, state, log);
-    if (opts.context) writeContext(context, previousContext, conversationText(state));
   } catch (error) {
     console.error('\x1b[31m%s\x1b[0m', formatModelError(error));
+    process.exitCode = 1;
+    return;
+  }
+
+  try {
+    if (opts.context) writeContext(context, previousContext, conversationText(state));
+  } catch (error) {
+    console.error('\x1b[31mFailed to write context: %s\x1b[0m', error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
   }
 }
