@@ -193,6 +193,10 @@ function stripMarkdownCodeBlocks(text: string): string {
   return text.replace(/```[\s\S]*?```/g, '');
 }
 
+function stripThinkTags(text: string): string {
+  return text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+}
+
 function extractRuns(text: string): { scripts: string[]; visible: string } {
   const sanitized = stripMarkdownCodeBlocks(text);
   return {
@@ -362,6 +366,7 @@ async function runResponseLoop(ai: AskInstance, state: ConversationState, log: s
 
   for (;;) {
     rememberAssistant(state, log, response);
+    response = stripThinkTags(response);
     const { scripts, visible } = extractRuns(response);
     if (scripts.length === 0) {
       if (visible) console.log(visible);

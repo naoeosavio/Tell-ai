@@ -319,12 +319,12 @@ async function handleOpenrouter(model: string, reasoning: string, fast: boolean)
 }
 async function handleVast(model: string, reasoning: string, fast: boolean): Promise<ModelHandle> {
   const provider = await getVastProvider(API_URLS.vast);
-  return { model: provider(model), reasoning, fast };
+  return { model: provider.chat(model), reasoning, fast };
 }
 
 async function handleLocal(model: string, reasoning: string, fast: boolean): Promise<ModelHandle> {
   const provider = await getLocalProvider(API_URLS.local);
-  return { model: provider(model), reasoning, fast };
+  return { model: provider.chat(model), reasoning, fast };
 }
 
 const VENDOR_HANDLERS: Record<string, (m: string, r: string, f: boolean) => Promise<ModelHandle>> = {
