@@ -1,0 +1,66 @@
+{
+  "name": "tell-ai",
+  "version": "0.3.2",
+  "description": "One-shot terminal assistant",
+  "bin": {
+    "tell": "./dist/Tell.js"
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsup && chmod +x dist/*.js",
+    "prepare": "npm run build",
+    "test": "npm run test:security",
+    "test:security": "npm run build && node test/test-tell-security.js",
+    "lint": "tsc",
+    "format": "biome check --write src",
+    "check:format": "biome check src",
+    "ci": "npm run lint && npm run check:format && npm run test && npm run build",
+    "prepublish": "npm run ci"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/naoeosavio/AI-scripts.git"
+  },
+  "keywords": [
+    "tell",
+    "shell-ai",
+    "terminal-ai",
+    "cli-ai",
+    "code-completion",
+    "code-suggestions",
+    "shell",
+    "ai",
+    "cli",
+    "cli-tools",
+    "cli-suggestions",
+    "one-shot",
+    "command-execution",
+    "developer-tools",
+    "openai",
+    "anthropic",
+    "gemini"
+  ],
+  "author": "it is not savio",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/naoeosavio/AI-scripts/issues"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.8",
+    "@ai-sdk/cerebras": "^3.0.5",
+    "@ai-sdk/deepseek": "^3.0.5",
+    "@ai-sdk/fireworks": "^3.0.6",
+    "@ai-sdk/google": "^4.0.8",
+    "@ai-sdk/openai": "^4.0.8",
+    "@ai-sdk/xai": "^4.0.7",
+    "ai": "^7.0.16",
+    "commander": "^13.1.0",
+    "gpt-tokenizer": "^2.9.0"
+  },
+  "homepage": "https://github.com/naoeosavio/AI-scripts#readme",
+  "devDependencies": {
+    "@biomejs/biome": "2.2.6",
+    "@types/node": "26.1.0",
+    "tsup": "8.5.1",
+    "typescript": "^5.8.3"
+  }
+}
