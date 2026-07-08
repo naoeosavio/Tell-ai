@@ -41,8 +41,12 @@ type ConversationState = {
 
 type PromptOptions = { chain?: boolean };
 
+const createdDirs = new Set<string>();
+
 function ensureDir(dir: string): void {
+  if (createdDirs.has(dir)) return;
   fs.mkdirSync(dir, { recursive: true });
+  createdDirs.add(dir);
 }
 
 function modelLabel(model: string): string {
@@ -161,7 +165,8 @@ function logFile(): string {
 
 function contextFile(model: string): string {
   const dir = path.join(os.homedir(), '.ai', 'tell_context');
-  const hash = createHash('sha256').update(`${process.cwd()}\n${model}`).digest('hex');
+  const label = modelLabel(model);
+  const hash = createHash('sha256').update(`${process.cwd()}\n${label}`).digest('hex');
   return path.join(dir, `${hash}.txt`);
 }
 
