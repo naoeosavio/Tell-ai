@@ -240,10 +240,19 @@ async function confirmCommand(script: string, yes: boolean): Promise<boolean> {
   const label = highRisk ? 'High-risk command requested' : 'Command requested';
   process.stderr.write(`${label}:\n${script}\n`);
   return new Promise((resolve) => {
-    rl.question('\x1b[31mExecute this command? [y/N] \x1b[0m', (answer) => {
+    let settled = false;
+    const done = (value: boolean) => {
+      if (settled) return;
+      settled = true;
       rl.close();
-      const normalized = answer.trim().toUpperCase();
-      resolve(normalized === 'YES' || normalized === 'Y');
+      resolve(value);
+    };
+
+    const timer = setTimeout(() => done(false), EXEC_TIMEOUT);
+
+    rl.question('\x1b[31mExecute this command? [y/N] \x1b[0m', (answer) => {
+      clearTimeout(timer);
+      done(answer.trim().toUpperCase() === 'YES' || answer.trim().toUpperCase() === 'Y');
     });
   });
 }
@@ -373,21 +382,22 @@ async function runResponseLoop(ai: AskInstance, state: ConversationState, log: s
     rememberAssistant(state, log, response);
     response = stripThinkTags(response);
     const { scripts, visible } = extractRuns(response);
-    if (scripts.length === 0) {
-      if (visible) console.log(visible);
-      break;
-    }
-    if (state.chainLimitReached) {
-      process.stderr.write(
-        `\x1b[33mChain limit reached (${MAX_CHAIN_STEPS}); ignoring further requested commands.\x1b[0m\n`,
-      );
+    if (scripts.length === 0 || state.chainLimitReached) {
+      if (state.chainLimitReached) {
+        process.stderr.write(
+          `\x1b[33mChain limit reached (${MAX_CHAIN_STEPS}); ignoring further requested commands.\x1b[0m\n`,
+        );
+      }
       if (visible) console.log(visible);
       break;
     }
 
     const result = await runScripts(scripts, state.yes, state.execEnabled, log);
     rememberCommandResult(state, result);
-    if (!state.autoContinue) break;
+    if (!state.autoContinue) {
+      if (visible) console.log(visible);
+      break;
+    }
 
     rememberCommandRound(state);
     const feedback = `${result}\n\n${continuationInstruction(state)}`;
