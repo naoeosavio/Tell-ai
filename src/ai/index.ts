@@ -12,6 +12,7 @@ export interface AskInstance {
 
 export async function createAskAI(modelSpec: string): Promise<AskInstance> {
   const handle = await getModel(modelSpec);
+  const reasoning = handle.fast ? 'none' : handle.reasoning;
 
   return {
     ask: async (message: string, options: { system: string; stream: false }) => {
@@ -19,7 +20,7 @@ export async function createAskAI(modelSpec: string): Promise<AskInstance> {
         model: handle.model,
         instructions: options.system,
         prompt: message,
-        reasoning: handle.reasoning as any,
+        reasoning: reasoning as any,
       });
       return text;
     },

@@ -25,12 +25,10 @@ type CliOptions = {
   input?: boolean;
 };
 
-type ChatMessage = { role: 'user' | 'assistant'; content: string };
 type ParsedInput = { model: string; parts: string[]; readStdin: boolean };
 
 type ConversationState = {
   firstPrompt: string;
-  messages: ChatMessage[];
   timeline: string[];
   commandRounds: number;
   chainLimitReached: boolean;
@@ -357,7 +355,6 @@ function formatMissingPromptError(program: Command): string {
 
 function rememberAssistant(state: ConversationState, log: string, response: string): void {
   appendLog(log, `Assistant:\n${response}`);
-  state.messages.push({ role: 'assistant', content: response });
   state.timeline.push(`Assistant:\n${response}`);
 }
 
@@ -401,30 +398,27 @@ async function runResponseLoop(ai: AskInstance, state: ConversationState, log: s
 
     rememberCommandRound(state);
     const feedback = `${result}\n\n${continuationInstruction(state)}`;
-    state.messages.push({ role: 'user', content: feedback });
     response = await tellSilently(ai, feedback, { chain: true });
   }
 }
 
 async function runTell(model: string, prompt: string, opts: CliOptions): Promise<void> {
-  try {
-    const label = modelLabel(model);
-    const context = contextFile(model);
-    const previousContext = opts.context ? readText(context) : '';
-    const firstPrompt = previousContext ? `Previous context:\n${previousContext}\n\nUser:\n${prompt}` : prompt;
-    const state: ConversationState = {
-      firstPrompt,
-      messages: [{ role: 'user', content: firstPrompt }],
-      timeline: [`User:\n${prompt}`],
-      commandRounds: 0,
-      chainLimitReached: false,
-      autoContinue: Boolean(opts.chain),
-      execEnabled: opts.exec !== false,
-      yes: Boolean(opts.yes),
-    };
-    if (!opts.context) fs.rmSync(context, { force: true });
-    const log = logFile();
-    appendLog(log, `Model: ${label}\nUser:\n${prompt}`);
+  const label = modelLabel(model);
+  const context = contextFile(model);
+  const previousContext = opts.context ? readText(context) : '';
+  const firstPrompt = previousContext ? `Previous context:\n${previousContext}\n\nUser:\n${prompt}` : prompt;
+  const state: ConversationState = {
+    firstPrompt,
+    timeline: [`User:\n${prompt}`],
+    commandRounds: 0,
+    chainLimitReached: false,
+    autoContinue: Boolean(opts.chain),
+    execEnabled: opts.exec !== false,
+    yes: Boolean(opts.yes),
+  };
+  if (!opts.context) fs.rmSync(context, { force: true });
+  const log = logFile();
+  appendLog(log, `Model: ${label}\nUser:\n${prompt}`);
 
   try {
     const ai = await createAskAI(model);
