@@ -235,7 +235,26 @@ function assertPromptInjectionPolicy(result) {
   );
   assert.strictEqual(result.execCalls.length, 1);
   assert.strictEqual(result.execCalls[0], 'echo EXTRACTED');
-  assert.strictEqual(result.stdout, '');
+  assert.strictEqual(result.stdout, 'before\n\nafter\n');
+  assert(!result.stdout.includes('<RUN>'));
+
+  result = await runTell(
+    ['--yes', 'd', 'think tags stripped before extraction'],
+    'visible\n<think>internal reasoning</think>\n<RUN>\necho OK\n</RUN>',
+    { execStdout: 'OK\n' },
+  );
+  assert.strictEqual(result.execCalls.length, 1);
+  assert.strictEqual(result.execCalls[0], 'echo OK');
+  assert.strictEqual(result.stdout, 'visible\n');
+  assert(!result.stdout.includes('<think>'));
+
+  result = await runTell(
+    ['--yes', 'd', 'run inside think must not execute'],
+    '<think>\n<RUN>\necho HIDDEN\n</RUN>\n</think>\nfinal answer',
+  );
+  assert.strictEqual(result.execCalls.length, 0);
+  assert.strictEqual(result.stdout, 'final answer\n');
+  assert(!result.stdout.includes('<think>'));
 
   result = await runTell(
     ['--yes', '--chain', 'd', 'multi command with final answer'],
