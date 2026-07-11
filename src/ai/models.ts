@@ -52,12 +52,12 @@ export const MODELS: Record<string, string> = {
   'm++': 'openai:gpt-5.6-luna:max',
   M: 'openai:gpt-5.6-luna:high',
 
-  's--': 'anthropic:claude-sonnet-4-6:none',
-  's-': 'anthropic:claude-sonnet-4-6:low',
-  s: 'anthropic:claude-sonnet-4-6:medium',
-  's+': 'anthropic:claude-sonnet-4-6:high',
-  's++': 'anthropic:claude-sonnet-4-6:max',
-  S: 'anthropic:claude-sonnet-4-6:high',
+  's--': 'anthropic:claude-sonnet-5:none',
+  's-': 'anthropic:claude-sonnet-5:low',
+  s: 'anthropic:claude-sonnet-5:medium',
+  's+': 'anthropic:claude-sonnet-5:high',
+  's++': 'anthropic:claude-sonnet-5:max',
+  S: 'anthropic:claude-sonnet-5:high',
 
   'o--': 'anthropic:claude-opus-4-8:none',
   'o-': 'anthropic:claude-opus-4-8:low',
@@ -82,9 +82,9 @@ export const MODELS: Record<string, string> = {
   'l+': 'google:gemini-3.1-flash-lite-preview:high',
   L: 'google:gemini-3.1-flash-lite-preview:high',
 
-  'x-': 'xai:grok-4-0709:low',
-  x: 'xai:grok-4-0709:medium',
-  X: 'xai:grok-4-0709:high',
+  'x-': 'xai:grok-4.5:low',
+  x: 'xai:grok-4.5:medium',
+  X: 'xai:grok-4.5:high',
 
   q: 'local:/root/model:none',
 
