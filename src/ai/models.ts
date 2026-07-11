@@ -26,16 +26,31 @@ export interface ModelHandle {
 }
 
 export const MODELS: Record<string, string> = {
-  'g--': 'openai:gpt-5.5:none',
-  'g-': 'openai:gpt-5.5:low',
-  g: 'openai:gpt-5.5:medium',
-  'g+': 'openai:gpt-5.5:xhigh',
-  G: 'openai:gpt-5.5:xhigh',
+  'g--': 'openai:gpt-5.6-sol:none',
+  'g-': 'openai:gpt-5.6-sol:low',
+  g: 'openai:gpt-5.6-sol:medium',
+  'g+': 'openai:gpt-5.6-sol:high',
+  'g++': 'openai:gpt-5.6-sol:max',
+  G: 'openai:gpt-5.6-sol:high',
 
-  p: 'openai:gpt-5.5-pro:medium',
-  'p+': 'openai:gpt-5.5-pro:high',
-  'p++': 'openai:gpt-5.5-pro:xhigh',
-  P: 'openai:gpt-5.5-pro:xhigh',
+  p: 'openai:gpt-5.6-sol-pro:medium',
+  'p+': 'openai:gpt-5.6-sol-pro:high',
+  'p++': 'openai:gpt-5.6-sol-pro:max',
+  P: 'openai:gpt-5.6-sol-pro:high',
+
+  't--': 'openai:gpt-5.6-terra:none',
+  't-': 'openai:gpt-5.6-terra:low',
+  t: 'openai:gpt-5.6-terra:medium',
+  't+': 'openai:gpt-5.6-terra:high',
+  't++': 'openai:gpt-5.6-terra:max',
+  T: 'openai:gpt-5.6-terra:high',
+
+  'm--': 'openai:gpt-5.6-luna:none',
+  'm-': 'openai:gpt-5.6-luna:low',
+  m: 'openai:gpt-5.6-luna:medium',
+  'm+': 'openai:gpt-5.6-luna:high',
+  'm++': 'openai:gpt-5.6-luna:max',
+  M: 'openai:gpt-5.6-luna:high',
 
   's--': 'anthropic:claude-sonnet-4-6:none',
   's-': 'anthropic:claude-sonnet-4-6:low',
