@@ -7,7 +7,11 @@ const ts = require('typescript');
 const util = require('node:util');
 const vm = require('node:vm');
 
-const tellSource = ts.transpileModule(fs.readFileSync(path.join(__dirname, '..', 'src', 'Tell.ts'), 'utf8'), {
+const tellSource = ts.transpileModule(fs.readFileSync(path.join(__dirname, '..', 'src', 'tell.ts'), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+}).outputText;
+
+const cliSource = ts.transpileModule(fs.readFileSync(path.join(__dirname, '..', 'src', 'cli.ts'), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
 }).outputText;
 
@@ -55,7 +59,7 @@ async function runTell(args, response, opts = {}) {
     stderr += `${util.format(...items)}\n`;
   };
   const fakeProcess = {
-    argv: ['node', 'Tell.js', ...args],
+    argv: ['node', 'cli.js', ...args],
     env: { ...process.env, HOME: home },
     stdin: fakeStdin(opts.stdin || ''),
     stdout: { isTTY: false, write: writeStdout },
@@ -71,7 +75,8 @@ async function runTell(args, response, opts = {}) {
     return { stdout: opts.execStdout || '', stderr: opts.execStderr || '' };
   };
 
-  const moduleObj = { exports: {} };
+  const cliModuleObj = { exports: {} };
+
   function mockRequire(name) {
     if (name === './ai/index' || name === './ai') {
       return {
@@ -90,11 +95,29 @@ async function runTell(args, response, opts = {}) {
         }),
       };
     }
+    if (name === './tell') {
+      const tellMod = { exports: {} };
+      vm.runInNewContext(
+        tellSource,
+        {
+          Buffer,
+          process: fakeProcess,
+          setTimeout,
+          clearTimeout,
+          exports: tellMod.exports,
+          module: tellMod,
+          console: { log, error },
+          require: mockRequire,
+        },
+        { filename: 'tell.js' },
+      );
+      return tellMod.exports;
+    }
     if (name === 'child_process' || name === 'node:child_process') return { exec: mockExec };
     if (name === 'os' || name === 'node:os') return { ...require('node:os'), homedir: () => home };
     return require(name);
   }
-  mockRequire.main = moduleObj;
+  mockRequire.main = cliModuleObj;
 
   const context = {
     Buffer,
@@ -102,13 +125,13 @@ async function runTell(args, response, opts = {}) {
     setTimeout,
     clearTimeout,
     exports: {},
-    module: moduleObj,
+    module: cliModuleObj,
     console: { log, error },
     require: mockRequire,
   };
 
   try {
-    vm.runInNewContext(tellSource, context, { filename: 'Tell.js' });
+    vm.runInNewContext(cliSource, context, { filename: 'cli.js' });
     await waitForMain();
     return { stdout, stderr, execCalls, tellMessages, tellCalls, exitCode: fakeProcess.exitCode, dir, home, work };
   } finally {

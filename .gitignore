@@ -18,5 +18,6 @@
 !LICENSE*
 !.gitignore
 !tsconfig*
+!tsup.config*
 !CHANGELOG*
 !*.sh
