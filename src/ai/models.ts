@@ -78,6 +78,11 @@ export const MODELS: Record<string, string> = {
   'i+': 'google:gemini-3.1-pro-preview:high',
   I: 'google:gemini-3.1-pro-preview:high',
 
+  'j-': 'google:gemini-3.1-flash-lite:low',
+  j: 'google:gemini-3.1-flash-lite:medium',
+  'j+': 'google:gemini-3.1-flash-lite:high',
+  J: 'google:gemini-3.1-flash-lite:high',
+
   'l-': 'google:gemini-3.5-flash:low',
   l: 'google:gemini-3.5-flash:medium',
   'l+': 'google:gemini-3.5-flash:high',
@@ -100,6 +105,13 @@ export const MODELS: Record<string, string> = {
   df: 'deepseek:deepseek-v4-flash:medium',
   'df+': 'deepseek:deepseek-v4-flash:high',
   DF: 'deepseek:deepseek-v4-flash:high',
+
+  'z--': 'fireworks:glm-5p2:none',
+  'z-': 'fireworks:glm-5p2:low',
+  z: 'fireworks:glm-5p2:medium',
+  'z+': 'fireworks:glm-5p2:high',
+  'z++': 'fireworks:glm-5p2:max',
+  Z: 'fireworks:glm-5p2:high',
 };
 
 const AI_SDK_THINKING: Record<string, string> = {
