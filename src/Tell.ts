@@ -38,6 +38,8 @@ type ConversationState = {
 };
 
 type PromptOptions = { chain?: boolean };
+type CommandResult = { output: string; exitCode: number };
+type ScriptsResult = { text: string; failed: boolean };
 
 const createdDirs = new Set<string>();
 
@@ -110,7 +112,7 @@ Do not add any information beyond what has been explicitly asked.
 `.trim();
 }
 
-async function executeCommand(script: string): Promise<string> {
+async function executeCommand(script: string): Promise<CommandResult> {
   try {
     const { stdout, stderr } = await execAsync(script, {
       cwd: process.cwd(),
@@ -118,19 +120,21 @@ async function executeCommand(script: string): Promise<string> {
       shell: '/bin/bash',
       timeout: EXEC_TIMEOUT,
     });
-    return stdout + stderr;
+    return { output: stdout + stderr, exitCode: 0 };
   } catch (error) {
     const err = error as any;
+    const exitCode = typeof err.code === 'number' ? err.code : 1;
     if (err.killed && err.signal === 'SIGTERM') {
-      return `Command timed out after ${EXEC_TIMEOUT / 1000}s:\n${script}`;
+      return { output: `Command timed out after ${EXEC_TIMEOUT / 1000}s:\n${script}`, exitCode: 124 };
     }
-    return [
+    const output = [
       typeof err.stdout === 'string' ? err.stdout : '',
       typeof err.stderr === 'string' ? err.stderr : '',
       error instanceof Error ? error.message : String(error),
     ]
       .filter(Boolean)
       .join('\n');
+    return { output, exitCode };
   }
 }
 
@@ -255,18 +259,24 @@ async function confirmCommand(script: string, yes: boolean): Promise<boolean> {
   });
 }
 
-async function runScripts(scripts: string[], yes: boolean, execEnabled: boolean, log: string): Promise<string> {
+async function runScripts(scripts: string[], yes: boolean, execEnabled: boolean, log: string): Promise<ScriptsResult> {
   const results: string[] = [];
+  let failed = false;
   for (const script of scripts) {
     let result: string;
     if (!execEnabled) {
       process.stderr.write('\x1b[33mCommand execution disabled (--no-exec).\x1b[0m\n');
       result = `Command execution disabled — not run:\n${script}`;
     } else if (await confirmCommand(script, yes)) {
-      const output = await executeCommand(script);
+      const { output, exitCode } = await executeCommand(script);
       const text = output.trim();
       if (text) process.stderr.write(process.stderr.isTTY ? `\x1b[2m${text}\x1b[0m\n` : `${text}\n`);
-      result = `Executed command:\n${script}\nOutput:\n${output}`;
+      if (exitCode > 0) {
+        failed = true;
+        result = `Command failed (exit code ${exitCode}):\n${script}\nOutput:\n${output}`;
+      } else {
+        result = `Executed command:\n${script}\nOutput:\n${output}`;
+      }
     } else {
       process.stderr.write('\x1b[33mCommand skipped by user.\x1b[0m\n');
       result = `Skipped by user:\n${script}`;
@@ -274,7 +284,7 @@ async function runScripts(scripts: string[], yes: boolean, execEnabled: boolean,
     appendLog(log, result);
     results.push(result);
   }
-  return results.join('\n\n');
+  return { text: results.join('\n\n'), failed };
 }
 
 async function tellSilently(ai: AskInstance, message: string, options: PromptOptions = {}): Promise<string> {
@@ -389,15 +399,18 @@ async function runResponseLoop(ai: AskInstance, state: ConversationState, log: s
       break;
     }
 
-    const result = await runScripts(scripts, state.yes, state.execEnabled, log);
-    rememberCommandResult(state, result);
+    const { text: resultText, failed } = await runScripts(scripts, state.yes, state.execEnabled, log);
+    rememberCommandResult(state, resultText);
     if (!state.autoContinue) {
       if (visible) console.log(visible);
       break;
     }
 
     rememberCommandRound(state);
-    const feedback = `${result}\n\n${continuationInstruction(state)}`;
+    let feedback = `${resultText}\n\n${continuationInstruction(state)}`;
+    if (failed) {
+      feedback = `The command above FAILED. Analyze the error output and try a corrected approach.\n\n${feedback}`;
+    }
     response = await tellSilently(ai, feedback, { chain: true });
   }
 }
