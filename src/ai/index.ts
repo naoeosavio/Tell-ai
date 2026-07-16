@@ -16,12 +16,17 @@ export async function createAskAI(modelSpec: string): Promise<AskInstance> {
 
   return {
     ask: async (message: string, options: { system: string; stream: false }) => {
-      const { text } = await generateText({
+      const genOptions: any = {
         model: handle.model,
         instructions: options.system,
         prompt: message,
-        reasoning: reasoning as any,
-      });
+      };
+      if (handle.reasoningEffort) {
+        genOptions.reasoning_effort = handle.reasoningEffort;
+      } else {
+        genOptions.reasoning = reasoning;
+      }
+      const { text } = await generateText(genOptions);
       return text;
     },
   };

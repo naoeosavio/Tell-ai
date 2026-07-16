@@ -6,6 +6,7 @@ export type ApiKeys = {
   deepseek: string;
   fireworks: string;
   cerebras: string;
+  moonshotai: string;
   openrouter: string;
 };
 
@@ -35,6 +36,7 @@ export const API_KEYS: ApiKeys = {
   deepseek: env('DEEPSEEK_API_KEY'),
   fireworks: env('FIREWORKS_API_KEY'),
   cerebras: env('CEREBRAS_API_KEY'),
+  moonshotai: env('MOONSHOTAI_API_KEY'),
   openrouter: env('OPENROUTER_API_KEY'),
 };
 

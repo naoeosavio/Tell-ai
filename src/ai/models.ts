@@ -6,6 +6,7 @@ import { createCerebras } from '@ai-sdk/cerebras';
 import { createDeepSeek } from '@ai-sdk/deepseek';
 import { createFireworks } from '@ai-sdk/fireworks';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
+import { createMoonshotAI } from '@ai-sdk/moonshotai';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createXai } from '@ai-sdk/xai';
 import { API_KEYS, API_URLS, type ApiKeys } from '../config/env';
@@ -22,6 +23,7 @@ export interface ResolvedModelSpec {
 export interface ModelHandle {
   model: any;
   reasoning: string;
+  reasoningEffort?: string;
   fast: boolean;
 }
 
@@ -112,6 +114,9 @@ export const MODELS: Record<string, string> = {
   'z+': 'fireworks:glm-5p2:high',
   'z++': 'fireworks:glm-5p2:max',
   Z: 'fireworks:glm-5p2:high',
+
+  k: 'moonshotai:kimi-k2.7-code:none',
+  K: 'moonshotai:kimi-k3:max',
 };
 
 const AI_SDK_THINKING: Record<string, string> = {
@@ -128,6 +133,7 @@ const SUPPORTED_VENDORS = new Set([
   'openai',
   'anthropic',
   'google',
+  'moonshotai',
   'openrouter',
   'xai',
   'vast',
@@ -144,6 +150,7 @@ const VENDOR_KEY: Record<string, keyof ApiKeys> = {
   deepseek: 'deepseek',
   fireworks: 'fireworks',
   cerebras: 'cerebras',
+  moonshotai: 'moonshotai',
   openrouter: 'openrouter',
 };
 
@@ -173,6 +180,7 @@ function inferVendor(model: string): string {
   if (normalized.startsWith('claude')) return 'anthropic';
   if (normalized.startsWith('gemini')) return 'google';
   if (normalized.startsWith('grok')) return 'xai';
+  if (normalized.startsWith('kimi')) return 'moonshotai';
   if (normalized.includes('/')) return 'openrouter';
   throw new Error(`Unsupported vendor for model "${model}"`);
 }
@@ -184,6 +192,7 @@ let _xai: any = null;
 let _deepseek: any = null;
 let _fireworks: any = null;
 let _cerebras: any = null;
+let _moonshotai: any = null;
 let _openrouter: any = null;
 const _vastProviders: Record<string, any> = {};
 const _localProviders: Record<string, any> = {};
@@ -341,6 +350,15 @@ async function handleFireworks(model: string, reasoning: string, fast: boolean):
   return { model: _fireworks(model), reasoning, fast };
 }
 
+async function handleMoonshotAI(model: string, reasoning: string, fast: boolean): Promise<ModelHandle> {
+  if (!_moonshotai) {
+    const apiKey = await getApiKey('moonshotai');
+    _moonshotai = createMoonshotAI({ apiKey });
+  }
+  const reasoningEffort = reasoning !== 'none' ? 'max' : undefined;
+  return { model: _moonshotai(model), reasoning, reasoningEffort, fast };
+}
+
 async function handleOpenrouter(model: string, reasoning: string, fast: boolean): Promise<ModelHandle> {
   const provider = await getOpenrouterProvider();
   return { model: provider(model), reasoning, fast };
@@ -362,6 +380,7 @@ const VENDOR_HANDLERS: Record<string, (m: string, r: string, f: boolean) => Prom
   xai: handleXai,
   deepseek: handleDeepseek,
   fireworks: handleFireworks,
+  moonshotai: handleMoonshotAI,
   openrouter: handleOpenrouter,
   vast: handleVast,
   local: handleLocal,
