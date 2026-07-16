@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.4.1 — 2026-07-16
+
+### Features
+
+- Integrated MoonshotAI provider with reasoning effort configuration and new environment variable support for API key.
+- Added model aliases for Gemini 3.1 Flash Lite, Fireworks GLM-5p2, and Moonshot Kimi models; refined Deepseek model shortcut mappings.
+- Renamed Luna reasoning effort aliases from `m-*` to `c-*` and upgraded the default Gemini Flash model from 3.1-preview to 3.5.
+- Bumped Claude Sonnet to v5 and Grok to 4.5 across all applicable reasoning effort levels.
+- Migrated GPT-5.5 aliases to GPT-5.6 Sol series; introduced Terra and Luna model families with full reasoning effort range; replaced the `xhigh` effort level with `max`.
+- Enhanced the command execution flow in the tell subsystem to capture and report exit codes, enabling failure‑aware AI decision‑making and automatic recovery.
+
+---
+
 ## v0.4.0 — 2026-07-08
 
 ### Features
