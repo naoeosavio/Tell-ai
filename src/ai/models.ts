@@ -98,15 +98,15 @@ export const MODELS: Record<string, string> = {
 
   v: 'vast:/root/model:none',
 
-  'd-': 'deepseek:deepseek-v4-pro:low',
-  d: 'deepseek:deepseek-v4-pro:medium',
-  'd+': 'deepseek:deepseek-v4-pro:high',
+  'D--': 'deepseek:deepseek-v4-pro:low',
+  'D-': 'deepseek:deepseek-v4-pro:medium',
+  'D+': 'deepseek:deepseek-v4-pro:high',
   D: 'deepseek:deepseek-v4-pro:high',
 
-  'df-': 'deepseek:deepseek-v4-flash:low',
-  df: 'deepseek:deepseek-v4-flash:medium',
-  'df+': 'deepseek:deepseek-v4-flash:high',
-  DF: 'deepseek:deepseek-v4-flash:high',
+  'd--': 'deepseek:deepseek-v4-flash:low',
+  'd-': 'deepseek:deepseek-v4-flash:medium',
+  'd+': 'deepseek:deepseek-v4-flash:high',
+  d: 'deepseek:deepseek-v4-flash:high',
 
   'z--': 'fireworks:glm-5p2:none',
   'z-': 'fireworks:glm-5p2:low',

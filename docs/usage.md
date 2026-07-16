@@ -68,6 +68,14 @@ df-    deepseek:deepseek-v4-flash:low
 df     deepseek:deepseek-v4-flash:medium
 df+    deepseek:deepseek-v4-flash:high
 DF     deepseek:deepseek-v4-flash:high
+z--    fireworks:glm-5p2:none
+z-     fireworks:glm-5p2:low
+z      fireworks:glm-5p2:medium
+z+     fireworks:glm-5p2:high
+z++    fireworks:glm-5p2:max
+Z      fireworks:glm-5p2:high
+k      moonshotai:kimi-k2.7-code:none
+K      moonshotai:kimi-k3:max
 q      local:/root/model:none
 v      vast:/root/model:none
 ```
