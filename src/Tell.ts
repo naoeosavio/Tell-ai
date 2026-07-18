@@ -7,6 +7,7 @@ import * as readline from 'node:readline';
 import { promisify } from 'node:util';
 import { Command } from 'commander';
 import { type AskInstance, createAskAI, MODELS, resolveModelSpec } from './ai';
+import { gatherProjectContext } from './explore';
 
 const execAsync = promisify(exec);
 const DEFAULT_MODEL = process.env.TELL_MODEL || 'g';
@@ -23,6 +24,7 @@ type CliOptions = {
   chain?: boolean;
   exec?: boolean;
   input?: boolean;
+  explore?: boolean;
 };
 
 type ParsedInput = { model: string; parts: string[]; readStdin: boolean };
@@ -37,7 +39,7 @@ type ConversationState = {
   yes: boolean;
 };
 
-type PromptOptions = { chain?: boolean };
+type PromptOptions = { chain?: boolean; exploreContext?: string };
 type CommandResult = { output: string; exitCode: number };
 type ScriptsResult = { text: string; failed: boolean };
 
@@ -74,10 +76,11 @@ function printModelHelp(): void {
 
 function getSystemPrompt(options: PromptOptions = {}): string {
   const chain = Boolean(options.chain);
+  const exploreSection = options.exploreContext ? `\n${options.exploreContext}\n` : '';
   return `
 This is a ${chain ? 'multi-step' : 'one-shot'} terminal assistant running on ${os.platform()} ${os.release()}.
 Current working directory: ${process.cwd()}.
-
+${exploreSection}
 To better assist the user, you can run bash commands on this computer.
 
 To run a bash command, include a script in your answer inside <RUN> tags:
@@ -355,6 +358,7 @@ function buildProgram(argv: string[]): Command {
     .option('-y, --yes', 'execute requested commands without confirmation')
     .option('--chain', 'continue after command output until the assistant gives a final answer')
     .option('-i, --input', 'read stdin and include it with the prompt')
+    .option('-E, --explore', 'gather project structure and include it in context')
     .option('--no-exec', 'do not execute requested commands')
     .parse(argv);
 }
@@ -380,9 +384,15 @@ function rememberCommandRound(state: ConversationState): void {
   }
 }
 
-async function runResponseLoop(ai: AskInstance, state: ConversationState, log: string): Promise<void> {
+async function runResponseLoop(
+  ai: AskInstance,
+  state: ConversationState,
+  log: string,
+  exploreContext?: string,
+): Promise<void> {
   let response = await tellSilently(ai, state.firstPrompt, {
     chain: state.autoContinue,
+    exploreContext,
   });
 
   for (;;) {
@@ -411,11 +421,11 @@ async function runResponseLoop(ai: AskInstance, state: ConversationState, log: s
     if (failed) {
       feedback = `The command above FAILED. Analyze the error output and try a corrected approach.\n\n${feedback}`;
     }
-    response = await tellSilently(ai, feedback, { chain: true });
+    response = await tellSilently(ai, feedback, { chain: true, exploreContext });
   }
 }
 
-async function runTell(model: string, prompt: string, opts: CliOptions): Promise<void> {
+async function runTell(model: string, prompt: string, opts: CliOptions, exploreContext?: string): Promise<void> {
   const label = modelLabel(model);
   const context = contextFile(model);
   const previousContext = opts.context ? readText(context) : '';
@@ -435,7 +445,7 @@ async function runTell(model: string, prompt: string, opts: CliOptions): Promise
 
   try {
     const ai = await createAskAI(model);
-    await runResponseLoop(ai, state, log);
+    await runResponseLoop(ai, state, log, exploreContext);
   } catch (error) {
     console.error('\x1b[31m%s\x1b[0m', formatModelError(error));
     process.exitCode = 1;
@@ -466,7 +476,8 @@ async function main() {
     process.exitCode = 1;
     return;
   }
-  await runTell(input.model, prompt, opts);
+  const exploreContext = opts.explore ? ((await gatherProjectContext(process.cwd())) ?? undefined) : undefined;
+  await runTell(input.model, prompt, opts, exploreContext);
 }
 
 if (typeof require !== 'undefined' && typeof module !== 'undefined' && require.main === module) {

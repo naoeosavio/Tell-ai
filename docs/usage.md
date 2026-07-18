@@ -149,6 +149,21 @@ Conversations are logged to `~/.ai/tell_history/` with timestamps.
 | `TELL_MODEL`      | Default model alias            | `g`     |
 | `DEBUG`           | Enable debug output            | unset   |
 
+## Smart explorer (`-E` / `--explore`)
+
+Gathers project context before prompting to reduce hallucinations about file paths. The AI receives:
+
+- **Project structure**: directory tree (depth 4, max 200 entries), respecting `.gitignore`
+- **Git context**: current branch and changed files
+- **Project metadata**: type (Node.js, Rust, etc.), scripts, dependency counts
+
+```bash
+tell -E "add a users table migration"
+tell --explore --chain "refactor the auth module"
+```
+
+Context is capped at ~6000 characters. Works in chain mode (sent with every system prompt round).
+
 ## Self-hosted models
 
 ```bash

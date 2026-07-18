@@ -50,6 +50,13 @@ Multi-step chain mode — the assistant can run a command, see its output, and c
 tell --chain "find out why the build is failing and fix it"
 ```
 
+Smart directory explorer — automatically gathers project structure, git status, and metadata to reduce path hallucinations:
+
+```bash
+tell -E "add a users table migration"
+tell --explore --chain "refactor the auth module"
+```
+
 Include piped input with a prompt:
 
 ```bash
