@@ -12,6 +12,7 @@ const execAsync = promisify(exec);
 const DEFAULT_MODEL = process.env.TELL_MODEL || 'g';
 const MAX_BUFFER = 32 * 1024 * 1024;
 const MAX_CHAIN_STEPS = 8;
+const MAX_SELF_HEAL_RETRIES = 3;
 const EXEC_TIMEOUT = 120_000;
 const STDIN_TIMEOUT = 30_000;
 const MAX_CONTEXT_CHARS = 200_000;
@@ -38,8 +39,8 @@ type ConversationState = {
 };
 
 type PromptOptions = { chain?: boolean };
-type CommandResult = { output: string; exitCode: number };
-type ScriptsResult = { text: string; failed: boolean };
+type CommandResult = { stdout: string; stderr: string; exitCode: number };
+type ScriptsResult = { text: string; failed: boolean; hasStderr: boolean };
 
 const createdDirs = new Set<string>();
 
@@ -120,21 +121,25 @@ async function executeCommand(script: string): Promise<CommandResult> {
       shell: '/bin/bash',
       timeout: EXEC_TIMEOUT,
     });
-    return { output: stdout + stderr, exitCode: 0 };
+    return { stdout, stderr, exitCode: 0 };
   } catch (error) {
     const err = error as any;
     const exitCode = typeof err.code === 'number' ? err.code : 1;
     if (err.killed && err.signal === 'SIGTERM') {
-      return { output: `Command timed out after ${EXEC_TIMEOUT / 1000}s:\n${script}`, exitCode: 124 };
+      return {
+        stdout: '',
+        stderr: `Command timed out after ${EXEC_TIMEOUT / 1000}s:\n${script}`,
+        exitCode: 124,
+      };
     }
-    const output = [
-      typeof err.stdout === 'string' ? err.stdout : '',
+    const stdout = typeof err.stdout === 'string' ? err.stdout : '';
+    const stderr = [
       typeof err.stderr === 'string' ? err.stderr : '',
       error instanceof Error ? error.message : String(error),
     ]
       .filter(Boolean)
       .join('\n');
-    return { output, exitCode };
+    return { stdout, stderr, exitCode };
   }
 }
 
@@ -204,6 +209,10 @@ function stripThinkTags(text: string): string {
   return text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
 }
 
+function stripRunTags(text: string): string {
+  return text.replace(/<RUN>[\s\S]*?<\/RUN>/g, '').trim();
+}
+
 function extractRuns(text: string): { scripts: string[]; visible: string } {
   const sanitized = stripMarkdownCodeBlocks(text);
   return {
@@ -262,20 +271,23 @@ async function confirmCommand(script: string, yes: boolean): Promise<boolean> {
 async function runScripts(scripts: string[], yes: boolean, execEnabled: boolean, log: string): Promise<ScriptsResult> {
   const results: string[] = [];
   let failed = false;
+  let hasStderr = false;
   for (const script of scripts) {
     let result: string;
     if (!execEnabled) {
       process.stderr.write('\x1b[33mCommand execution disabled (--no-exec).\x1b[0m\n');
       result = `Command execution disabled — not run:\n${script}`;
     } else if (await confirmCommand(script, yes)) {
-      const { output, exitCode } = await executeCommand(script);
-      const text = output.trim();
+      const { stdout, stderr, exitCode } = await executeCommand(script);
+      const combined = [stdout, stderr].filter(Boolean).join('\n');
+      const text = combined.trim();
       if (text) process.stderr.write(process.stderr.isTTY ? `\x1b[2m${text}\x1b[0m\n` : `${text}\n`);
       if (exitCode > 0) {
         failed = true;
-        result = `Command failed (exit code ${exitCode}):\n${script}\nOutput:\n${output}`;
+        result = `Command failed (exit code ${exitCode}):\n${script}\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`;
       } else {
-        result = `Executed command:\n${script}\nOutput:\n${output}`;
+        if (stderr.trim()) hasStderr = true;
+        result = `Executed command:\n${script}\nSTDOUT:\n${stdout}${stderr.trim() ? `\nSTDERR:\n${stderr}` : ''}`;
       }
     } else {
       process.stderr.write('\x1b[33mCommand skipped by user.\x1b[0m\n');
@@ -284,7 +296,7 @@ async function runScripts(scripts: string[], yes: boolean, execEnabled: boolean,
     appendLog(log, result);
     results.push(result);
   }
-  return { text: results.join('\n\n'), failed };
+  return { text: results.join('\n\n'), failed, hasStderr };
 }
 
 async function tellSilently(ai: AskInstance, message: string, options: PromptOptions = {}): Promise<string> {
@@ -380,6 +392,46 @@ function rememberCommandRound(state: ConversationState): void {
   }
 }
 
+function selfHealFeedback(failed: boolean, commandResult: string): string {
+  const prefix = failed
+    ? 'The command above FAILED (exit code > 0). Analyze the error output and try a corrected approach with <RUN> tags.'
+    : 'The command above succeeded (exit code 0) but produced STDERR output. If this indicates a problem, try a corrected approach with <RUN> tags. Otherwise, answer without <RUN> tags.';
+  return `${prefix}\n\n${commandResult}\n\n`;
+}
+
+async function runSelfHealLoop(
+  ai: AskInstance,
+  state: ConversationState,
+  log: string,
+  failed: boolean,
+  resultText: string,
+): Promise<string | null> {
+  let lastResult = resultText;
+  let response: string | null = null;
+  for (let retry = 0; retry < MAX_SELF_HEAL_RETRIES; retry++) {
+    const feedback = selfHealFeedback(failed, lastResult);
+    response = await tellSilently(ai, feedback, { chain: true });
+    rememberAssistant(state, log, response);
+    response = stripThinkTags(response);
+    const { scripts, visible } = extractRuns(response);
+    if (scripts.length === 0) {
+      if (visible) console.log(visible);
+      return null;
+    }
+    const sr = await runScripts(scripts, state.yes, state.execEnabled, log);
+    rememberCommandResult(state, sr.text);
+    lastResult = sr.text;
+    if (!(sr.failed || sr.hasStderr)) {
+      return stripRunTags(response);
+    }
+    failed = sr.failed;
+    process.stderr.write(
+      `\x1b[33mSelf-heal retry ${retry + 1}/${MAX_SELF_HEAL_RETRIES} — ${failed ? 'still failing' : 'still producing stderr'}\x1b[0m\n`,
+    );
+  }
+  return response ? stripRunTags(response) : null;
+}
+
 async function runResponseLoop(ai: AskInstance, state: ConversationState, log: string): Promise<void> {
   let response = await tellSilently(ai, state.firstPrompt, {
     chain: state.autoContinue,
@@ -399,19 +451,37 @@ async function runResponseLoop(ai: AskInstance, state: ConversationState, log: s
       break;
     }
 
-    const { text: resultText, failed } = await runScripts(scripts, state.yes, state.execEnabled, log);
+    const { text: resultText, failed, hasStderr } = await runScripts(scripts, state.yes, state.execEnabled, log);
     rememberCommandResult(state, resultText);
     if (!state.autoContinue) {
       if (visible) console.log(visible);
       break;
     }
 
-    rememberCommandRound(state);
-    let feedback = `${resultText}\n\n${continuationInstruction(state)}`;
-    if (failed) {
-      feedback = `The command above FAILED. Analyze the error output and try a corrected approach.\n\n${feedback}`;
+    if (failed || hasStderr) {
+      const healedResponse = await runSelfHealLoop(ai, state, log, failed, resultText);
+      if (healedResponse === null) {
+        // Model decided no further commands needed — self-heal resolved cleanly
+        break;
+      }
+      // Self-heal fix commands succeeded — output visible text and continue chain
+      rememberCommandRound(state);
+      const { visible: healedVisible } = extractRuns(healedResponse);
+      if (healedVisible) console.log(healedVisible);
+      if (state.chainLimitReached) {
+        process.stderr.write(
+          `\x1b[33mChain limit reached (${MAX_CHAIN_STEPS}); ignoring further requested commands.\x1b[0m\n`,
+        );
+        break;
+      }
+      response = await tellSilently(ai, `${conversationText(state)}\n\n${continuationInstruction(state)}`, {
+        chain: true,
+      });
+      continue;
     }
-    response = await tellSilently(ai, feedback, { chain: true });
+
+    rememberCommandRound(state);
+    response = await tellSilently(ai, `${resultText}\n\n${continuationInstruction(state)}`, { chain: true });
   }
 }
 
