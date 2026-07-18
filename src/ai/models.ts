@@ -246,8 +246,11 @@ function resolveMultiPart(parts: string[], fast: boolean): ResolvedModelSpec {
   let thinking: ThinkingLevel = 'auto';
   if (thinkingRaw) {
     const level = normalizeThinking(thinkingRaw);
-    if (!level) throw new Error(`Unsupported thinking budget "${thinkingRaw}"`);
-    thinking = level;
+    if (level) {
+      thinking = level;
+    } else {
+      model = `${modelValue}:${thinkingRaw}`;
+    }
   } else if (aliasThinking) {
     thinking = aliasThinking;
   }
@@ -272,6 +275,10 @@ function parseModelSpecRaw(spec: string): ResolvedModelSpec {
   }
 
   if (parts.length === 1) return resolveSinglePart(trimmed, fast);
+
+  const firstPart = parts[0].trim().toLowerCase();
+  if (!SUPPORTED_VENDORS.has(firstPart)) return resolveSinglePart(trimmed, fast);
+
   if (parts.length < 2 || parts.length > 3) {
     throw new Error(`Expected "vendor:model" or "vendor:model:thinking", got "${spec}"`);
   }
