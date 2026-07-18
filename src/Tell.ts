@@ -7,6 +7,7 @@ import * as readline from 'node:readline';
 import { promisify } from 'node:util';
 import { Command } from 'commander';
 import { type AskInstance, createAskAI, MODELS, resolveModelSpec } from './ai';
+import { summarizeContext } from './summarize';
 
 const execAsync = promisify(exec);
 const DEFAULT_MODEL = process.env.TELL_MODEL || 'g';
@@ -190,10 +191,9 @@ function limitContext(text: string): string {
   return `[older context truncated]\n${text.slice(-MAX_CONTEXT_CHARS)}`;
 }
 
-function writeContext(file: string, previous: string, turn: string): void {
-  const next = [previous, turn].filter(Boolean).join('\n');
+function writeContext(file: string, content: string): void {
   ensureDir(path.dirname(file));
-  fs.writeFileSync(file, `${limitContext(next).trim()}\n`, 'utf8');
+  fs.writeFileSync(file, `${limitContext(content).trim()}\n`, 'utf8');
 }
 
 function stripMarkdownCodeBlocks(text: string): string {
@@ -348,7 +348,6 @@ function buildProgram(argv: string[]): Command {
   return new Command()
     .name('tell')
     .description('One-shot terminal assistant')
-    .version('0.3.2')
     .argument('[input...]', 'optional model followed by the prompt, or just the prompt')
     .option('-m, --model <model>', 'model shortcode or full model spec (use -m --help to list)')
     .option('-c, --context', 'continue a persistent context for this cwd and model')
@@ -433,8 +432,9 @@ async function runTell(model: string, prompt: string, opts: CliOptions): Promise
   const log = logFile();
   appendLog(log, `Model: ${label}\nUser:\n${prompt}`);
 
+  let ai: AskInstance | null = null;
   try {
-    const ai = await createAskAI(model);
+    ai = await createAskAI(model);
     await runResponseLoop(ai, state, log);
   } catch (error) {
     console.error('\x1b[31m%s\x1b[0m', formatModelError(error));
@@ -443,7 +443,24 @@ async function runTell(model: string, prompt: string, opts: CliOptions): Promise
   }
 
   try {
-    if (opts.context) writeContext(context, previousContext, conversationText(state));
+    if (opts.context) {
+      const turn = conversationText(state);
+      let nextContext: string;
+
+      if (previousContext && previousContext.length + turn.length > MAX_CONTEXT_CHARS) {
+        try {
+          const summary = await summarizeContext(ai, previousContext);
+          nextContext = `${summary}\n${turn}`;
+        } catch {
+          // Fall back to truncation if summarization fails
+          nextContext = `${previousContext}\n${turn}`;
+        }
+      } else {
+        nextContext = previousContext ? `${previousContext}\n${turn}` : turn;
+      }
+
+      writeContext(context, nextContext);
+    }
   } catch (error) {
     console.error('\x1b[31mFailed to write context: %s\x1b[0m', error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
