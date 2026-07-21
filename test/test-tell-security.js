@@ -90,6 +90,7 @@ async function runTell(args, response, opts = {}) {
         }),
       };
     }
+    if (name === './summarize') return { summarizeContext: async () => '[summarized]' };
     if (name === 'child_process' || name === 'node:child_process') return { exec: mockExec };
     if (name === 'os' || name === 'node:os') return { ...require('node:os'), homedir: () => home };
     return require(name);

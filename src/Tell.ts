@@ -36,6 +36,7 @@ type ConversationState = {
   autoContinue: boolean;
   execEnabled: boolean;
   yes: boolean;
+  saveContext: boolean;
 };
 
 type PromptOptions = { chain?: boolean };
@@ -194,6 +195,18 @@ function limitContext(text: string): string {
 function writeContext(file: string, content: string): void {
   ensureDir(path.dirname(file));
   fs.writeFileSync(file, `${limitContext(content).trim()}\n`, 'utf8');
+}
+
+function saveIncrementalContext(contextPath: string, previousContext: string, state: ConversationState): void {
+  try {
+    const turn = conversationText(state);
+    const nextContext = previousContext ? `${previousContext}\n${turn}` : turn;
+    writeContext(contextPath, nextContext);
+  } catch (err) {
+    process.stderr.write(
+      `\x1b[33mWarning: failed to save incremental context: ${err instanceof Error ? err.message : String(err)}\x1b[0m\n`,
+    );
+  }
 }
 
 function stripMarkdownCodeBlocks(text: string): string {
@@ -379,13 +392,20 @@ function rememberCommandRound(state: ConversationState): void {
   }
 }
 
-async function runResponseLoop(ai: AskInstance, state: ConversationState, log: string): Promise<void> {
+async function runResponseLoop(
+  ai: AskInstance,
+  state: ConversationState,
+  log: string,
+  contextPath: string,
+  previousContext: string,
+): Promise<void> {
   let response = await tellSilently(ai, state.firstPrompt, {
     chain: state.autoContinue,
   });
 
   for (;;) {
     rememberAssistant(state, log, response);
+    if (state.saveContext) saveIncrementalContext(contextPath, previousContext, state);
     response = stripThinkTags(response);
     const { scripts, visible } = extractRuns(response);
     if (scripts.length === 0 || state.chainLimitReached) {
@@ -400,6 +420,7 @@ async function runResponseLoop(ai: AskInstance, state: ConversationState, log: s
 
     const { text: resultText, failed } = await runScripts(scripts, state.yes, state.execEnabled, log);
     rememberCommandResult(state, resultText);
+    if (state.saveContext) saveIncrementalContext(contextPath, previousContext, state);
     if (!state.autoContinue) {
       if (visible) console.log(visible);
       break;
@@ -427,6 +448,7 @@ async function runTell(model: string, prompt: string, opts: CliOptions): Promise
     autoContinue: Boolean(opts.chain),
     execEnabled: opts.exec !== false,
     yes: Boolean(opts.yes),
+    saveContext: opts.context ?? false,
   };
   if (!opts.context) fs.rmSync(context, { force: true });
   const log = logFile();
@@ -435,35 +457,33 @@ async function runTell(model: string, prompt: string, opts: CliOptions): Promise
   let ai: AskInstance | null = null;
   try {
     ai = await createAskAI(model);
-    await runResponseLoop(ai, state, log);
+    await runResponseLoop(ai, state, log, context, previousContext);
   } catch (error) {
     console.error('\x1b[31m%s\x1b[0m', formatModelError(error));
     process.exitCode = 1;
     return;
   }
 
-  try {
-    if (opts.context) {
+  // Summarize if context grew too large; otherwise incremental saves already handled it
+  if (opts.context) {
+    try {
       const turn = conversationText(state);
-      let nextContext: string;
-
       if (previousContext && previousContext.length + turn.length > MAX_CONTEXT_CHARS) {
         try {
           const summary = await summarizeContext(ai, previousContext);
-          nextContext = `${summary}\n${turn}`;
+          writeContext(context, `${summary}\n${turn}`);
         } catch {
-          // Fall back to truncation if summarization fails
-          nextContext = `${previousContext}\n${turn}`;
+          // Fall back: incremental saves already wrote the full context, just truncate
+          writeContext(context, `${previousContext}\n${turn}`);
         }
-      } else {
-        nextContext = previousContext ? `${previousContext}\n${turn}` : turn;
       }
-
-      writeContext(context, nextContext);
+    } catch (error) {
+      console.error(
+        '\x1b[31mFailed to summarize context: %s\x1b[0m',
+        error instanceof Error ? error.message : String(error),
+      );
+      process.exitCode = 1;
     }
-  } catch (error) {
-    console.error('\x1b[31mFailed to write context: %s\x1b[0m', error instanceof Error ? error.message : String(error));
-    process.exitCode = 1;
   }
 }
 
