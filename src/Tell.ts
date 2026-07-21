@@ -15,7 +15,7 @@ const MAX_BUFFER = 32 * 1024 * 1024;
 const MAX_CHAIN_STEPS = 8;
 const EXEC_TIMEOUT = 120_000;
 const STDIN_TIMEOUT = 30_000;
-const MAX_CONTEXT_CHARS = 200_000;
+const MAX_CONTEXT_CHARS = 256 * 1024 * 1024;
 
 type CliOptions = {
   model?: string;
@@ -199,7 +199,7 @@ function writeContext(file: string, content: string): void {
 
 function saveIncrementalContext(contextPath: string, previousContext: string, state: ConversationState): void {
   try {
-    const turn = conversationText(state);
+    const turn = stripThinkTags(conversationText(state));
     const nextContext = previousContext ? `${previousContext}\n${turn}` : turn;
     writeContext(contextPath, nextContext);
   } catch (err) {
@@ -467,7 +467,7 @@ async function runTell(model: string, prompt: string, opts: CliOptions): Promise
   // Summarize if context grew too large; otherwise incremental saves already handled it
   if (opts.context) {
     try {
-      const turn = conversationText(state);
+      const turn = stripThinkTags(conversationText(state));
       if (previousContext && previousContext.length + turn.length > MAX_CONTEXT_CHARS) {
         try {
           const summary = await summarizeContext(ai, previousContext);
