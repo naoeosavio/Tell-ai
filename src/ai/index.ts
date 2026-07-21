@@ -26,8 +26,9 @@ export async function createAskAI(modelSpec: string): Promise<AskInstance> {
       } else {
         genOptions.reasoning = reasoning;
       }
-      const { text } = await generateText(genOptions);
-      return text;
+      const result = await generateText(genOptions);
+      const modelReasoning = result.finalStep.reasoningText;
+      return modelReasoning ? `<think>${modelReasoning}</think>\n${result.text}` : result.text;
     },
   };
 }
