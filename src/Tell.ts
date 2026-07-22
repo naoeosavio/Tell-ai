@@ -427,7 +427,7 @@ async function runResponseLoop(
     }
 
     rememberCommandRound(state);
-    let feedback = `${resultText}\n\n${continuationInstruction(state)}`;
+    let feedback = `${stripThinkTags(conversationText(state))}\n\n${continuationInstruction(state)}`;
     if (failed) {
       feedback = `The command above FAILED. Analyze the error output and try a corrected approach.\n\n${feedback}`;
     }
