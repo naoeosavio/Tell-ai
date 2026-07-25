@@ -303,7 +303,7 @@ async function runScripts(scripts: string[], yes: boolean, execEnabled: boolean,
 async function tellSilently(ai: AskInstance, message: string, options: PromptOptions = {}): Promise<string> {
   process.stderr.write('\x1b[2mThinking...\x1b[0m');
   try {
-    return (await ai.ask(message, { system: getSystemPrompt(options), stream: false })) as string;
+    return await ai.ask(message, { system: getSystemPrompt(options), stream: false });
   } finally {
     process.stderr.write('\r\x1b[K');
   }

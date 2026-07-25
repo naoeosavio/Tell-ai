@@ -80,15 +80,15 @@ export const MODELS: Record<string, string> = {
   'i+': 'google:gemini-3.1-pro-preview:high',
   I: 'google:gemini-3.1-pro-preview:high',
 
-  'j-': 'google:gemini-3.1-flash-lite:low',
-  j: 'google:gemini-3.1-flash-lite:medium',
-  'j+': 'google:gemini-3.1-flash-lite:high',
-  J: 'google:gemini-3.1-flash-lite:high',
+  'j-': 'google:gemini-3.5-flash-lite:low',
+  j: 'google:gemini-3.5-flash-lite:medium',
+  'j+': 'google:gemini-3.5-flash-lite:high',
+  J: 'google:gemini-3.5-flash-lite:high',
 
-  'l-': 'google:gemini-3.5-flash:low',
-  l: 'google:gemini-3.5-flash:medium',
-  'l+': 'google:gemini-3.5-flash:high',
-  L: 'google:gemini-3.5-flash:high',
+  'l-': 'google:gemini-3.6-flash:low',
+  l: 'google:gemini-3.6-flash:medium',
+  'l+': 'google:gemini-3.6-flash:high',
+  L: 'google:gemini-3.6-flash:high',
 
   'x-': 'xai:grok-4.5:low',
   x: 'xai:grok-4.5:medium',
@@ -98,15 +98,12 @@ export const MODELS: Record<string, string> = {
 
   v: 'vast:/root/model:none',
 
-  'D--': 'deepseek:deepseek-v4-pro:low',
-  'D-': 'deepseek:deepseek-v4-pro:medium',
-  'D+': 'deepseek:deepseek-v4-pro:high',
-  D: 'deepseek:deepseek-v4-pro:high',
-
-  'd--': 'deepseek:deepseek-v4-flash:low',
-  'd-': 'deepseek:deepseek-v4-flash:medium',
-  'd+': 'deepseek:deepseek-v4-flash:high',
+  'd-': 'deepseek:deepseek-v4-flash:none',
   d: 'deepseek:deepseek-v4-flash:high',
+  'd+': 'deepseek:deepseek-v4-flash:max',
+  'D-': 'deepseek:deepseek-v4-pro:none',
+  D: 'deepseek:deepseek-v4-pro:high',
+  'D+': 'deepseek:deepseek-v4-pro:max',
 
   'z--': 'fireworks:glm-5p2:none',
   'z-': 'fireworks:glm-5p2:low',
@@ -116,7 +113,10 @@ export const MODELS: Record<string, string> = {
   Z: 'fireworks:glm-5p2:high',
 
   k: 'moonshotai:kimi-k2.7-code:none',
-  K: 'moonshotai:kimi-k3:max',
+
+  'K-': 'moonshotai:kimi-k3:low',
+  K: 'moonshotai:kimi-k3:high',
+  'K+': 'moonshotai:kimi-k3:max',
 };
 
 const AI_SDK_THINKING: Record<string, string> = {
