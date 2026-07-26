@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.4.2 — 2026-07-25
+
+### Features
+- Include reasoning text in AI responses, wrapping reasoning steps in `<think>` tags when present.
+- Expand context buffer capacity to 256 MiB and filter internal reasoning blocks (`<think>` tags) from conversation history.
+- Implement incremental context saving to persist state during long-running conversation loops, with periodic file writes.
+- Replace naive context truncation with AI-driven summarization when conversation history exceeds token limits, preserving critical information with fallback to truncation.
+
+### Fixes
+- Allow flexible model identifier resolution for custom thinking budgets and unknown vendors, falling back to single-part resolution when vendor is unrecognized.
+
+### Refactors
+- Update Claude Opus model identifiers to version 5 across all reasoning tiers.
+- Update system prompt and execution loop behavior: refine prompt-injection policies, add `stripRunTags` helper, update `runResponseLoop`, and remove global AI SDK warnings configuration.
+- Update model mappings: upgrade flash-lite to 3.5, flash to 3.6, adjust DeepSeek reasoning and flash tiers, add MoonshotAI Kimi K3 low and max variants, remove unnecessary type casting.
+- Change feedback generation in response loop to use `conversationText` instead of `resultText` for full conversation context.
+
+### Documentation
+- Document flag interactions, including behavior between persistent context and multi-step chaining flags, with a flag interaction matrix added to README and usage guide.
+
+---
+
 ## v0.4.1 — 2026-07-16
 
 ### Features
