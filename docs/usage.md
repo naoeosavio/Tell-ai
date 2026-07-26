@@ -138,6 +138,22 @@ tell -c "now add a users table migration"   # remembers the previous message
 
 Without `-c`, each invocation starts fresh. Context is automatically truncated at 200,000 characters.
 
+## Flag interactions
+
+How `-c` (persistent context) and `--chain` (multi-step loop) combine:
+
+| Flags | Reads context? | Deletes? | Writes? | Loop? |
+|-------|--------|---------|--------|------|
+| *(none)* | no | yes | no | no |
+| `-c` | yes | no | yes (final) | no |
+| `--chain` | no | yes | no | yes (8 rounds) |
+| `-c --chain` | yes | no | yes (incremental) | yes (8 rounds) |
+
+Without any flag, context is deleted on start (one-shot execution, no history kept).  
+`-c` loads previous conversation and appends the result at the end.  
+`--chain` loops up to 8 rounds feeding command outputs to the model, but does not persist context across invocations.  
+`-c --chain` reads previous context, loops up to 8 rounds, and writes incrementally — each round's output is appended to the context file.
+
 ## Logging
 
 Conversations are logged to `~/.ai/tell_history/` with timestamps.

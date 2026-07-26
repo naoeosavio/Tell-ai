@@ -59,6 +59,15 @@ git diff --staged | tell --input "review this change"
 
 Tell logs conversations under `~/.ai/tell_history`.
 
+### Flag interactions
+
+| Flags | Reads context? | Deletes? | Writes? | Loop? |
+|-------|--------|---------|--------|------|
+| *(none)* | no | yes | no | no |
+| `-c` | yes | no | yes (final) | no |
+| `--chain` | no | yes | no | yes (8 rounds) |
+| `-c --chain` | yes | no | yes (incremental) | yes (8 rounds) |
+
 API Keys
 --------
 
