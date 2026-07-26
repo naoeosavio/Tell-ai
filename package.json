@@ -3,7 +3,7 @@
   "version": "0.4.2",
   "description": "One-shot terminal assistant",
   "bin": {
-    "tell": "./dist/Tell.js"
+    "tell": "dist/Tell.js"
   },
   "scripts": {
     "build": "rm -rf dist && tsup && chmod +x dist/*.js",
