@@ -61,12 +61,12 @@ export const MODELS: Record<string, string> = {
   's++': 'anthropic:claude-sonnet-5:max',
   S: 'anthropic:claude-sonnet-5:high',
 
-  'o--': 'anthropic:claude-opus-4-8:none',
-  'o-': 'anthropic:claude-opus-4-8:low',
-  o: 'anthropic:claude-opus-4-8:medium',
-  'o+': 'anthropic:claude-opus-4-8:high',
-  'o++': 'anthropic:claude-opus-4-8:max',
-  O: 'anthropic:claude-opus-4-8:high',
+  'o--': 'anthropic:claude-opus-5:none',
+  'o-': 'anthropic:claude-opus-5:low',
+  o: 'anthropic:claude-opus-5:medium',
+  'o+': 'anthropic:claude-opus-5:high',
+  'o++': 'anthropic:claude-opus-5:max',
+  O: 'anthropic:claude-opus-5:high',
 
   'f--': 'anthropic:claude-fable-5:none',
   'f-': 'anthropic:claude-fable-5:low',
