@@ -15,7 +15,9 @@ const MAX_BUFFER = 32 * 1024 * 1024;
 const MAX_CHAIN_STEPS = 8;
 const EXEC_TIMEOUT = 120_000;
 const STDIN_TIMEOUT = 30_000;
-const MAX_CONTEXT_CHARS = 256 * 1024 * 1024;
+const MAX_CONTEXT_CHARS = 1024 * 1024;
+const MAX_OUTPUT_CHARS = 8_000;
+const MAX_STDIN_BYTES = 8 * 1024 * 1024;
 
 type CliOptions = {
   model?: string;
@@ -77,7 +79,7 @@ function printModelHelp(): void {
 function getSystemPrompt(options: PromptOptions = {}): string {
   const chain = Boolean(options.chain);
   return `
-You are a terminal assistant for developer tasks, running in ${chain ? 'multi-step' : 'one-shot'} mode on ${os.platform()} ${os.release()}.
+This is a ${chain ? 'multi-step' : 'one-shot'} terminal assistant running on ${os.platform()} ${os.release()}.
 Current working directory: ${process.cwd()}.
 
 To better assist the user, you can run bash commands on this computer.
@@ -149,6 +151,13 @@ async function executeCommand(script: string): Promise<CommandResult> {
   }
 }
 
+function truncateOutput(output: string): string {
+  if (output.length <= MAX_OUTPUT_CHARS) return output;
+  const half = Math.floor(MAX_OUTPUT_CHARS / 2);
+  const omitted = output.length - MAX_OUTPUT_CHARS;
+  return `${output.slice(0, half)}\n[...${omitted} chars omitted...]\n${output.slice(-half)}`;
+}
+
 async function readStdin(): Promise<string> {
   if (process.stdin.isTTY) return '';
   return new Promise((resolve, reject) => {
@@ -156,8 +165,18 @@ async function readStdin(): Promise<string> {
       reject(new Error(`stdin read timed out after ${STDIN_TIMEOUT / 1000}s`));
     }, STDIN_TIMEOUT);
 
+    let size = 0;
     const chunks: Buffer[] = [];
-    process.stdin.on('data', (chunk: Buffer) => chunks.push(chunk));
+    process.stdin.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > MAX_STDIN_BYTES) {
+        clearTimeout(timer);
+        process.stdin.removeAllListeners();
+        reject(new Error(`stdin exceeded ${MAX_STDIN_BYTES / (1024 * 1024)}MB limit`));
+        return;
+      }
+      chunks.push(chunk);
+    });
     process.stdin.on('end', () => {
       clearTimeout(timer);
       resolve(Buffer.concat(chunks).toString('utf8').trimEnd());
@@ -225,6 +244,7 @@ function stripMarkdownCodeBlocks(text: string): string {
 function stripThinkTags(text: string): string {
   return text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
 }
+
 function stripRunTags(text: string): string {
   return text.replace(/<RUN(?:\s+done)?\s*>[\s\S]*?<\/RUN>/g, '').trim();
 }
@@ -303,14 +323,19 @@ async function runScripts(scripts: string[], yes: boolean, execEnabled: boolean,
       if (exitCode > 0) {
         failed = true;
         ranCleanly = false;
-        result = `Command failed (exit code ${exitCode}):\n${script}\nOutput:\n${output}`;
+        result = `Command failed (exit code ${exitCode}):\n${script}\nOutput:\n${truncateOutput(output)}`;
       } else {
-        result = `Executed command:\n${script}\nOutput:\n${output}`;
+        result = `Executed command:\n${script}\nOutput:\n${truncateOutput(output)}`;
       }
     } else {
       ranCleanly = false;
-      process.stderr.write('\x1b[33mCommand skipped by user.\x1b[0m\n');
-      result = `Skipped by user:\n${script}`;
+      if (!process.stdin.isTTY) {
+        process.stderr.write('\x1b[33mNo interactive session to confirm; skipping.\x1b[0m\n');
+        result = `Skipped — no interactive session available to confirm:\n${script}`;
+      } else {
+        process.stderr.write('\x1b[33mCommand declined by user.\x1b[0m\n');
+        result = `Declined by user:\n${script}`;
+      }
     }
     appendLog(log, result);
     results.push(result);
@@ -439,10 +464,7 @@ async function runResponseLoop(
     const { text: resultText, failed, ranCleanly } = await runScripts(scripts, state.yes, state.execEnabled, log);
     rememberCommandResult(state, resultText);
     if (state.saveContext) saveIncrementalContext(contextPath, previousContext, state);
-
     if (!state.autoContinue) {
-      // Only skip the extra call when the AI explicitly said it didn't need
-      // the output, there's something to show, and everything actually ran.
       const canSkipFollowUp = done && Boolean(visible) && ranCleanly;
       if (canSkipFollowUp) {
         console.log(visible);
