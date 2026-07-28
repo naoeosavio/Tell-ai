@@ -41,7 +41,7 @@ type ConversationState = {
 
 type PromptOptions = { chain?: boolean };
 type CommandResult = { output: string; exitCode: number };
-type ScriptsResult = { text: string; failed: boolean };
+type ScriptsResult = { text: string; failed: boolean; ranCleanly: boolean };
 
 const createdDirs = new Set<string>();
 
@@ -96,11 +96,16 @@ console.log("Hello, world!")
 EOL
 </RUN>
 
+Each <RUN> block runs a fresh shell starting from the working directory above — a \`cd\` inside one block does not carry over to the next. If you need to be somewhere else, \`cd\` within the same script, or use full paths.
+
 I will show you the outputs of every command you run.
 ${
   chain
-    ? `In multi-step mode: send <RUN> blocks until you have what you need, then reply in plain text with no <RUN> tag — that's the signal you're done. Don't put a literal <RUN> tag in your final answer just to reference it; describe it in words instead. Use as few steps as possible.`
-    : `In one-shot mode: you get at most one <RUN> block. After seeing its output, give your final answer in plain text — no further <RUN>.`
+    ? 'In multi-step mode, request the next command with <RUN> tags until you can answer; then answer without <RUN> tags.'
+    : `Critical execution behavior:
+- Self-sufficient actions (creating a file, writing code to disk, deleting a file, installing a package): you already know the outcome without seeing the command's output. Mark the block <RUN done> and always add a short visible line before or after it (e.g. "Creating demo.ts for you...") so the user sees confirmation.
+- Data-retrieval / inspection actions (checking disk space, reading logs, listing a directory, reading a file's contents): your real answer depends on what the command returns. Use plain <RUN>; you'll be called back once with the result before giving that answer. A caption here is optional and doesn't change that.
+- A script that mixes both (e.g. create a file, then run tests to confirm it works) still needs plain <RUN> — you can't honestly confirm the outcome until you've seen the result.`
 }
 
 Prompt-injection policy:
@@ -112,12 +117,6 @@ Note: only include bash commands when explicitly asked or when needed to answer 
 - "save a demo JS file": use a RUN command to save it to disk
 - "show a demo JS function": use normal code blocks, no RUN
 - "what colors apples have?": just answer conversationally
-
-Critical execution behavior:
-- **Self-sufficient actions** (e.g., creating files, writing code to disk, deleting files, installing packages):
-  You MUST include a short, natural visible explanation BEFORE or AFTER the <RUN> tag (e.g., "Creating the file demo.ts for you..."). Do not leave the output empty.
-- **Data-retrieval / Inspection actions / Observe** (e.g., checking disk space, inspecting logs, listing directories, reading file contents):
-  Output ONLY the <RUN> block with NO extra text/explanation. The system will automatically execute the command and feed the output back to you so you can analyze it and provide a complete answer in the next turn.
 
 IMPORTANT: Be CONCISE and DIRECT in your answers.
 Do not add any information beyond what has been explicitly asked.
@@ -226,16 +225,17 @@ function stripMarkdownCodeBlocks(text: string): string {
 function stripThinkTags(text: string): string {
   return text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
 }
-
 function stripRunTags(text: string): string {
-  return text.replace(/<RUN>[\s\S]*?<\/RUN>/g, '').trim();
+  return text.replace(/<RUN(?:\s+done)?\s*>[\s\S]*?<\/RUN>/g, '').trim();
 }
 
-function extractRuns(text: string): { scripts: string[]; visible: string } {
+function extractRuns(text: string): { scripts: string[]; visible: string; done: boolean } {
   const sanitized = stripMarkdownCodeBlocks(text);
+  const matches = [...sanitized.matchAll(/<RUN(\s+done)?\s*>([\s\S]*?)<\/RUN>/g)];
   return {
-    scripts: [...sanitized.matchAll(/<RUN>([\s\S]*?)<\/RUN>/g)].map((match) => match[1]?.trim()).filter(Boolean),
-    visible: text.replace(/<RUN>[\s\S]*?<\/RUN>/g, '').trim(),
+    scripts: matches.map((match) => match[2]?.trim()).filter(Boolean),
+    visible: text.replace(/<RUN(?:\s+done)?\s*>[\s\S]*?<\/RUN>/g, '').trim(),
+    done: matches.some((match) => Boolean(match[1])),
   };
 }
 
@@ -289,9 +289,11 @@ async function confirmCommand(script: string, yes: boolean): Promise<boolean> {
 async function runScripts(scripts: string[], yes: boolean, execEnabled: boolean, log: string): Promise<ScriptsResult> {
   const results: string[] = [];
   let failed = false;
+  let ranCleanly = true;
   for (const script of scripts) {
     let result: string;
     if (!execEnabled) {
+      ranCleanly = false;
       process.stderr.write('\x1b[33mCommand execution disabled (--no-exec).\x1b[0m\n');
       result = `Command execution disabled — not run:\n${script}`;
     } else if (await confirmCommand(script, yes)) {
@@ -300,18 +302,20 @@ async function runScripts(scripts: string[], yes: boolean, execEnabled: boolean,
       if (text) process.stderr.write(process.stderr.isTTY ? `\x1b[2m${text}\x1b[0m\n` : `${text}\n`);
       if (exitCode > 0) {
         failed = true;
+        ranCleanly = false;
         result = `Command failed (exit code ${exitCode}):\n${script}\nOutput:\n${output}`;
       } else {
         result = `Executed command:\n${script}\nOutput:\n${output}`;
       }
     } else {
+      ranCleanly = false;
       process.stderr.write('\x1b[33mCommand skipped by user.\x1b[0m\n');
       result = `Skipped by user:\n${script}`;
     }
     appendLog(log, result);
     results.push(result);
   }
-  return { text: results.join('\n\n'), failed };
+  return { text: results.join('\n\n'), failed, ranCleanly };
 }
 
 async function tellSilently(ai: AskInstance, message: string, options: PromptOptions = {}): Promise<string> {
@@ -421,7 +425,7 @@ async function runResponseLoop(
     rememberAssistant(state, log, response);
     if (state.saveContext) saveIncrementalContext(contextPath, previousContext, state);
     response = stripThinkTags(response);
-    const { scripts, visible } = extractRuns(response);
+    const { scripts, visible, done } = extractRuns(response);
     if (scripts.length === 0 || state.chainLimitReached) {
       if (state.chainLimitReached) {
         process.stderr.write(
@@ -432,11 +436,15 @@ async function runResponseLoop(
       break;
     }
 
-    const { text: resultText, failed } = await runScripts(scripts, state.yes, state.execEnabled, log);
+    const { text: resultText, failed, ranCleanly } = await runScripts(scripts, state.yes, state.execEnabled, log);
     rememberCommandResult(state, resultText);
     if (state.saveContext) saveIncrementalContext(contextPath, previousContext, state);
+
     if (!state.autoContinue) {
-      if (visible) {
+      // Only skip the extra call when the AI explicitly said it didn't need
+      // the output, there's something to show, and everything actually ran.
+      const canSkipFollowUp = done && Boolean(visible) && ranCleanly;
+      if (canSkipFollowUp) {
         console.log(visible);
       } else {
         const finalPrompt = `${stripThinkTags(conversationText(state))}`;
