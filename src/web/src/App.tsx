@@ -69,6 +69,7 @@ export default function App() {
   const [pendingCommand, setPendingCommand] = useState<string | null>(null);
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
   const [refreshFileTreeTrigger, setRefreshFileTreeTrigger] = useState<number>(0);
+  const [isTerminalExpanded, setIsTerminalExpanded] = useState<boolean>(false);
 
   // Load models and credentials status from API
   useEffect(() => {
@@ -358,8 +359,8 @@ export default function App() {
             </div>
           </div>
 
-          {/* Lower Bottom Panel: Terminal Shell */}
-          <div className="h-[220px] shrink-0 border-t border-white/10">
+          {/* Lower Bottom Panel: Terminal Shell (tmux mode with multi-pane support) */}
+          <div className={`${isTerminalExpanded ? 'h-[480px]' : 'h-[280px]'} shrink-0 border-t border-white/10 transition-all duration-300`}>
             <Terminal
               lines={terminalLines}
               onExecuteCommand={executeShellCommandManual}
@@ -367,6 +368,8 @@ export default function App() {
               pendingCommand={pendingCommand}
               onConfirmPending={handleConfirmPending}
               onSkipPending={handleSkipPending}
+              isExpanded={isTerminalExpanded}
+              onToggleExpand={() => setIsTerminalExpanded((prev) => !prev)}
             />
           </div>
         </div>
