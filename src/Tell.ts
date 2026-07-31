@@ -56,6 +56,20 @@ function ensureDir(dir: string): void {
   createdDirs.add(dir);
 }
 
+// Output helpers: color only when stderr is an actual terminal, so redirected
+// logs (files, CI) get plain text instead of raw escape codes.
+function warn(message: string): void {
+  process.stderr.write(process.stderr.isTTY ? `\x1b[33m${message}\x1b[0m\n` : `${message}\n`);
+}
+
+function errorLine(message: string): void {
+  console.error(process.stderr.isTTY ? `\x1b[31m${message}\x1b[0m` : message);
+}
+
+function dim(message: string): void {
+  process.stderr.write(process.stderr.isTTY ? `\x1b[2m${message}\x1b[0m\n` : `${message}\n`);
+}
+
 function modelLabel(model: string): string {
   const spec = resolveModelSpec(model);
   return `${spec.vendor}:${spec.model}:${spec.thinking}${spec.fast ? ':fast' : ''}`;
@@ -314,9 +328,7 @@ function saveIncrementalContext(contextPath: string, previousContext: string, st
     const nextContext = previousContext ? `${previousContext}\n${turn}` : turn;
     writeContext(contextPath, nextContext);
   } catch (err) {
-    process.stderr.write(
-      `\x1b[33mWarning: failed to save incremental context: ${err instanceof Error ? err.message : String(err)}\x1b[0m\n`,
-    );
+    warn(`Warning: failed to save incremental context: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -342,26 +354,32 @@ function extractRuns(text: string): { scripts: string[]; visible: string; done: 
   };
 }
 
+// Built once — none of this depends on the script being checked, so recompiling
+// it on every confirmCommand() call (every requested command, every chain step)
+// was pure overhead. None of these use /g or /y, so sharing the instances is safe.
+const PRIVILEGED_PATH = [
+  String.raw`(?:/(?:etc|boot|dev|proc|sys|usr|bin|sbin|lib|lib64)(?:\b|/)|`,
+  String.raw`/(?:var/(?:spool/cron|cron)|etc/cron(?:\.(?:d|daily|hourly|monthly|weekly))?)(?:\b|/)|`,
+  String.raw`(?:~|\$HOME)/(?:\.config/(?:autostart|systemd/user)|\.local/share/systemd/user)(?:\b|/))`,
+].join('');
+
+const HIGH_RISK_PATTERNS: RegExp[] = [
+  /\b(?:sudo|doas|pkexec)\b/,
+  /\brm\s+(-[^\s]*[rf][^\s]*|-[^\s]*[fr][^\s]*)\b/,
+  /\b(git\s+clean\s+-[^\s]*[xfd]|mkfs|shutdown|reboot)\b/,
+  /\bdd\b.*\bof=/,
+  /\b(chmod|chown)\s+-R\b.*\s\/(?:\s|$)/,
+  /(?:curl|wget)\b[^|;&]*\|\s*(?:ba)?sh\b/,
+  /(?:^|[\s;&|])(?:crontab|systemctl\s+--user\s+enable)\b/,
+  new RegExp(String.raw`(?:^|[\s;&|])(?:cp|mv|ln)\b[^;&|]*\s["']?${PRIVILEGED_PATH}`),
+  new RegExp(String.raw`(?:^|[\s;&|])sed\b[^;&|]*\s-i[^\s;&|]*[^;&|]*\s["']?${PRIVILEGED_PATH}`),
+  new RegExp(String.raw`(?:^|[\s;&|])tee\b[^;&|]*\s["']?${PRIVILEGED_PATH}`),
+  new RegExp(String.raw`(?:^|[\s;&|])\d*(?:>>?|>\||&>)\s*["']?${PRIVILEGED_PATH}`),
+];
+
 function isHighRiskScript(script: string): boolean {
   const compact = script.replace(/\\\n/g, ' ').replace(/\s+/g, ' ').trim();
-  const privilegedPath = [
-    String.raw`(?:/(?:etc|boot|dev|proc|sys|usr|bin|sbin|lib|lib64)(?:\b|/)|`,
-    String.raw`/(?:var/(?:spool/cron|cron)|etc/cron(?:\.(?:d|daily|hourly|monthly|weekly))?)(?:\b|/)|`,
-    String.raw`(?:~|\$HOME)/(?:\.config/(?:autostart|systemd/user)|\.local/share/systemd/user)(?:\b|/))`,
-  ].join('');
-  return [
-    /\b(?:sudo|doas|pkexec)\b/,
-    /\brm\s+(-[^\s]*[rf][^\s]*|-[^\s]*[fr][^\s]*)\b/,
-    /\b(git\s+clean\s+-[^\s]*[xfd]|mkfs|shutdown|reboot)\b/,
-    /\bdd\b.*\bof=/,
-    /\b(chmod|chown)\s+-R\b.*\s\/(?:\s|$)/,
-    /(?:curl|wget)\b[^|;&]*\|\s*(?:ba)?sh\b/,
-    /(?:^|[\s;&|])(?:crontab|systemctl\s+--user\s+enable)\b/,
-    new RegExp(String.raw`(?:^|[\s;&|])(?:cp|mv|ln)\b[^;&|]*\s["']?${privilegedPath}`),
-    new RegExp(String.raw`(?:^|[\s;&|])sed\b[^;&|]*\s-i[^\s;&|]*[^;&|]*\s["']?${privilegedPath}`),
-    new RegExp(String.raw`(?:^|[\s;&|])tee\b[^;&|]*\s["']?${privilegedPath}`),
-    new RegExp(String.raw`(?:^|[\s;&|])\d*(?:>>?|>\||&>)\s*["']?${privilegedPath}`),
-  ].some((pattern) => pattern.test(compact));
+  return HIGH_RISK_PATTERNS.some((pattern) => pattern.test(compact));
 }
 
 async function confirmCommand(script: string, yes: boolean): Promise<boolean> {
@@ -397,12 +415,12 @@ async function runScripts(scripts: string[], yes: boolean, execEnabled: boolean,
     let result: string;
     if (!execEnabled) {
       ranCleanly = false;
-      process.stderr.write('\x1b[33mCommand execution disabled (--no-exec).\x1b[0m\n');
+      warn('Command execution disabled (--no-exec).');
       result = `Command execution disabled — not run:\n${script}`;
     } else if (await confirmCommand(script, yes)) {
       const { output, exitCode } = await executeCommand(script);
       const text = output.trim();
-      if (text) process.stderr.write(process.stderr.isTTY ? `\x1b[2m${text}\x1b[0m\n` : `${text}\n`);
+      if (text) dim(text);
       if (exitCode > 0) {
         failed = true;
         ranCleanly = false;
@@ -413,10 +431,10 @@ async function runScripts(scripts: string[], yes: boolean, execEnabled: boolean,
     } else {
       ranCleanly = false;
       if (!process.stdin.isTTY) {
-        process.stderr.write('\x1b[33mNo interactive session to confirm; skipping.\x1b[0m\n');
+        warn('No interactive session to confirm; skipping.');
         result = `Skipped — no interactive session available to confirm:\n${script}`;
       } else {
-        process.stderr.write('\x1b[33mCommand declined by user.\x1b[0m\n');
+        warn('Command declined by user.');
         result = `Declined by user:\n${script}`;
       }
     }
@@ -427,11 +445,12 @@ async function runScripts(scripts: string[], yes: boolean, execEnabled: boolean,
 }
 
 async function tellSilently(ai: AskInstance, message: string, options: PromptOptions = {}): Promise<string> {
-  process.stderr.write('\x1b[2mThinking...\x1b[0m');
+  // No point animating a spinner into a redirected log/CI output.
+  if (process.stderr.isTTY) process.stderr.write('\x1b[2mThinking...\x1b[0m');
   try {
     return await ai.ask(message, { system: getSystemPrompt(options), stream: false });
   } finally {
-    process.stderr.write('\r\x1b[K');
+    if (process.stderr.isTTY) process.stderr.write('\r\x1b[K');
   }
 }
 
@@ -503,7 +522,10 @@ function formatMissingPromptError(program: Command): string {
 
 function rememberAssistant(state: ConversationState, log: string, response: string): void {
   appendLog(log, `Assistant:\n${response}`);
-  state.timeline.push(`Assistant:\n${response}`);
+  // Timeline stores the stripped version — every downstream conversationText()
+  // read is then already clean, instead of re-scanning the whole joined history
+  // for <think> tags on every turn. The full raw response still goes to the log.
+  state.timeline.push(`Assistant:\n${stripThinkTags(response)}`);
 }
 
 function rememberCommandResult(state: ConversationState, result: string): void {
@@ -514,7 +536,7 @@ function rememberCommandRound(state: ConversationState): void {
   state.commandRounds += 1;
   state.chainLimitReached = state.commandRounds >= MAX_CHAIN_STEPS;
   if (state.chainLimitReached) {
-    process.stderr.write(`\x1b[33mChain limit reached (${MAX_CHAIN_STEPS}); asking for final answer.\x1b[0m\n`);
+    warn(`Chain limit reached (${MAX_CHAIN_STEPS}); asking for final answer.`);
   }
 }
 
@@ -536,9 +558,7 @@ async function runResponseLoop(
     const { scripts, visible, done } = extractRuns(response);
     if (scripts.length === 0 || state.chainLimitReached) {
       if (state.chainLimitReached) {
-        process.stderr.write(
-          `\x1b[33mChain limit reached (${MAX_CHAIN_STEPS}); ignoring further requested commands.\x1b[0m\n`,
-        );
+        warn(`Chain limit reached (${MAX_CHAIN_STEPS}); ignoring further requested commands.`);
       }
       if (visible) console.log(visible);
       break;
@@ -576,7 +596,7 @@ async function runTell(model: string, prompt: string, opts: CliOptions): Promise
   try {
     context = contextFile(model, explicitContextId);
   } catch (error) {
-    console.error('\x1b[31m%s\x1b[0m', error instanceof Error ? error.message : String(error));
+    errorLine(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
     return;
   }
@@ -601,7 +621,7 @@ async function runTell(model: string, prompt: string, opts: CliOptions): Promise
     ai = await createAskAI(model);
     await runResponseLoop(ai, state, log, context, previousContext);
   } catch (error) {
-    console.error('\x1b[31m%s\x1b[0m', formatModelError(error));
+    errorLine(formatModelError(error));
     process.exitCode = 1;
     return;
   }
@@ -620,15 +640,12 @@ async function runTell(model: string, prompt: string, opts: CliOptions): Promise
         }
       }
     } catch (error) {
-      console.error(
-        '\x1b[31mFailed to summarize context: %s\x1b[0m',
-        error instanceof Error ? error.message : String(error),
-      );
+      errorLine(`Failed to summarize context: ${error instanceof Error ? error.message : String(error)}`);
       process.exitCode = 1;
     }
     const ordinal = contextOrdinal(context);
     const ordinalSuffix = ordinal === null ? '' : ` (context@${ordinal})`;
-    process.stderr.write(`\x1b[2mContext: ${path.basename(context, '.txt')}${ordinalSuffix}\x1b[0m\n`);
+    dim(`Context: ${path.basename(context, '.txt')}${ordinalSuffix}`);
   }
 }
 
