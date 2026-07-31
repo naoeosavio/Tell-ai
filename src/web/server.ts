@@ -215,6 +215,29 @@ app.get('/api/models', (req, res) => {
   });
 });
 
+// Helper: safely convert reasoning tokens/objects to string
+function sanitizeReasoning(val: any): string | null {
+  if (!val) return null;
+  if (typeof val === 'string') return val;
+  if (typeof val === 'object') {
+    if (typeof val.text === 'string') {
+      return val.text;
+    }
+    if (Array.isArray(val)) {
+      return val
+        .map((item) => {
+          if (typeof item === 'string') return item;
+          if (item && typeof item === 'object' && typeof item.text === 'string') return item.text;
+          return JSON.stringify(item);
+        })
+        .filter(Boolean)
+        .join('\n');
+    }
+    return JSON.stringify(val);
+  }
+  return String(val);
+}
+
 // API: Model execution route (using Vercel AI SDK)
 app.post('/api/tell', async (req, res) => {
   const { messages, modelAlias, systemPrompt } = req.body;
@@ -248,7 +271,7 @@ app.post('/api/tell', async (req, res) => {
     res.json({
       text: result.text,
       // Pass back other useful properties if available
-      reasoning: (result as any).reasoning || null,
+      reasoning: sanitizeReasoning((result as any).reasoning),
     });
   } catch (error: any) {
     console.error('Error generating AI text:', error);

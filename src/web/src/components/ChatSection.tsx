@@ -192,7 +192,13 @@ export default function ChatSection({
                         <BrainCircuit className="w-3.5 h-3.5 text-rose-600" />
                         <span>Cognitive Sequence</span>
                       </div>
-                      <div className="leading-relaxed pl-1 whitespace-pre-wrap">{m.thought}</div>
+                      <div className="leading-relaxed pl-1 whitespace-pre-wrap">
+                        {typeof m.thought === 'string'
+                          ? m.thought
+                          : typeof m.thought === 'object' && m.thought !== null
+                          ? (m.thought as any).text || JSON.stringify(m.thought, null, 2)
+                          : String(m.thought)}
+                      </div>
                     </div>
                   )}
 
