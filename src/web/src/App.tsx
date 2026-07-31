@@ -299,11 +299,11 @@ export default function App() {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-slate-950 text-slate-100 overflow-hidden select-none font-sans">
+    <div className="flex flex-col h-screen bg-[#0A0A0A] text-white overflow-hidden select-none font-sans">
       {/* Upper Main Dashboard Area */}
       <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
         {/* Left Side: Workspace Files & Settings Drawer */}
-        <div className="w-full md:w-80 shrink-0 flex flex-col border-r border-slate-900 bg-slate-900 select-none">
+        <div className="w-full md:w-80 shrink-0 flex flex-col border-r border-white/10 bg-[#0A0A0A] select-none">
           {/* Top Panel: File explorer */}
           <div className="flex-1 overflow-hidden min-h-[300px]">
             <FileExplorer
@@ -314,7 +314,7 @@ export default function App() {
           </div>
 
           {/* Bottom Panel: Model parameters and Keys indicators */}
-          <div className="h-[280px] border-t border-slate-800 overflow-hidden shrink-0">
+          <div className="h-[280px] border-t border-white/10 overflow-hidden shrink-0">
             <SettingsPanel
               keysStatus={keysStatus}
               models={models}
@@ -326,7 +326,7 @@ export default function App() {
         </div>
 
         {/* Center: Interactive Assistant Chat & Code Viewer */}
-        <div className="flex-1 flex flex-col overflow-hidden bg-slate-950">
+        <div className="flex-1 flex flex-col overflow-hidden bg-[#0A0A0A]">
           <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
             {/* Left Box: Chat console */}
             <div className="flex-1 flex flex-col min-w-0">
@@ -359,7 +359,7 @@ export default function App() {
           </div>
 
           {/* Lower Bottom Panel: Terminal Shell */}
-          <div className="h-[220px] shrink-0 border-t border-slate-900">
+          <div className="h-[220px] shrink-0 border-t border-white/10">
             <Terminal
               lines={terminalLines}
               onExecuteCommand={executeShellCommandManual}

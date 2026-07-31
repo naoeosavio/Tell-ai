@@ -80,35 +80,37 @@ export default function FileViewer({ filePath, onSaveCompleted }: FileViewerProp
 
   if (!filePath) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center p-8 bg-slate-950 text-slate-500 border-l border-slate-900">
-        <Edit3 className="w-8 h-8 opacity-30 mb-2" />
-        <p className="text-xs">Select a file from the workspace explorer to view or edit</p>
+      <div className="flex-1 flex flex-col items-center justify-center p-8 bg-[#0A0A0A] text-white/30 border-l border-white/10 select-none">
+        <Edit3 className="w-8 h-8 opacity-20 mb-3 text-rose-600" />
+        <p className="text-[10px] font-display font-bold tracking-[0.2em] uppercase text-center max-w-xs">
+          Select a node from explorer to modify workspace stream
+        </p>
       </div>
     );
   }
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-slate-950 border-l border-slate-900 overflow-hidden">
+    <div className="flex-1 flex flex-col h-full bg-[#0A0A0A] border-l border-white/10 overflow-hidden">
       {/* File Header */}
-      <div className="flex items-center justify-between px-4 py-2 bg-slate-900 border-b border-slate-800 shrink-0">
+      <div className="flex items-center justify-between px-4 py-3 bg-[#0A0A0A] border-b border-white/10 shrink-0 select-none">
         <div className="flex items-center gap-2">
-          <span className="text-xs font-mono font-semibold text-slate-300 truncate max-w-xs md:max-w-md">
+          <span className="text-[11px] font-mono font-bold text-white/80 truncate max-w-xs md:max-w-md uppercase tracking-wider">
             {filePath}
           </span>
           {isEditing && (
-            <span className="text-[10px] bg-amber-500/10 text-amber-500 border border-amber-500/20 px-1.5 py-0.5 rounded">
-              Editing
+            <span className="text-[9px] bg-rose-600 text-white px-2 py-0.5 font-bold uppercase tracking-widest">
+              Live Write
             </span>
           )}
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-2">
           {isEditing ? (
             <>
               <button
                 onClick={handleCancel}
                 disabled={saving}
-                className="flex items-center gap-1 px-2.5 py-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded text-xs transition-colors cursor-pointer"
+                className="flex items-center gap-1 px-3 py-1 border border-white/10 text-white/60 hover:text-white hover:bg-white/5 rounded-none text-[10px] font-bold uppercase tracking-widest transition-colors cursor-pointer font-display"
               >
                 <X className="w-3.5 h-3.5" />
                 Cancel
@@ -116,24 +118,24 @@ export default function FileViewer({ filePath, onSaveCompleted }: FileViewerProp
               <button
                 onClick={handleSave}
                 disabled={saving}
-                className="flex items-center gap-1.5 px-2.5 py-1 bg-sky-500 hover:bg-sky-600 disabled:bg-sky-500/50 text-white rounded text-xs font-medium transition-colors cursor-pointer"
+                className="flex items-center gap-1.5 px-4 py-1 bg-white hover:bg-rose-600 text-black hover:text-white rounded-none text-[10px] font-bold uppercase tracking-widest transition-colors cursor-pointer font-display"
               >
                 {saving ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 ) : (
                   <Save className="w-3.5 h-3.5" />
                 )}
-                Save
+                Commit
               </button>
             </>
           ) : (
             <button
               onClick={() => setIsEditing(true)}
               disabled={loading}
-              className="flex items-center gap-1 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded text-xs transition-colors cursor-pointer"
+              className="flex items-center gap-1 px-4 py-1.5 bg-white text-black hover:bg-rose-600 hover:text-white rounded-none text-[10px] font-bold uppercase tracking-widest transition-colors cursor-pointer font-display"
             >
               <Edit3 className="w-3.5 h-3.5" />
-              Edit File
+              Edit Stream
             </button>
           )}
         </div>
@@ -142,26 +144,26 @@ export default function FileViewer({ filePath, onSaveCompleted }: FileViewerProp
       {/* Message Notifications */}
       {message && (
         <div
-          className={`flex items-start gap-2 px-4 py-2.5 text-xs border-b ${
+          className={`flex items-start gap-2.5 px-4 py-3 text-[10px] font-mono border-b uppercase tracking-wide select-none ${
             message.type === 'success'
-              ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-              : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+              ? 'bg-emerald-600/10 text-emerald-400 border-emerald-600/20'
+              : 'bg-rose-600/10 text-rose-400 border-rose-600/20'
           }`}
         >
           {message.type === 'success' ? (
-            <CheckCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <CheckCircle className="w-4 h-4 shrink-0 mt-0.5 text-emerald-500" />
           ) : (
-            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-500" />
           )}
-          <span className="flex-1 font-sans">{message.text}</span>
+          <span className="flex-1 font-bold">{message.text}</span>
         </div>
       )}
 
       {/* Code Area */}
       <div className="flex-1 overflow-auto relative">
         {loading ? (
-          <div className="absolute inset-0 flex items-center justify-center bg-slate-950/75 z-10">
-            <Loader2 className="w-6 h-6 animate-spin text-sky-500" />
+          <div className="absolute inset-0 flex items-center justify-center bg-[#0A0A0A]/80 z-10">
+            <Loader2 className="w-6 h-6 animate-spin text-rose-600" />
           </div>
         ) : null}
 
@@ -169,12 +171,12 @@ export default function FileViewer({ filePath, onSaveCompleted }: FileViewerProp
           <textarea
             value={content}
             onChange={(e) => setContent(e.target.value)}
-            className="w-full h-full p-4 bg-slate-950 text-slate-300 font-mono text-xs focus:outline-none resize-none select-text border-0 leading-relaxed overflow-y-auto"
+            className="w-full h-full p-4 bg-[#0A0A0A] text-[#F5F5F5] font-mono text-xs focus:outline-none resize-none select-text border-0 leading-relaxed overflow-y-auto custom-scrollbar"
             style={{ tabSize: 2, MozTabSize: 2 }}
           />
         ) : (
-          <pre className="w-full h-full p-4 text-slate-300 font-mono text-xs overflow-auto select-text leading-relaxed bg-slate-950 whitespace-pre-wrap">
-            {content || <span className="text-slate-600 italic">This file is empty</span>}
+          <pre className="w-full h-full p-4 text-white/80 font-mono text-xs overflow-auto select-text leading-relaxed bg-[#0A0A0A] whitespace-pre-wrap custom-scrollbar">
+            {content || <span className="text-white/35 italic uppercase tracking-wider">[ Workspace File is Empty ]</span>}
           </pre>
         )}
       </div>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Folder, File, ChevronRight, ChevronDown, RefreshCw, Eye, Save } from 'lucide-react';
+import { Folder, File, ChevronRight, ChevronDown, RefreshCw } from 'lucide-react';
 
 interface FileNode {
   name: string;
@@ -67,19 +67,19 @@ export default function FileExplorer({ onFileSelect, selectedFilePath, refreshTr
         <div key={node.path} className="flex flex-col">
           <button
             onClick={() => toggleExpand(node.path)}
-            className="flex items-center gap-1.5 py-1 px-2 rounded-sm hover:bg-slate-800 text-left text-xs font-medium text-slate-300 transition-colors w-full cursor-pointer"
-            style={{ paddingLeft: `${depth * 12 + 8}px` }}
+            className="flex items-center gap-2 py-1.5 px-2.5 hover:bg-white/5 text-left text-xs font-bold text-white/80 transition-colors w-full cursor-pointer rounded-none uppercase tracking-wide font-display"
+            style={{ paddingLeft: `${depth * 12 + 10}px` }}
           >
             {isExpanded ? (
-              <ChevronDown className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+              <ChevronDown className="w-3.5 h-3.5 text-white/40 shrink-0" />
             ) : (
-              <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+              <ChevronRight className="w-3.5 h-3.5 text-white/40 shrink-0" />
             )}
-            <Folder className="w-3.5 h-3.5 text-amber-400 shrink-0 fill-amber-400/20" />
+            <Folder className="w-3.5 h-3.5 text-rose-600 shrink-0 fill-rose-600/10" />
             <span className="truncate">{node.name}</span>
           </button>
           {isExpanded && node.children && (
-            <div className="flex flex-col">
+            <div className="flex flex-col border-l border-white/5 ml-3.5">
               {node.children.map((child) => renderNode(child, depth + 1))}
             </div>
           )}
@@ -90,14 +90,14 @@ export default function FileExplorer({ onFileSelect, selectedFilePath, refreshTr
         <button
           key={node.path}
           onClick={() => onFileSelect(node.path)}
-          className={`flex items-center gap-1.5 py-1 px-2 rounded-sm text-left text-xs transition-colors w-full cursor-pointer ${
+          className={`flex items-center gap-2 py-1.5 px-2.5 text-left text-xs transition-all duration-150 w-full cursor-pointer rounded-none font-mono ${
             isSelected
-              ? 'bg-sky-500/20 text-sky-400 font-medium border-l-2 border-sky-400'
-              : 'hover:bg-slate-800 text-slate-400'
+              ? 'bg-white/5 text-white font-bold border-l-2 border-rose-600'
+              : 'hover:bg-white/5 text-white/60'
           }`}
-          style={{ paddingLeft: `${depth * 12 + 18}px` }}
+          style={{ paddingLeft: `${depth * 12 + 15}px` }}
         >
-          <File className={`w-3.5 h-3.5 shrink-0 ${isSelected ? 'text-sky-400' : 'text-slate-500'}`} />
+          <File className={`w-3.5 h-3.5 shrink-0 ${isSelected ? 'text-rose-600' : 'text-white/30'}`} />
           <span className="truncate">{node.name}</span>
         </button>
       );
@@ -105,25 +105,27 @@ export default function FileExplorer({ onFileSelect, selectedFilePath, refreshTr
   };
 
   return (
-    <div className="flex flex-col h-full bg-slate-900 border-r border-slate-800">
-      <div className="flex items-center justify-between p-3 border-b border-slate-800 bg-slate-950">
+    <div className="flex flex-col h-full bg-[#0A0A0A] border-r border-white/10">
+      <div className="flex items-center justify-between p-4 border-b border-white/10 bg-[#0A0A0A]">
         <div className="flex items-center gap-2">
-          <Folder className="w-4 h-4 text-sky-400" />
-          <span className="text-xs font-semibold tracking-wider uppercase text-slate-400">Workspace Files</span>
+          <Folder className="w-4 h-4 text-rose-600" />
+          <span className="text-[10px] font-display font-black tracking-[0.25em] uppercase text-white/80">
+            Explorer Nodes
+          </span>
         </div>
         <button
           onClick={fetchFiles}
           disabled={loading}
-          className="p-1 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 disabled:opacity-50 transition-colors cursor-pointer"
-          title="Refresh workspace files"
+          className="p-1 rounded-none text-white/40 hover:text-white hover:bg-white/5 disabled:opacity-50 transition-colors cursor-pointer"
+          title="Sync Node Directory"
         >
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-rose-600' : ''}`} />
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-2 space-y-0.5 custom-scrollbar">
+      <div className="flex-1 overflow-y-auto p-2.5 space-y-0.5 custom-scrollbar bg-[#0A0A0A]">
         {files.length === 0 ? (
-          <div className="p-4 text-center text-slate-500 text-xs">No files found</div>
+          <div className="p-4 text-center text-white/40 text-xs font-mono uppercase tracking-wider">Empty Directory</div>
         ) : (
           files.map((file) => renderNode(file))
         )}

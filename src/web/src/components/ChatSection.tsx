@@ -25,10 +25,10 @@ interface ChatSectionProps {
 }
 
 const SAMPLE_PROMPTS = [
-  { label: '🔍 Explain Directory', prompt: 'explain this directory and list the contents' },
-  { label: '💾 Save Demo File', prompt: 'save a demo file called hello.ts with a console log and show it' },
-  { label: '🧪 Run Linter Check', prompt: 'run the workspace linter command and report if there are any issues' },
-  { label: '🛠️ Create Temp Script', prompt: 'create a script to print system info and run it' },
+  { label: '🔍 Structure', prompt: 'explain this directory and list the contents' },
+  { label: '💾 Write Script', prompt: 'save a demo file called hello.ts with a console log and show it' },
+  { label: '🧪 Lint Workspace', prompt: 'run the workspace linter command and report if there are any issues' },
+  { label: '🛠️ Sys Information', prompt: 'create a script to print system info and run it' },
 ];
 
 export default function ChatSection({
@@ -61,85 +61,105 @@ export default function ChatSection({
     return /<RUN>([\s\S]*?)<\/RUN>/.test(text);
   };
 
-  const handleCopyCode = (code: string) => {
-    navigator.clipboard.writeText(code);
-  };
-
   return (
-    <div className="flex flex-col h-full bg-slate-950">
+    <div className="flex flex-col h-full bg-[#0A0A0A]">
       {/* Top Navbar */}
-      <div className="flex flex-wrap items-center justify-between p-3 border-b border-slate-900 bg-slate-900 text-slate-300 gap-2 shrink-0 select-none">
+      <div className="flex flex-wrap items-center justify-between p-4 border-b border-white/10 bg-[#0A0A0A] text-[#F5F5F5] gap-3 shrink-0 select-none">
         <div className="flex items-center gap-2">
-          <Sparkles className="w-4 h-4 text-sky-400 animate-pulse" />
-          <span className="font-sans font-bold text-xs tracking-wider uppercase text-slate-200">Tell AI Console</span>
+          <Sparkles className="w-4 h-4 text-rose-600 animate-pulse" />
+          <span className="font-display font-black text-xs tracking-[0.2em] uppercase text-[#F5F5F5]">
+            Console Interface
+          </span>
         </div>
 
-        <div className="flex items-center gap-3 text-xs">
+        <div className="flex flex-wrap items-center gap-4 text-xs">
           {/* Model Selector */}
-          <div className="flex items-center gap-1.5">
-            <span className="text-slate-500 font-medium">Model:</span>
+          <div className="flex items-center gap-2">
+            <span className="text-white/40 uppercase tracking-widest text-[9px] font-bold">Model:</span>
             <select
               value={modelAlias}
               onChange={(e) => onModelAliasChange(e.target.value)}
-              className="bg-slate-950 border border-slate-800 rounded px-2 py-1 text-slate-300 font-mono text-[11px] focus:outline-none focus:ring-1 focus:ring-sky-500 cursor-pointer"
+              className="bg-[#121212] border border-white/20 rounded-none px-2.5 py-1 text-[#F5F5F5] font-mono text-[10px] focus:outline-none focus:border-white transition-colors cursor-pointer uppercase"
             >
               {models.map((m) => (
-                <option key={m.alias} value={m.alias}>
-                  {m.alias} ({m.vendor}: {m.model.slice(0, 15)}...)
+                <option key={m.alias} value={m.alias} className="bg-[#0A0A0A]">
+                  {m.alias} : {m.vendor.toUpperCase()}
                 </option>
               ))}
             </select>
           </div>
 
           {/* Chain Mode Toggle */}
-          <label className="flex items-center gap-1.5 cursor-pointer hover:text-white transition-colors">
+          <label className="flex items-center gap-2 cursor-pointer text-white/50 hover:text-white transition-colors">
             <input
               type="checkbox"
               checked={chainMode}
               onChange={(e) => onChainModeChange(e.target.checked)}
-              className="rounded bg-slate-950 border-slate-800 text-sky-500 focus:ring-0 focus:ring-offset-0 cursor-pointer w-3.5 h-3.5"
+              className="accent-rose-600 rounded-none bg-[#121212] border-white/20 focus:ring-0 cursor-pointer w-3.5 h-3.5"
             />
-            <span className="text-slate-400 font-medium text-[11px]">Chain Mode (--chain)</span>
+            <span className="font-bold tracking-wider text-[9px] uppercase">Chain Loop</span>
           </label>
 
           {/* Yes Auto Execute Toggle */}
-          <label className="flex items-center gap-1.5 cursor-pointer hover:text-white transition-colors">
+          <label className="flex items-center gap-2 cursor-pointer text-white/50 hover:text-white transition-colors">
             <input
               type="checkbox"
               checked={autoExecute}
               onChange={(e) => onAutoExecuteChange(e.target.checked)}
-              className="rounded bg-slate-950 border-slate-800 text-sky-500 focus:ring-0 focus:ring-offset-0 cursor-pointer w-3.5 h-3.5"
+              className="accent-rose-600 rounded-none bg-[#121212] border-white/20 focus:ring-0 cursor-pointer w-3.5 h-3.5"
             />
-            <span className="text-slate-400 font-medium text-[11px]">Auto-Run (-y)</span>
+            <span className="font-bold tracking-wider text-[9px] uppercase">Auto-Run (-y)</span>
           </label>
         </div>
       </div>
 
       {/* Messages Scroll Area */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar select-text bg-[#030712]">
+      <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar select-text bg-[#0A0A0A] relative">
+        {/* Subtle grid line backdrop for premium brutalist look */}
+        <div className="absolute inset-0 opacity-[0.03] pointer-events-none grid grid-cols-6 h-full w-full">
+          <div className="border-r border-white h-full"></div>
+          <div className="border-r border-white h-full"></div>
+          <div className="border-r border-white h-full"></div>
+          <div className="border-r border-white h-full"></div>
+          <div className="border-r border-white h-full"></div>
+        </div>
+
         {messages.length === 0 ? (
-          <div className="h-full flex flex-col justify-center items-center max-w-lg mx-auto text-center space-y-4 pt-12">
-            <div className="bg-sky-500/10 p-3.5 rounded-full border border-sky-500/20 shadow-lg shadow-sky-500/5">
-              <Sparkles className="w-8 h-8 text-sky-400" />
-            </div>
-            <div className="space-y-1.5 select-none">
-              <h1 className="text-sm font-semibold text-slate-200">Welcome to the Tell AI Interactive Playground</h1>
-              <p className="text-xs text-slate-400 font-sans max-w-sm mx-auto leading-relaxed">
-                Provide natural language commands and witness your terminal assistant run tasks, draft source code, and refactor code inside this sandbox.
-              </p>
+          <div className="h-full flex flex-col justify-center max-w-xl mx-auto space-y-8 pt-8 relative z-10">
+            {/* Elegant Top Annotation */}
+            <div className="text-[10px] font-bold tracking-[0.5em] text-white/40 uppercase">
+              [ Sandbox Assistant v1.2 ]
             </div>
 
-            {/* Quick Actions / Sample Accelerator */}
-            <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-2 pt-4 select-none">
-              {SAMPLE_PROMPTS.map((sample, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => onSelectSample(sample.prompt)}
-                  className="p-2.5 bg-slate-900/50 hover:bg-slate-900 hover:border-slate-850 border border-slate-900 rounded-md text-left text-xs text-slate-400 hover:text-slate-200 cursor-pointer transition-all duration-150"
-                >
-                  {sample.label}
-                </button>
-              ))}
+            {/* Massive Displays Slogan from Design HTML */}
+            <div className="space-y-2 select-none">
+              <h1 className="text-7xl sm:text-8xl font-black leading-[0.85] uppercase tracking-tighter -ml-1 text-white">
+                Speak<br/>Deeply.
+              </h1>
+              <div className="mt-4 flex gap-4 items-center">
+                <div className="h-[1px] w-12 bg-white/20"></div>
+                <p className="text-sm font-light leading-relaxed tracking-tight text-white/70 italic">
+                  Tell your story. The engine is mapping your terminal directives to a synthetic reality in real-time.
+                </p>
+              </div>
+            </div>
+
+            {/* Quick Actions / Sample Accelerator styled exactly like the synthesis badges in the design */}
+            <div className="space-y-2">
+              <div className="text-[9px] uppercase font-bold tracking-[0.2em] text-white/30">
+                Synthesis Anchors
+              </div>
+              <div className="grid grid-cols-2 gap-3 pt-1 select-none">
+                {SAMPLE_PROMPTS.map((sample, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => onSelectSample(sample.prompt)}
+                    className="px-4 py-2.5 border border-white/10 text-left text-[10px] font-bold uppercase tracking-widest text-[#F5F5F5] hover:bg-white hover:text-black hover:border-white transition-all duration-150 cursor-pointer rounded-none font-display"
+                  >
+                    {sample.label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         ) : (
@@ -154,12 +174,12 @@ export default function ChatSection({
             return (
               <div
                 key={m.id}
-                className={`flex gap-3 max-w-3xl mx-auto ${isUser ? 'justify-end' : 'justify-start'}`}
+                className={`flex gap-3 max-w-3xl mx-auto relative z-10 ${isUser ? 'justify-end' : 'justify-start'}`}
               >
                 {/* Assistant Avatar */}
                 {!isUser && (
-                  <div className="w-7 h-7 bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 rounded-full flex items-center justify-center shrink-0 select-none">
-                    <BrainCircuit className="w-4 h-4" />
+                  <div className="w-8 h-8 bg-white/5 border border-white/15 text-white rounded-none flex items-center justify-center shrink-0 select-none">
+                    <BrainCircuit className="w-4 h-4 text-rose-500" />
                   </div>
                 )}
 
@@ -167,21 +187,21 @@ export default function ChatSection({
                 <div className="space-y-2 max-w-[85%]">
                   {/* Thought/Reasoning Panel */}
                   {m.thought && (
-                    <div className="bg-slate-950 border-l-2 border-slate-700 p-2.5 rounded text-[11px] text-slate-400 font-mono space-y-1">
-                      <div className="flex items-center gap-1.5 text-[10px] text-slate-500 font-semibold select-none">
-                        <BrainCircuit className="w-3.5 h-3.5" />
-                        <span>Thinking Process</span>
+                    <div className="bg-[#121212] border-l-2 border-rose-600 p-3.5 text-[11px] text-white/60 font-mono space-y-1">
+                      <div className="flex items-center gap-1.5 text-[9px] text-white/40 font-bold uppercase tracking-widest select-none">
+                        <BrainCircuit className="w-3.5 h-3.5 text-rose-600" />
+                        <span>Cognitive Sequence</span>
                       </div>
-                      <div className="leading-relaxed pl-1">{m.thought}</div>
+                      <div className="leading-relaxed pl-1 whitespace-pre-wrap">{m.thought}</div>
                     </div>
                   )}
 
                   {cleanContent && (
                     <div
-                      className={`p-3 rounded-lg text-xs leading-relaxed font-sans ${
+                      className={`p-4 rounded-none text-xs leading-relaxed ${
                         isUser
-                          ? 'bg-sky-500/10 text-sky-200 border border-sky-500/20 selection:bg-sky-950'
-                          : 'bg-slate-900 text-slate-200 border border-slate-850 selection:bg-indigo-950'
+                          ? 'bg-white/5 text-white border border-white/25 selection:bg-rose-900/50'
+                          : 'bg-[#121212] text-white/90 border border-white/10 selection:bg-rose-900/50'
                       }`}
                     >
                       <div className="whitespace-pre-wrap leading-relaxed select-text font-sans">
@@ -190,9 +210,9 @@ export default function ChatSection({
 
                       {/* Run tag notification inside chat bubble */}
                       {containsRuns && (
-                        <div className="mt-2.5 flex items-center gap-1.5 text-[10px] bg-amber-500/10 text-amber-500 border border-amber-500/20 px-2 py-1 rounded select-none">
+                        <div className="mt-3 flex items-center gap-2 text-[10px] bg-rose-600/10 text-rose-400 border border-rose-600/25 px-2.5 py-1.5 rounded-none font-mono tracking-wide select-none">
                           <Terminal className="w-3.5 h-3.5 shrink-0" />
-                          <span>Generated command actions inside terminal below.</span>
+                          <span className="uppercase font-bold">SCRIPT GENERATED IN TERMINAL PIPELINE</span>
                         </div>
                       )}
                     </div>
@@ -201,8 +221,8 @@ export default function ChatSection({
 
                 {/* User Avatar */}
                 {isUser && (
-                  <div className="w-7 h-7 bg-sky-500/10 border border-sky-500/20 text-sky-400 rounded-full flex items-center justify-center shrink-0 select-none">
-                    <User className="w-4 h-4" />
+                  <div className="w-8 h-8 bg-white text-black rounded-none flex items-center justify-center shrink-0 select-none font-mono font-bold text-xs border border-white">
+                    U
                   </div>
                 )}
               </div>
@@ -215,21 +235,21 @@ export default function ChatSection({
       {/* Message Input Bar */}
       <form
         onSubmit={onSubmit}
-        className="p-3 border-t border-slate-900 bg-slate-900 select-none shrink-0"
+        className="p-4 border-t border-white/10 bg-[#0A0A0A] select-none shrink-0"
       >
-        <div className="flex items-center gap-2 max-w-3xl mx-auto">
+        <div className="flex items-center gap-3 max-w-3xl mx-auto bg-[#121212] border border-white/15 px-3 py-1">
           <input
             type="text"
             value={inputPrompt}
             onChange={(e) => onInputChange(e.target.value)}
             disabled={loading}
-            placeholder={loading ? "Agent is processing in chain loop..." : "Ask Tell AI to perform a workspace task..."}
-            className="flex-1 bg-slate-950 border border-slate-800 rounded px-3 py-2 text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-sky-500 leading-relaxed font-sans select-text"
+            placeholder={loading ? "PROCESSOR EXECUTING LOOP..." : "PROMPT CONSOLE FOR DIRECTIVES..."}
+            className="flex-1 bg-transparent border-none py-2 text-xs text-[#F5F5F5] placeholder-white/35 focus:outline-none leading-relaxed font-sans select-text uppercase tracking-wide"
           />
           <button
             type="submit"
             disabled={loading || !inputPrompt.trim()}
-            className="p-2 bg-sky-500 hover:bg-sky-600 disabled:bg-sky-500/30 disabled:text-slate-500 text-white rounded-md transition-colors cursor-pointer shrink-0 shadow-lg shadow-sky-500/10"
+            className="p-2 bg-white text-black hover:bg-rose-600 hover:text-white disabled:bg-white/10 disabled:text-white/20 transition-all duration-150 rounded-none shrink-0 cursor-pointer"
           >
             <Send className="w-3.5 h-3.5" />
           </button>
