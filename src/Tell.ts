@@ -212,33 +212,51 @@ function sanitizeContextName(id: string): string {
   return id.replace(/[^a-zA-Z0-9._@-]/g, '_').slice(0, 128);
 }
 
-function resolveContextReflog(dir: string, index: number): string | null {
-  if (!fs.existsSync(dir)) return null;
-  const files = fs
-    .readdirSync(dir)
-    .filter((f) => f.endsWith('.txt'))
-    .map((f) => ({ name: f, mtime: fs.statSync(path.join(dir, f)).mtimeMs }))
-    .sort((a, b) => b.mtime - a.mtime);
-  return files[index]?.name ?? null;
+// Contexts explicitly created via -c <id> are logged in <projectDir>/.order
+// (oldest first) so they can be addressed by creation index later, independent
+// of whether they were hash- or name-based — e.g. -c context@2.
+function savedContexts(projectDir: string): string[] {
+  const orderFile = path.join(projectDir, '.order');
+  if (!fs.existsSync(orderFile)) return [];
+  const order = fs.readFileSync(orderFile, 'utf8').split('\n').filter(Boolean);
+  return order.filter((name) => fs.existsSync(path.join(projectDir, name)));
+}
+
+function recordNewContext(file: string): void {
+  const projectDir = path.dirname(file);
+  ensureDir(projectDir);
+  const name = path.basename(file);
+  if (!savedContexts(projectDir).includes(name)) {
+    fs.appendFileSync(path.join(projectDir, '.order'), `${name}\n`, 'utf8');
+  }
+}
+
+function contextOrdinal(file: string): number | null {
+  const index = savedContexts(path.dirname(file)).indexOf(path.basename(file));
+  return index === -1 ? null : index;
 }
 
 function contextFile(model: string, explicitId?: string): string {
   const baseDir = path.join(os.homedir(), '.ai', 'tell_context');
 
   if (explicitId) {
-    // Explicit ids are scoped per project (by cwd), so the same name or hash
-    // prefix in two different projects never resolves to the same file.
+    // Explicit ids are scoped per project (by cwd), so the same name, hash
+    // prefix, or ordinal in two different projects never resolves to the same file.
     const projectHash = createHash('sha256').update(process.cwd()).digest('hex').slice(0, 16);
     const projectDir = path.join(baseDir, projectHash);
 
-    // CONTEXT@N — reflog-style index into project contexts sorted by mtime.
-    const reflogMatch = explicitId.match(/^CONTEXT@(\d+)$/i);
-    if (reflogMatch) {
-      const index = Number(reflogMatch[1]);
-      const found = resolveContextReflog(projectDir, index);
-      if (found) return path.join(projectDir, found);
-      const count = fs.existsSync(projectDir) ? fs.readdirSync(projectDir).filter((f) => f.endsWith('.txt')).length : 0;
-      throw new Error(`Context ${explicitId} not found — only ${count} context${count !== 1 ? 's' : ''} available`);
+    // Git-reflog-style ordinal: context@0 is the first context ever explicitly
+    // saved in this project, context@1 the second, and so on.
+    const ordinalMatch = explicitId.match(/^context@(\d+)$/i);
+    if (ordinalMatch) {
+      const saved = savedContexts(projectDir);
+      const target = saved[Number(ordinalMatch[1])];
+      if (!target) {
+        throw new Error(
+          `No context@${ordinalMatch[1]} — this project has ${saved.length} saved (context@0..context@${Math.max(saved.length - 1, 0)})`,
+        );
+      }
+      return path.join(projectDir, target);
     }
 
     const name = sanitizeContextName(explicitId);
@@ -258,6 +276,7 @@ function contextFile(model: string, explicitId?: string): string {
     }
 
     // No existing match — this id names a brand-new context.
+    recordNewContext(exact);
     return exact;
   }
 
@@ -470,10 +489,7 @@ function buildProgram(argv: string[]): Command {
     .description('One-shot terminal assistant')
     .argument('[input...]', 'optional model followed by the prompt, or just the prompt')
     .option('-m, --model <model>', 'model shortcode or full model spec (use -m --help to list)')
-    .option(
-      '-c, --context [id]',
-      'persist context; bare = default per-project session, or pass a saved id (hash prefix or name)',
-    )
+    .option('-c, --context [id]', 'persist context; bare = default per-project session, or pass a saved id (hash prefix or name)')
     .option('-y, --yes', 'execute requested commands without confirmation')
     .option('--chain', 'continue after command output until the assistant gives a final answer')
     .option('-i, --input', 'read stdin and include it with the prompt')
@@ -610,7 +626,9 @@ async function runTell(model: string, prompt: string, opts: CliOptions): Promise
       );
       process.exitCode = 1;
     }
-    process.stderr.write(`\x1b[2mContext: ${path.basename(context, '.txt')}\x1b[0m\n`);
+    const ordinal = contextOrdinal(context);
+    const ordinalSuffix = ordinal === null ? '' : ` (context@${ordinal})`;
+    process.stderr.write(`\x1b[2mContext: ${path.basename(context, '.txt')}${ordinalSuffix}\x1b[0m\n`);
   }
 }
 
