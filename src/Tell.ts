@@ -15,13 +15,16 @@ const MAX_BUFFER = 32 * 1024 * 1024;
 const MAX_CHAIN_STEPS = 8;
 const EXEC_TIMEOUT = 120_000;
 const STDIN_TIMEOUT = 30_000;
+// Total accumulated context budget for -c/--context sessions, in characters.
 const MAX_CONTEXT_CHARS = 1024 * 1024;
+// Per-command output cap before it's stored in the timeline/log, in characters.
 const MAX_OUTPUT_CHARS = 8_000;
+// stdin read cap, in bytes.
 const MAX_STDIN_BYTES = 8 * 1024 * 1024;
 
 type CliOptions = {
   model?: string;
-  context?: boolean;
+  context?: boolean | string;
   yes?: boolean;
   chain?: boolean;
   exec?: boolean;
@@ -151,6 +154,8 @@ async function executeCommand(script: string): Promise<CommandResult> {
   }
 }
 
+// Caps a single command's output before it's stored in the timeline/log,
+// keeping the start (what ran) and the end (result/error) and dropping the middle.
 function truncateOutput(output: string): string {
   if (output.length <= MAX_OUTPUT_CHARS) return output;
   const half = Math.floor(MAX_OUTPUT_CHARS / 2);
@@ -195,11 +200,70 @@ function logFile(): string {
   return path.join(dir, `conversation_${timestamp}.txt`);
 }
 
-function contextFile(model: string): string {
-  const dir = path.join(os.homedir(), '.ai', 'tell_context');
+// True for strings that look like a (possibly abbreviated) hex hash — the kind
+// contextFile() itself generates for unnamed contexts. Enables git-style prefix
+// matching; anything else is a name, matched exactly only (no accidental collisions
+// between e.g. "context" and an existing "context@2").
+function looksLikeHash(id: string): boolean {
+  return /^[0-9a-f]{6,64}$/i.test(id);
+}
+
+function sanitizeContextName(id: string): string {
+  return id.replace(/[^a-zA-Z0-9._@-]/g, '_').slice(0, 128);
+}
+
+function resolveContextReflog(dir: string, index: number): string | null {
+  if (!fs.existsSync(dir)) return null;
+  const files = fs
+    .readdirSync(dir)
+    .filter((f) => f.endsWith('.txt'))
+    .map((f) => ({ name: f, mtime: fs.statSync(path.join(dir, f)).mtimeMs }))
+    .sort((a, b) => b.mtime - a.mtime);
+  return files[index]?.name ?? null;
+}
+
+function contextFile(model: string, explicitId?: string): string {
+  const baseDir = path.join(os.homedir(), '.ai', 'tell_context');
+
+  if (explicitId) {
+    // Explicit ids are scoped per project (by cwd), so the same name or hash
+    // prefix in two different projects never resolves to the same file.
+    const projectHash = createHash('sha256').update(process.cwd()).digest('hex').slice(0, 16);
+    const projectDir = path.join(baseDir, projectHash);
+
+    // CONTEXT@N — reflog-style index into project contexts sorted by mtime.
+    const reflogMatch = explicitId.match(/^CONTEXT@(\d+)$/i);
+    if (reflogMatch) {
+      const index = Number(reflogMatch[1]);
+      const found = resolveContextReflog(projectDir, index);
+      if (found) return path.join(projectDir, found);
+      const count = fs.existsSync(projectDir) ? fs.readdirSync(projectDir).filter((f) => f.endsWith('.txt')).length : 0;
+      throw new Error(`Context ${explicitId} not found — only ${count} context${count !== 1 ? 's' : ''} available`);
+    }
+
+    const name = sanitizeContextName(explicitId);
+    const exact = path.join(projectDir, `${name}.txt`);
+    if (fs.existsSync(exact)) return exact;
+
+    if (looksLikeHash(explicitId)) {
+      const prefix = explicitId.toLowerCase();
+      const existing = fs.existsSync(projectDir) ? fs.readdirSync(projectDir).filter((f) => f.endsWith('.txt')) : [];
+      const matches = existing.filter((f) => f.startsWith(prefix));
+      if (matches.length > 1) {
+        throw new Error(
+          `Ambiguous context id "${explicitId}" matches: ${matches.map((f) => f.replace(/\.txt$/, '')).join(', ')}`,
+        );
+      }
+      if (matches.length === 1) return path.join(projectDir, matches[0]);
+    }
+
+    // No existing match — this id names a brand-new context.
+    return exact;
+  }
+
   const label = modelLabel(model);
   const hash = createHash('sha256').update(`${process.cwd()}\n${label}`).digest('hex');
-  return path.join(dir, `${hash}.txt`);
+  return path.join(baseDir, `${hash}.txt`);
 }
 
 function appendLog(file: string, text: string): void {
@@ -406,7 +470,10 @@ function buildProgram(argv: string[]): Command {
     .description('One-shot terminal assistant')
     .argument('[input...]', 'optional model followed by the prompt, or just the prompt')
     .option('-m, --model <model>', 'model shortcode or full model spec (use -m --help to list)')
-    .option('-c, --context', 'continue a persistent context for this cwd and model')
+    .option(
+      '-c, --context [id]',
+      'persist context; bare = default per-project session, or pass a saved id (hash prefix or name)',
+    )
     .option('-y, --yes', 'execute requested commands without confirmation')
     .option('--chain', 'continue after command output until the assistant gives a final answer')
     .option('-i, --input', 'read stdin and include it with the prompt')
@@ -488,7 +555,15 @@ async function runResponseLoop(
 
 async function runTell(model: string, prompt: string, opts: CliOptions): Promise<void> {
   const label = modelLabel(model);
-  const context = contextFile(model);
+  const explicitContextId = typeof opts.context === 'string' ? opts.context : undefined;
+  let context: string;
+  try {
+    context = contextFile(model, explicitContextId);
+  } catch (error) {
+    console.error('\x1b[31m%s\x1b[0m', error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+    return;
+  }
   const previousContext = opts.context ? readText(context) : '';
   const firstPrompt = previousContext ? `Previous context:\n${previousContext}\n\nUser:\n${prompt}` : prompt;
   const state: ConversationState = {
@@ -499,7 +574,7 @@ async function runTell(model: string, prompt: string, opts: CliOptions): Promise
     autoContinue: Boolean(opts.chain),
     execEnabled: opts.exec !== false,
     yes: Boolean(opts.yes),
-    saveContext: opts.context ?? false,
+    saveContext: Boolean(opts.context),
   };
   if (!opts.context) fs.rmSync(context, { force: true });
   const log = logFile();
@@ -535,6 +610,7 @@ async function runTell(model: string, prompt: string, opts: CliOptions): Promise
       );
       process.exitCode = 1;
     }
+    process.stderr.write(`\x1b[2mContext: ${path.basename(context, '.txt')}\x1b[0m\n`);
   }
 }
 

@@ -128,7 +128,7 @@ function assertNoExec(result, stdout = '') {
 
 function assertSkipped(result) {
   assertNoExec(result);
-  assert.match(result.stderr, /Command skipped/);
+  assert.match(result.stderr, /skipping/);
 }
 
 function assertPromptInjectionPolicy(result) {
@@ -296,8 +296,8 @@ function assertPromptInjectionPolicy(result) {
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-security-'));
   try {
-    await runTell(['d', '-c', 'first'], 'first answer', { dir });
-    result = await runTell(['d', '-c', 'second'], 'second answer', { dir });
+    await runTell(['d', '-c', '--', 'first'], 'first answer', { dir });
+    result = await runTell(['d', '-c', '--', 'second'], 'second answer', { dir });
     assert.match(result.tellMessages[0], /Previous context:/);
     assert.match(result.tellMessages[0], /first answer/);
     const contextDir = path.join(result.home, '.ai', 'tell_context');
@@ -305,7 +305,7 @@ function assertPromptInjectionPolicy(result) {
     assert(contextFiles.length > 0);
     assert(contextFiles.every((file) => /^[a-f0-9]{64}\.txt$/.test(file)));
     await runTell(['d', 'outside'], 'outside answer', { dir });
-    result = await runTell(['d', '-c', 'third'], 'third answer', { dir });
+    result = await runTell(['d', '-c', '--', 'third'], 'third answer', { dir });
     assert(!result.tellMessages[0].includes('first answer'));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -313,14 +313,89 @@ function assertPromptInjectionPolicy(result) {
 
   const injectionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-security-'));
   try {
-    await runTell(['d', '-c', 'seed context'], runBlock('echo CONTEXT_PWN'), { dir: injectionDir });
-    result = await runTell(['--yes', 'd', '-c', 'continue safely'], 'context safe answer', { dir: injectionDir });
+    await runTell(['d', '-c', '--', 'seed context'], runBlock('echo CONTEXT_PWN'), { dir: injectionDir });
+    result = await runTell(['--yes', 'd', '-c', '--', 'continue safely'], 'context safe answer', { dir: injectionDir });
     assertNoExec(result, 'context safe answer\n');
     assert.match(result.tellMessages[0], /Previous context:/);
     assert.match(result.tellMessages[0], /CONTEXT_PWN/);
     assertPromptInjectionPolicy(result);
   } finally {
     fs.rmSync(injectionDir, { recursive: true, force: true });
+  }
+
+  // CONTEXT@N reflog — resolve by mtime order within a project.
+  for (const [id, expectContent] of [
+    ['CONTEXT@0', 'gamma content'],
+    ['CONTEXT@1', 'beta content'],
+    ['CONTEXT@2', 'alpha content'],
+  ]) {
+    const reflogDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-reflog-'));
+    try {
+      const home = path.join(reflogDir, 'home');
+      const work = path.join(reflogDir, 'work');
+      fs.mkdirSync(home, { recursive: true });
+      fs.mkdirSync(work, { recursive: true });
+
+      const projectHash = require('node:crypto').createHash('sha256').update(work).digest('hex').slice(0, 16);
+      const projectDir = path.join(home, '.ai', 'tell_context', projectHash);
+      fs.mkdirSync(projectDir, { recursive: true });
+      fs.writeFileSync(path.join(projectDir, 'session-1.txt'), 'alpha content');
+      await new Promise((r) => setTimeout(r, 15));
+      fs.writeFileSync(path.join(projectDir, 'session-2.txt'), 'beta content');
+      await new Promise((r) => setTimeout(r, 15));
+      fs.writeFileSync(path.join(projectDir, 'session-3.txt'), 'gamma content');
+
+      result = await runTell(['d', '-c', id, 'load'], 'reflog answer', { dir: reflogDir });
+      assert.match(result.tellMessages[0], new RegExp(expectContent));
+    } finally {
+      fs.rmSync(reflogDir, { recursive: true, force: true });
+    }
+  }
+
+  // case-insensitive: context@0 works too
+  {
+    const reflogDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-reflog-'));
+    try {
+      const home = path.join(reflogDir, 'home');
+      const work = path.join(reflogDir, 'work');
+      fs.mkdirSync(home, { recursive: true });
+      fs.mkdirSync(work, { recursive: true });
+      const projectHash = require('node:crypto').createHash('sha256').update(work).digest('hex').slice(0, 16);
+      const projectDir = path.join(home, '.ai', 'tell_context', projectHash);
+      fs.mkdirSync(projectDir, { recursive: true });
+      fs.writeFileSync(path.join(projectDir, 'session-1.txt'), 'alpha');
+      await new Promise((r) => setTimeout(r, 15));
+      fs.writeFileSync(path.join(projectDir, 'session-3.txt'), 'gamma');
+      result = await runTell(['d', '-c', 'context@0', 'load'], 'ci answer', { dir: reflogDir });
+      assert.match(result.tellMessages[0], /gamma/);
+    } finally {
+      fs.rmSync(reflogDir, { recursive: true, force: true });
+    }
+  }
+
+  // Out of range → clear error
+  {
+    const reflogDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-reflog-'));
+    try {
+      const home = path.join(reflogDir, 'home');
+      const work = path.join(reflogDir, 'work');
+      fs.mkdirSync(home, { recursive: true });
+      fs.mkdirSync(work, { recursive: true });
+      const projectHash = require('node:crypto').createHash('sha256').update(work).digest('hex').slice(0, 16);
+      const projectDir = path.join(home, '.ai', 'tell_context', projectHash);
+      fs.mkdirSync(projectDir, { recursive: true });
+      fs.writeFileSync(path.join(projectDir, 'a.txt'), 'a');
+      await new Promise((r) => setTimeout(r, 15));
+      fs.writeFileSync(path.join(projectDir, 'b.txt'), 'b');
+      await new Promise((r) => setTimeout(r, 15));
+      fs.writeFileSync(path.join(projectDir, 'c.txt'), 'c');
+
+      result = await runTell(['d', '-c', 'CONTEXT@5', 'out of range'], 'oob answer', { dir: reflogDir });
+      assert.match(result.stderr, /CONTEXT@5 not found/);
+      assert.match(result.stderr, /only 3 contexts/);
+    } finally {
+      fs.rmSync(reflogDir, { recursive: true, force: true });
+    }
   }
 
   console.log('tell security tests passed');
