@@ -4,9 +4,10 @@ import { Save, AlertCircle, CheckCircle, Edit3, X, Loader2 } from 'lucide-react'
 interface FileViewerProps {
   filePath: string | null;
   onSaveCompleted: () => void;
+  onCloseFile?: () => void;
 }
 
-export default function FileViewer({ filePath, onSaveCompleted }: FileViewerProps) {
+export default function FileViewer({ filePath, onSaveCompleted, onCloseFile }: FileViewerProps) {
   const [content, setContent] = useState<string>('');
   const [originalContent, setOriginalContent] = useState<string>('');
   const [isEditing, setIsEditing] = useState<boolean>(false);
@@ -136,6 +137,17 @@ export default function FileViewer({ filePath, onSaveCompleted }: FileViewerProp
             >
               <Edit3 className="w-3.5 h-3.5" />
               Edit Stream
+            </button>
+          )}
+
+          {onCloseFile && (
+            <button
+              onClick={onCloseFile}
+              className="flex items-center gap-1 px-3 py-1.5 border border-white/10 hover:border-rose-600/60 hover:bg-rose-950/20 text-white/50 hover:text-rose-400 text-[10px] font-bold uppercase tracking-widest transition-colors cursor-pointer font-display"
+              title="Close File Viewer"
+            >
+              <X className="w-3.5 h-3.5" />
+              Close
             </button>
           )}
         </div>

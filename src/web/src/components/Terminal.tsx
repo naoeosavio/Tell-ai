@@ -45,7 +45,7 @@ export interface TerminalTab {
 
 interface TerminalProps {
   lines: TerminalLine[];
-  onExecuteCommand: (command: string) => Promise<string>;
+  onExecuteCommand: (command: string, skipGlobalAppend?: boolean) => Promise<string>;
   onClear: () => void;
   pendingCommand: string | null;
   onConfirmPending: (editedCommand: string) => void;
@@ -257,7 +257,7 @@ export default function Terminal({
     }));
 
     try {
-      const output = await onExecuteCommand(cmd);
+      const output = await onExecuteCommand(cmd, true);
       updatePane(paneId, (p) => ({
         ...p,
         executing: false,
@@ -378,10 +378,15 @@ export default function Terminal({
       <div className="flex items-center justify-between px-3 py-1.5 bg-[#080808] border-b border-white/10 shrink-0 select-none">
         {/* Left: Shell Title + Tab list */}
         <div className="flex items-center gap-3 overflow-x-auto custom-scrollbar pr-2">
-          <div className="flex items-center gap-1.5 font-display font-black text-[10px] tracking-widest uppercase text-white/40 shrink-0 pr-1">
+          <div className="flex items-center gap-1.5 font-display font-black text-[10px] tracking-widest uppercase text-white/50 shrink-0 pr-1 select-none">
             <TerminalIcon className="w-3.5 h-3.5 text-rose-600 animate-pulse" />
-            <span className="hidden sm:inline">Interactive Core Shell</span>
-            <span className="text-rose-500 font-mono text-[9px] bg-rose-950/60 border border-rose-600/30 px-1.5 py-0.5 ml-1">
+            <span className="inline font-bold text-white/80">Console Interface</span>
+            {isExpanded && (
+              <span className="text-white/60 bg-white/10 px-1.5 py-0.5 text-[9px] font-bold tracking-wider">
+                Maximized
+              </span>
+            )}
+            <span className="text-rose-500 font-mono text-[9px] bg-rose-950/60 border border-rose-600/30 px-1.5 py-0.5 ml-0.5 font-semibold">
               TMUX
             </span>
           </div>
@@ -653,72 +658,6 @@ export default function Terminal({
                     <span className="font-mono text-[9px] uppercase tracking-widest">Executing bash process...</span>
                   </div>
                 )}
-              </div>
-
-              {/* Quick CLI AI Shortcuts Chips Bar */}
-              <div className="flex items-center gap-1 px-2 py-1 bg-[#0A0A0A] border-t border-white/5 overflow-x-auto custom-scrollbar shrink-0 select-none">
-                <span className="text-[9px] text-white/30 uppercase tracking-widest font-bold shrink-0 mr-0.5">
-                  CLI AI:
-                </span>
-                <button
-                  onClick={() =>
-                    updatePane(pane.id, (p) => ({
-                      ...p,
-                      customCommand: 'tell-ai "explique a estrutura do projeto"',
-                    }))
-                  }
-                  className="flex items-center gap-1 px-1.5 py-0.5 bg-rose-950/40 border border-rose-600/30 hover:border-rose-500 text-rose-300 text-[9px] rounded-none shrink-0 transition-colors cursor-pointer"
-                  title="Run Tell AI CLI query"
-                >
-                  <Sparkles className="w-2.5 h-2.5 text-rose-500" /> tell-ai
-                </button>
-
-                <button
-                  onClick={() =>
-                    updatePane(pane.id, (p) => ({
-                      ...p,
-                      customCommand: 'codex "analise o codigo e otimize"',
-                    }))
-                  }
-                  className="flex items-center gap-1 px-1.5 py-0.5 bg-white/5 border border-white/15 hover:border-white/30 text-white/80 text-[9px] rounded-none shrink-0 transition-colors cursor-pointer"
-                  title="Run Codex CLI tool"
-                >
-                  <Code className="w-2.5 h-2.5 text-blue-400" /> codex
-                </button>
-
-                <button
-                  onClick={() =>
-                    updatePane(pane.id, (p) => ({
-                      ...p,
-                      customCommand: 'opencode "list-routes"',
-                    }))
-                  }
-                  className="flex items-center gap-1 px-1.5 py-0.5 bg-white/5 border border-white/15 hover:border-white/30 text-white/80 text-[9px] rounded-none shrink-0 transition-colors cursor-pointer"
-                  title="Run OpenCode CLI tool"
-                >
-                  <Cpu className="w-2.5 h-2.5 text-emerald-400" /> opencode
-                </button>
-
-                <button
-                  onClick={() => handleExecuteInPane(pane.id, 'tail -n 30 server.ts')}
-                  className="px-1.5 py-0.5 bg-white/5 border border-white/10 hover:bg-white/10 text-white/60 text-[9px] shrink-0 transition-colors cursor-pointer"
-                >
-                  tail server.ts
-                </button>
-
-                <button
-                  onClick={() => handleExecuteInPane(pane.id, 'ls -la')}
-                  className="px-1.5 py-0.5 bg-white/5 border border-white/10 hover:bg-white/10 text-white/60 text-[9px] shrink-0 transition-colors cursor-pointer"
-                >
-                  ls -la
-                </button>
-
-                <button
-                  onClick={() => handleExecuteInPane(pane.id, 'git status')}
-                  className="px-1.5 py-0.5 bg-white/5 border border-white/10 hover:bg-white/10 text-white/60 text-[9px] shrink-0 transition-colors cursor-pointer"
-                >
-                  git status
-                </button>
               </div>
 
               {/* Pane Input Line */}

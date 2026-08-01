@@ -179,8 +179,10 @@ export default function App() {
   };
 
   // Trigger manual shell command execution directly from terminal input
-  const executeShellCommandManual = async (command: string): Promise<string> => {
-    appendTerminalLine('input', command);
+  const executeShellCommandManual = async (command: string, skipGlobalAppend = false): Promise<string> => {
+    if (!skipGlobalAppend) {
+      appendTerminalLine('input', command);
+    }
     try {
       const res = await fetch('/api/execute', {
         method: 'POST',
@@ -189,12 +191,16 @@ export default function App() {
       });
       const data = await res.json();
       const output = data.output || '';
-      appendTerminalLine('output', output);
+      if (!skipGlobalAppend) {
+        appendTerminalLine('output', output);
+      }
       setRefreshFileTreeTrigger((prev) => prev + 1); // reload workspace files
       return output;
     } catch (error: any) {
       const errMsg = error.message || 'Execution error';
-      appendTerminalLine('error', errMsg);
+      if (!skipGlobalAppend) {
+        appendTerminalLine('error', errMsg);
+      }
       return errMsg;
     }
   };
@@ -355,6 +361,7 @@ export default function App() {
               <FileViewer
                 filePath={selectedFilePath}
                 onSaveCompleted={() => setRefreshFileTreeTrigger((prev) => prev + 1)}
+                onCloseFile={() => setSelectedFilePath(null)}
               />
             </div>
           </div>
