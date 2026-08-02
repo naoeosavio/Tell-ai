@@ -1,20 +1,20 @@
 {
   "name": "@tell-ai/web",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "Tell AI web interface — installs the tell CLI alongside it",
   "bin": {
-    "tell-web": "dist/server.cjs"
+    "tell-web": "dist/server.js"
   },
   "files": [
     "dist"
   ],
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
-    "start": "node dist/server.cjs",
+    "build": "vite build && tsup && chmod +x dist/server.js",
+    "start": "node dist/server.js",
     "preview": "vite preview",
-    "clean": "rm -rf dist server.js",
+    "clean": "rm -rf dist",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
@@ -44,9 +44,9 @@
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
     "autoprefixer": "^10.4.21",
-    "esbuild": "^0.25.0",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
+    "tsup": "8.5.1",
     "typescript": "~5.8.2",
     "vite": "^6.2.3"
   }

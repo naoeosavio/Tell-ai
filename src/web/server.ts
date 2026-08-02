@@ -3,11 +3,13 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import { createServer as createViteServer } from 'vite';
 import { generateText } from 'ai';
 import { getModel, MODELS, resolveModelSpec } from '../ai/models';
 
 const execAsync = promisify(exec);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const DEFAULT_MODEL = (process.env.TELL_MODEL || 'l').trim();
