@@ -456,6 +456,27 @@ async function runResponseLoop(
   }
 }
 
+async function launchWeb(model: string): Promise<void> {
+  const { spawn } = await import('node:child_process');
+  const child = spawn('tell-web', [model], {
+    stdio: 'inherit',
+    env: { ...process.env, TELL_MODEL: model, NODE_ENV: 'production' },
+    cwd: process.cwd(),
+  });
+  child.on('error', (err: any) => {
+    if (err?.code === 'ENOENT') {
+      console.error('\x1b[31mWeb interface not installed. Install it with:\x1b[0m\n  npm install -g @tell-ai/web\n');
+      process.exitCode = 1;
+    } else {
+      console.error(`\x1b[31mFailed to launch web interface: ${err?.message || err}\x1b[0m`);
+      process.exitCode = 1;
+    }
+  });
+  child.on('exit', (code) => {
+    if (code !== null) process.exitCode = code;
+  });
+}
+
 async function runTell(model: string, prompt: string, opts: CliOptions): Promise<void> {
   const label = modelLabel(model);
   const context = contextFile(model);
@@ -517,6 +538,10 @@ async function main() {
   const program = buildProgram(process.argv);
   const opts = program.opts<CliOptions>();
   const input = parseArgs(program.args, opts.model, Boolean(opts.input));
+  if (input.parts.length === 1 && input.parts[0] === 'web') {
+    await launchWeb(input.model);
+    return;
+  }
   const stdinText = input.readStdin ? await readStdin().catch(() => '') : '';
   const prompt = formatPrompt(input.parts.join(' '), stdinText, opts);
   if (!prompt) {

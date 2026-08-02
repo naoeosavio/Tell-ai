@@ -9,7 +9,8 @@ import { getModel, MODELS, resolveModelSpec } from '../ai/models';
 
 const execAsync = promisify(exec);
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT || 3000);
+const DEFAULT_MODEL = (process.env.TELL_MODEL || 'l').trim();
 
 app.use(express.json());
 
@@ -238,6 +239,11 @@ function sanitizeReasoning(val: any): string | null {
   return String(val);
 }
 
+// API: Server configuration (default model set via TELL_MODEL, e.g. `tell g web`)
+app.get('/api/config', (req, res) => {
+  res.json({ defaultModel: DEFAULT_MODEL });
+});
+
 // API: Model execution route (using Vercel AI SDK)
 app.post('/api/tell', async (req, res) => {
   const { messages, modelAlias, systemPrompt } = req.body;
@@ -246,7 +252,7 @@ app.post('/api/tell', async (req, res) => {
     return res.status(400).json({ error: 'messages array is required' });
   }
 
-  const modelSpec = modelAlias || 'l'; // default to Google Gemini 3.5 Flash 'l'
+  const modelSpec = modelAlias || DEFAULT_MODEL;
 
   try {
     // Resolve model spec and get Vercel AI SDK model instance
@@ -290,7 +296,7 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
+    const distPath = __dirname;
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));

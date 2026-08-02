@@ -21,5 +21,7 @@
 
     /* If transpiling with TypeScript: */
     "module": "ES2020"
-  }
+  },
+  "include": ["src", "test"],
+  "exclude": ["src/web", "dist", "node_modules"]
 }

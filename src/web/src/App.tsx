@@ -47,7 +47,7 @@ export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputPrompt, setInputPrompt] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
-  const [modelAlias, setModelAlias] = useState<string>('l'); // default to Gemini 3.5 Flash 'l'
+  const [modelAlias, setModelAlias] = useState<string>('l'); // fallback; server-provided default (TELL_MODEL) wins on load
   const [models, setModels] = useState<Array<{ alias: string; spec: string; vendor: string; model: string }>>([]);
   const [keysStatus, setKeysStatus] = useState({
     google: false,
@@ -71,7 +71,7 @@ export default function App() {
   const [refreshFileTreeTrigger, setRefreshFileTreeTrigger] = useState<number>(0);
   const [isTerminalExpanded, setIsTerminalExpanded] = useState<boolean>(false);
 
-  // Load models and credentials status from API
+  // Load models, credentials status, and default model from API
   useEffect(() => {
     const fetchModels = async () => {
       try {
@@ -85,7 +85,19 @@ export default function App() {
         console.error('Error fetching models metadata:', error);
       }
     };
+    const fetchConfig = async () => {
+      try {
+        const res = await fetch('/api/config');
+        const data = await res.json();
+        if (data.defaultModel) {
+          setModelAlias(data.defaultModel);
+        }
+      } catch (error) {
+        console.error('Error fetching server config:', error);
+      }
+    };
     fetchModels();
+    fetchConfig();
   }, []);
 
   // Helper to append a line to the terminal
