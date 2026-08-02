@@ -346,51 +346,109 @@ export default function App() {
 
         {/* Center: Interactive Assistant Chat & Code Viewer */}
         <div className="flex-1 flex flex-col overflow-hidden bg-[#0A0A0A]">
-          <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
-            {/* Left Box: Chat console */}
-            <div className="flex-1 flex flex-col min-w-0">
-              <ChatSection
-                messages={messages}
-                inputPrompt={inputPrompt}
-                onInputChange={(val) => setInputPrompt(val)}
-                onSubmit={handleChatSubmit}
-                loading={loading}
-                modelAlias={modelAlias}
-                onModelAliasChange={(alias) => setModelAlias(alias)}
-                models={models}
-                chainMode={chainMode}
-                onChainModeChange={(val) => setChainMode(val)}
-                autoExecute={autoExecute}
-                onAutoExecuteChange={(val) => setAutoExecute(val)}
-                onSelectSample={(prompt) => {
-                  setInputPrompt(prompt);
-                }}
-              />
+          {/* Top Navigation Bar for Workspace */}
+          <div className="flex items-center justify-between px-3 py-1.5 bg-[#0D0D0D] border-b border-white/10 shrink-0 select-none">
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setIsTerminalExpanded(false)}
+                className={`flex items-center gap-1.5 px-3 py-1 text-[11px] font-bold border transition-all cursor-pointer font-display ${
+                  !isTerminalExpanded
+                    ? 'bg-[#181818] border-rose-600/60 text-white shadow-sm'
+                    : 'bg-white/5 border-white/10 text-white/50 hover:text-white/80 hover:bg-white/10'
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5 text-rose-500" />
+                <span>AI Chat & Workspace</span>
+              </button>
+
+              <button
+                onClick={() => setIsTerminalExpanded(true)}
+                className={`flex items-center gap-1.5 px-3 py-1 text-[11px] font-bold border transition-all cursor-pointer font-display ${
+                  isTerminalExpanded
+                    ? 'bg-[#181818] border-rose-600/60 text-white shadow-sm'
+                    : 'bg-white/5 border-white/10 text-white/50 hover:text-white/80 hover:bg-white/10'
+                }`}
+              >
+                <TerminalIcon className="w-3.5 h-3.5 text-rose-500" />
+                <span>Console Interface</span>
+                <span className="text-rose-400 font-mono text-[9px] bg-rose-950/60 border border-rose-600/30 px-1 py-0.2">
+                  TMUX
+                </span>
+              </button>
             </div>
 
-            {/* Right Box: Live Code Viewer & Editor (collapsible if none selected) */}
-            <div className={`${selectedFilePath ? 'flex-1 lg:max-w-xl' : 'w-0 lg:max-w-0'} flex flex-col shrink-0 transition-all duration-300 overflow-hidden`}>
-              <FileViewer
-                filePath={selectedFilePath}
-                onSaveCompleted={() => setRefreshFileTreeTrigger((prev) => prev + 1)}
-                onCloseFile={() => setSelectedFilePath(null)}
-              />
+            <div className="flex items-center gap-3 text-[10px] font-mono text-white/40">
+              <span className="hidden sm:inline">Mode: <strong className="text-white/70">Interactive Shell</strong></span>
+              <span className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <strong className="text-emerald-400">Sandbox Ready</strong>
+              </span>
             </div>
           </div>
 
-          {/* Lower Bottom Panel: Terminal Shell (tmux mode with multi-pane support) */}
-          <div className={`${isTerminalExpanded ? 'h-[480px]' : 'h-[280px]'} shrink-0 border-t border-white/10 transition-all duration-300`}>
-            <Terminal
-              lines={terminalLines}
-              onExecuteCommand={executeShellCommandManual}
-              onClear={() => setTerminalLines([])}
-              pendingCommand={pendingCommand}
-              onConfirmPending={handleConfirmPending}
-              onSkipPending={handleSkipPending}
-              isExpanded={isTerminalExpanded}
-              onToggleExpand={() => setIsTerminalExpanded((prev) => !prev)}
-            />
-          </div>
+          {!isTerminalExpanded ? (
+            <>
+              <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
+                {/* Left Box: Chat console */}
+                <div className="flex-1 flex flex-col min-w-0">
+                  <ChatSection
+                    messages={messages}
+                    inputPrompt={inputPrompt}
+                    onInputChange={(val) => setInputPrompt(val)}
+                    onSubmit={handleChatSubmit}
+                    loading={loading}
+                    modelAlias={modelAlias}
+                    onModelAliasChange={(alias) => setModelAlias(alias)}
+                    models={models}
+                    chainMode={chainMode}
+                    onChainModeChange={(val) => setChainMode(val)}
+                    autoExecute={autoExecute}
+                    onAutoExecuteChange={(val) => setAutoExecute(val)}
+                    onSelectSample={(prompt) => {
+                      setInputPrompt(prompt);
+                    }}
+                  />
+                </div>
+
+                {/* Right Box: Live Code Viewer & Editor (collapsible if none selected) */}
+                <div className={`${selectedFilePath ? 'flex-1 lg:max-w-xl' : 'w-0 lg:max-w-0'} flex flex-col shrink-0 transition-all duration-300 overflow-hidden`}>
+                  <FileViewer
+                    filePath={selectedFilePath}
+                    onSaveCompleted={() => setRefreshFileTreeTrigger((prev) => prev + 1)}
+                    onCloseFile={() => setSelectedFilePath(null)}
+                  />
+                </div>
+              </div>
+
+              {/* Lower Bottom Panel: Terminal Shell */}
+              <div className="h-[280px] shrink-0 border-t border-white/10">
+                <Terminal
+                  lines={terminalLines}
+                  onExecuteCommand={executeShellCommandManual}
+                  onClear={() => setTerminalLines([])}
+                  pendingCommand={pendingCommand}
+                  onConfirmPending={handleConfirmPending}
+                  onSkipPending={handleSkipPending}
+                  isExpanded={false}
+                  onToggleExpand={() => setIsTerminalExpanded(true)}
+                />
+              </div>
+            </>
+          ) : (
+            /* Maximized Console Interface Tab View */
+            <div className="flex-1 h-full overflow-hidden">
+              <Terminal
+                lines={terminalLines}
+                onExecuteCommand={executeShellCommandManual}
+                onClear={() => setTerminalLines([])}
+                pendingCommand={pendingCommand}
+                onConfirmPending={handleConfirmPending}
+                onSkipPending={handleSkipPending}
+                isExpanded={true}
+                onToggleExpand={() => setIsTerminalExpanded(false)}
+              />
+            </div>
+          )}
         </div>
       </div>
     </div>
