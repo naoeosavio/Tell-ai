@@ -24,7 +24,7 @@ FORMAT:
 
 Aim for 20-40 lines of text unless the conversation was extremely complex.`;
 
-export async function summarizeContext(ai: AskInstance, text: string): Promise<string> {
+export async function summarize_context(ai: AskInstance, text: string): Promise<string> {
   const summary = await ai.ask(`Please summarize this conversation history:\n\n${text}`, {
     system: SUMMARY_SYSTEM_PROMPT,
     stream: false,

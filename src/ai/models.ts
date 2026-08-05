@@ -164,9 +164,9 @@ const CEREBRAS_MODELS = new Set([
   'zai-glm-4.6',
 ]);
 
-async function getApiKey(vendor: string): Promise<string | undefined> {
-  const keyName = VENDOR_KEY[vendor];
-  if (keyName && API_KEYS[keyName]) return API_KEYS[keyName];
+async function get_api_key(vendor: string): Promise<string | undefined> {
+  const key_name = VENDOR_KEY[vendor];
+  if (key_name && API_KEYS[key_name]) return API_KEYS[key_name];
   try {
     const token = (await readFile(join(homedir(), '.config', `${vendor}.token`), 'utf8')).trim();
     if (token) return token;
@@ -174,7 +174,7 @@ async function getApiKey(vendor: string): Promise<string | undefined> {
   return undefined;
 }
 
-function inferVendor(model: string): string {
+function infer_vendor(model: string): string {
   const normalized = model.toLowerCase();
   if (normalized.startsWith('gpt') || normalized.startsWith('o')) return 'openai';
   if (normalized.startsWith('claude')) return 'anthropic';
@@ -185,80 +185,89 @@ function inferVendor(model: string): string {
   throw new Error(`Unsupported vendor for model "${model}"`);
 }
 
-let _openai: any = null;
-let _anthropic: any = null;
-let _google: any = null;
-let _xai: any = null;
-let _deepseek: any = null;
-let _fireworks: any = null;
-let _cerebras: any = null;
-let _moonshotai: any = null;
-let _openrouter: any = null;
-const _vastProviders: Record<string, any> = {};
-const _localProviders: Record<string, any> = {};
+let OPENAI: any = null;
+let ANTHROPIC: any = null;
+let GOOGLE: any = null;
+let XAI: any = null;
+let DEEPSEEK: any = null;
+let FIREWORKS: any = null;
+let CEREBRAS: any = null;
+let MOONSHOTAI: any = null;
+let OPENROUTER: any = null;
+const VAST_PROVIDERS: Record<string, any> = {};
+const LOCAL_PROVIDERS: Record<string, any> = {};
 
-async function getOpenrouterProvider(): Promise<any> {
-  if (_openrouter) return _openrouter;
-  const apiKey = await getApiKey('openrouter');
-  _openrouter = createOpenAI({ apiKey, baseURL: API_URLS.openrouter, name: 'openrouter' });
-  return _openrouter;
+async function get_openrouter_provider(): Promise<any> {
+  if (OPENROUTER) return OPENROUTER;
+  const api_key = await get_api_key('openrouter');
+  OPENROUTER = createOpenAI({
+    ...(api_key ? { apiKey: api_key } : {}),
+    baseURL: API_URLS.openrouter,
+    name: 'openrouter',
+  });
+  return OPENROUTER;
 }
 
 const VALID_THINKING = new Set(['none', 'low', 'medium', 'high', 'xhigh', 'max', 'auto']);
 
-function normalizeThinking(raw: string): ThinkingLevel | null {
+function normalize_thinking(raw: string): ThinkingLevel | null {
   const normalized = raw.trim().toLowerCase();
   return VALID_THINKING.has(normalized) ? (normalized as ThinkingLevel) : null;
 }
 
-function resolveSinglePart(term: string, fast: boolean): ResolvedModelSpec {
+function resolve_single_part(term: string, fast: boolean): ResolvedModelSpec {
   const alias = MODELS[term];
   if (alias) {
     if (alias.includes(':')) {
-      const resolved = parseModelSpecRaw(alias);
+      const resolved = parse_model_spec_raw(alias);
       resolved.fast = resolved.fast || fast;
       return resolved;
     }
-    return { model: alias, vendor: inferVendor(alias), thinking: 'auto', fast };
+    return {
+      model: alias,
+      vendor: infer_vendor(alias),
+      thinking: 'auto',
+      fast,
+    };
   }
-  return { model: term, vendor: inferVendor(term), thinking: 'auto', fast };
+  return { model: term, vendor: infer_vendor(term), thinking: 'auto', fast };
 }
 
-function resolveMultiPart(parts: string[], fast: boolean): ResolvedModelSpec {
-  const [vendorRaw, modelRaw, thinkingRaw] = parts as [string, string, string | undefined];
-  const vendor = vendorRaw.trim().toLowerCase();
-  if (!SUPPORTED_VENDORS.has(vendor)) throw new Error(`Unsupported vendor: ${vendorRaw}`);
+function resolve_multi_part(parts: string[], fast: boolean): ResolvedModelSpec {
+  const [vendor_raw, model_raw, thinking_raw] = parts as [string, string, string | undefined];
+  const vendor = vendor_raw.trim().toLowerCase();
+  if (!SUPPORTED_VENDORS.has(vendor)) throw new Error(`Unsupported vendor: ${vendor_raw}`);
 
-  const modelValue = modelRaw.trim();
-  if (!modelValue) throw new Error('Model name must be provided after vendor');
+  const model_value = model_raw.trim();
+  if (!model_value) throw new Error('Model name must be provided after vendor');
 
-  let model = modelValue;
-  let aliasThinking: ThinkingLevel | undefined;
-  if (MODELS[modelValue]) {
-    const aliasSpec = parseModelSpecRaw(MODELS[modelValue]);
-    if (aliasSpec.vendor !== vendor) {
-      throw new Error(`Model alias "${modelValue}" belongs to vendor "${aliasSpec.vendor}", not "${vendorRaw}"`);
+  let model = model_value;
+  let alias_thinking: ThinkingLevel | undefined;
+  if (MODELS[model_value]) {
+    const alias_spec = parse_model_spec_raw(MODELS[model_value]);
+    if (alias_spec.vendor !== vendor) {
+      throw new Error(`Model alias "${model_value}" belongs to vendor "${alias_spec.vendor}", not "${vendor_raw}"`);
     }
-    model = aliasSpec.model;
-    aliasThinking = aliasSpec.thinking;
+    model = alias_spec.model;
+    alias_thinking = alias_spec.thinking;
   }
 
   let thinking: ThinkingLevel = 'auto';
-  if (thinkingRaw) {
-    const level = normalizeThinking(thinkingRaw);
+  if (thinking_raw) {
+    const level = normalize_thinking(thinking_raw);
     if (level) {
       thinking = level;
     } else {
-      model = `${modelValue}:${thinkingRaw}`;
+      model = `${model_value}:${thinking_raw}`;
     }
-  } else if (aliasThinking) {
-    thinking = aliasThinking;
+  } else if (alias_thinking) {
+    thinking = alias_thinking;
   }
 
   return { vendor, model, thinking, fast };
 }
 
-function parseModelSpecRaw(spec: string): ResolvedModelSpec {
+function parse_model_spec_raw(spec: string): ResolvedModelSpec {
   let trimmed = spec.trim();
   if (!trimmed) throw new Error('Model spec must be provided');
 
@@ -269,136 +278,150 @@ function parseModelSpecRaw(spec: string): ResolvedModelSpec {
   }
 
   const parts = trimmed.split(':');
-  if (parts.length > 1 && parts[parts.length - 1].trim().toLowerCase() === 'fast') {
+  const last_part = parts[parts.length - 1];
+  if (parts.length > 1 && last_part?.trim().toLowerCase() === 'fast') {
     fast = true;
     parts.pop();
   }
 
-  if (parts.length === 1) return resolveSinglePart(trimmed, fast);
+  if (parts.length === 1) return resolve_single_part(trimmed, fast);
 
-  const firstPart = parts[0].trim().toLowerCase();
-  if (!SUPPORTED_VENDORS.has(firstPart)) return resolveSinglePart(trimmed, fast);
+  const first_part = parts[0]?.trim().toLowerCase() ?? '';
+  if (!SUPPORTED_VENDORS.has(first_part)) return resolve_single_part(trimmed, fast);
 
   if (parts.length < 2 || parts.length > 3) {
     throw new Error(`Expected "vendor:model" or "vendor:model:thinking", got "${spec}"`);
   }
-  return resolveMultiPart(parts, fast);
+  return resolve_multi_part(parts, fast);
 }
 
-export function resolveModelSpec(spec: string): ResolvedModelSpec {
-  return parseModelSpecRaw(spec);
+export function resolve_model_spec(spec: string): ResolvedModelSpec {
+  return parse_model_spec_raw(spec);
 }
 
-async function getVastProvider(baseURL: string): Promise<any> {
-  if (_vastProviders[baseURL]) return _vastProviders[baseURL];
-  _vastProviders[baseURL] = createOpenAI({ apiKey: 'not-needed', baseURL, name: 'vast' });
-  return _vastProviders[baseURL];
+async function get_vast_provider(baseUrl: string): Promise<any> {
+  if (VAST_PROVIDERS[baseUrl]) return VAST_PROVIDERS[baseUrl];
+  VAST_PROVIDERS[baseUrl] = createOpenAI({
+    apiKey: 'not-needed',
+    baseURL: baseUrl,
+    name: 'vast',
+  });
+  return VAST_PROVIDERS[baseUrl];
 }
 
-async function getLocalProvider(baseURL: string): Promise<any> {
-  if (_localProviders[baseURL]) return _localProviders[baseURL];
-  _localProviders[baseURL] = createOpenAI({ apiKey: 'not-needed', baseURL, name: 'local' });
-  return _localProviders[baseURL];
+async function get_local_provider(baseUrl: string): Promise<any> {
+  if (LOCAL_PROVIDERS[baseUrl]) return LOCAL_PROVIDERS[baseUrl];
+  LOCAL_PROVIDERS[baseUrl] = createOpenAI({
+    apiKey: 'not-needed',
+    baseURL: baseUrl,
+    name: 'local',
+  });
+  return LOCAL_PROVIDERS[baseUrl];
 }
 
-async function handleCerebras(model: string, reasoning: string, fast: boolean): Promise<ModelHandle> {
-  if (!_cerebras) {
-    const apiKey = await getApiKey('cerebras');
-    _cerebras = createCerebras({ apiKey });
+async function handle_cerebras(model: string, reasoning: string, fast: boolean): Promise<ModelHandle> {
+  if (!CEREBRAS) {
+    const api_key = await get_api_key('cerebras');
+    CEREBRAS = createCerebras({ ...(api_key ? { apiKey: api_key } : {}) });
   }
-  return { model: _cerebras(model), reasoning, fast };
+  return { model: CEREBRAS(model), reasoning, fast };
 }
 
-async function handleOpenAI(model: string, reasoning: string, fast: boolean): Promise<ModelHandle> {
-  if (!_openai) {
-    const apiKey = await getApiKey('openai');
-    _openai = createOpenAI({ apiKey });
+async function handle_open_ai(model: string, reasoning: string, fast: boolean): Promise<ModelHandle> {
+  if (!OPENAI) {
+    const api_key = await get_api_key('openai');
+    OPENAI = createOpenAI({ ...(api_key ? { apiKey: api_key } : {}) });
   }
-  return { model: _openai(model), reasoning, fast };
+  return { model: OPENAI(model), reasoning, fast };
 }
 
-async function handleAnthropic(model: string, reasoning: string, fast: boolean): Promise<ModelHandle> {
-  if (!_anthropic) {
-    const apiKey = await getApiKey('anthropic');
-    _anthropic = createAnthropic({ apiKey });
+async function handle_anthropic(model: string, reasoning: string, fast: boolean): Promise<ModelHandle> {
+  if (!ANTHROPIC) {
+    const api_key = await get_api_key('anthropic');
+    ANTHROPIC = createAnthropic({ ...(api_key ? { apiKey: api_key } : {}) });
   }
-  return { model: _anthropic(model), reasoning, fast };
+  return { model: ANTHROPIC(model), reasoning, fast };
 }
 
-async function handleGoogle(model: string, reasoning: string, fast: boolean): Promise<ModelHandle> {
-  if (!_google) {
-    const apiKey = await getApiKey('google');
-    _google = apiKey ? createGoogleGenerativeAI({ apiKey }) : createGoogleGenerativeAI();
+async function handle_google(model: string, reasoning: string, fast: boolean): Promise<ModelHandle> {
+  if (!GOOGLE) {
+    const api_key = await get_api_key('google');
+    GOOGLE = api_key ? createGoogleGenerativeAI({ apiKey: api_key }) : createGoogleGenerativeAI();
   }
-  return { model: _google(model), reasoning, fast };
+  return { model: GOOGLE(model), reasoning, fast };
 }
 
-async function handleXai(model: string, reasoning: string, fast: boolean): Promise<ModelHandle> {
-  if (!_xai) {
-    const apiKey = await getApiKey('xai');
-    _xai = createXai({ apiKey });
+async function handle_xai(model: string, reasoning: string, fast: boolean): Promise<ModelHandle> {
+  if (!XAI) {
+    const api_key = await get_api_key('xai');
+    XAI = createXai({ ...(api_key ? { apiKey: api_key } : {}) });
   }
-  return { model: _xai(model), reasoning, fast };
+  return { model: XAI(model), reasoning, fast };
 }
 
-async function handleDeepseek(model: string, reasoning: string, fast: boolean): Promise<ModelHandle> {
-  if (!_deepseek) {
-    const apiKey = await getApiKey('deepseek');
-    _deepseek = createDeepSeek({ apiKey });
+async function handle_deepseek(model: string, reasoning: string, fast: boolean): Promise<ModelHandle> {
+  if (!DEEPSEEK) {
+    const api_key = await get_api_key('deepseek');
+    DEEPSEEK = createDeepSeek({ ...(api_key ? { apiKey: api_key } : {}) });
   }
-  return { model: _deepseek(model), reasoning, fast };
+  return { model: DEEPSEEK(model), reasoning, fast };
 }
 
-async function handleFireworks(model: string, reasoning: string, fast: boolean): Promise<ModelHandle> {
-  if (!_fireworks) {
-    const apiKey = await getApiKey('fireworks');
-    _fireworks = createFireworks({ apiKey });
+async function handle_fireworks(model: string, reasoning: string, fast: boolean): Promise<ModelHandle> {
+  if (!FIREWORKS) {
+    const api_key = await get_api_key('fireworks');
+    FIREWORKS = createFireworks({ ...(api_key ? { apiKey: api_key } : {}) });
   }
-  return { model: _fireworks(model), reasoning, fast };
+  return { model: FIREWORKS(model), reasoning, fast };
 }
 
-async function handleMoonshotAI(model: string, reasoning: string, fast: boolean): Promise<ModelHandle> {
-  if (!_moonshotai) {
-    const apiKey = await getApiKey('moonshotai');
-    _moonshotai = createMoonshotAI({ apiKey });
+async function handle_moonshot_ai(model: string, reasoning: string, fast: boolean): Promise<ModelHandle> {
+  if (!MOONSHOTAI) {
+    const api_key = await get_api_key('moonshotai');
+    MOONSHOTAI = createMoonshotAI({ ...(api_key ? { apiKey: api_key } : {}) });
   }
-  const reasoningEffort = reasoning !== 'none' ? 'max' : undefined;
-  return { model: _moonshotai(model), reasoning, reasoningEffort, fast };
+  const reasoning_effort = reasoning !== 'none' ? 'max' : undefined;
+  return {
+    model: MOONSHOTAI(model),
+    reasoning,
+    ...(reasoning_effort ? { reasoningEffort: reasoning_effort } : {}),
+    fast,
+  };
 }
 
-async function handleOpenrouter(model: string, reasoning: string, fast: boolean): Promise<ModelHandle> {
-  const provider = await getOpenrouterProvider();
+async function handle_openrouter(model: string, reasoning: string, fast: boolean): Promise<ModelHandle> {
+  const provider = await get_openrouter_provider();
   return { model: provider(model), reasoning, fast };
 }
-async function handleVast(model: string, reasoning: string, fast: boolean): Promise<ModelHandle> {
-  const provider = await getVastProvider(API_URLS.vast);
+async function handle_vast(model: string, reasoning: string, fast: boolean): Promise<ModelHandle> {
+  const provider = await get_vast_provider(API_URLS.vast);
   return { model: provider.chat(model), reasoning, fast };
 }
 
-async function handleLocal(model: string, reasoning: string, fast: boolean): Promise<ModelHandle> {
-  const provider = await getLocalProvider(API_URLS.local);
+async function handle_local(model: string, reasoning: string, fast: boolean): Promise<ModelHandle> {
+  const provider = await get_local_provider(API_URLS.local);
   return { model: provider.chat(model), reasoning, fast };
 }
 
 const VENDOR_HANDLERS: Record<string, (m: string, r: string, f: boolean) => Promise<ModelHandle>> = {
-  openai: handleOpenAI,
-  anthropic: handleAnthropic,
-  google: handleGoogle,
-  xai: handleXai,
-  deepseek: handleDeepseek,
-  fireworks: handleFireworks,
-  moonshotai: handleMoonshotAI,
-  openrouter: handleOpenrouter,
-  vast: handleVast,
-  local: handleLocal,
+  openai: handle_open_ai,
+  anthropic: handle_anthropic,
+  google: handle_google,
+  xai: handle_xai,
+  deepseek: handle_deepseek,
+  fireworks: handle_fireworks,
+  moonshotai: handle_moonshot_ai,
+  openrouter: handle_openrouter,
+  vast: handle_vast,
+  local: handle_local,
 };
 
-export async function getModel(spec: string): Promise<ModelHandle> {
-  const resolved = resolveModelSpec(spec);
+export async function get_model(spec: string): Promise<ModelHandle> {
+  const resolved = resolve_model_spec(spec);
   const reasoning = AI_SDK_THINKING[resolved.thinking] ?? 'medium';
 
   if (resolved.vendor === 'openai' && CEREBRAS_MODELS.has(resolved.model)) {
-    return handleCerebras(resolved.model, reasoning, resolved.fast);
+    return handle_cerebras(resolved.model, reasoning, resolved.fast);
   }
 
   const handler = VENDOR_HANDLERS[resolved.vendor];

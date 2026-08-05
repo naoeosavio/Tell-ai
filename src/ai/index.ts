@@ -1,32 +1,32 @@
 import { generateText } from 'ai';
-import { getModel, MODELS, type ResolvedModelSpec, resolveModelSpec } from './models';
+import { get_model, MODELS, type ResolvedModelSpec, resolve_model_spec } from './models';
 
 export type { ResolvedModelSpec };
-export { MODELS, resolveModelSpec };
+export { MODELS, resolve_model_spec };
 
 export interface AskInstance {
   ask(message: string, options: { system: string; stream: false }): Promise<string>;
 }
 
-export async function createAskAI(modelSpec: string): Promise<AskInstance> {
-  const handle = await getModel(modelSpec);
+export async function create_ask_ai(modelSpec: string): Promise<AskInstance> {
+  const handle = await get_model(modelSpec);
   const reasoning = handle.fast ? 'none' : handle.reasoning;
 
   return {
     ask: async (message: string, options: { system: string; stream: false }) => {
-      const genOptions: any = {
+      const gen_options: any = {
         model: handle.model,
         instructions: options.system,
         prompt: message,
       };
       if (handle.reasoningEffort) {
-        genOptions.reasoning_effort = handle.reasoningEffort;
+        gen_options.reasoning_effort = handle.reasoningEffort;
       } else {
-        genOptions.reasoning = reasoning;
+        gen_options.reasoning = reasoning;
       }
-      const result = await generateText(genOptions);
-      const modelReasoning = result.finalStep.reasoningText;
-      return modelReasoning ? `<think>${modelReasoning}</think>\n${result.text}` : result.text;
+      const result = await generateText(gen_options);
+      const model_reasoning = result.finalStep.reasoningText;
+      return model_reasoning ? `<think>${model_reasoning}</think>\n${result.text}` : result.text;
     },
   };
 }
