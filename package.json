@@ -10,10 +10,10 @@
     "prepare": "npm run build",
     "test": "npm run test:security",
     "test:security": "npm run build && node test/test-tell-security.js",
-    "lint": "tsc",
+    "lint": "tsc -p tsconfig.json",
     "format": "biome check --write src",
-    "check:format": "biome check src",
-    "ci": "npm run lint && npm run check:format && npm run test && npm run build",
+    "check": "biome check src",
+    "ci": "npm run lint && npm run check && npm run test && npm run build",
     "prepublish": "npm run ci"
   },
   "repository": {
@@ -60,8 +60,7 @@
     "@ai-sdk/openai": "^4.0.8",
     "@ai-sdk/xai": "^4.0.7",
     "ai": "^7.0.16",
-    "commander": "15.0.0",
-    "gpt-tokenizer": "3.4.0"
+    "commander": "15.0.0"
   },
   "homepage": "https://github.com/naoeosavio/Tell-ai#readme",
   "devDependencies": {
