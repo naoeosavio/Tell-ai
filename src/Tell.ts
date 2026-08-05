@@ -6,11 +6,11 @@ import * as path from 'node:path';
 import * as readline from 'node:readline';
 import { promisify } from 'node:util';
 import { Command } from 'commander';
-import { type AskInstance, createAskAI, MODELS, resolveModelSpec } from './ai';
-import { summarizeContext } from './summarize';
+import { type AskInstance, create_ask_ai, MODELS, resolve_model_spec } from './ai';
+import { summarize_context } from './summarize';
 
-const execAsync = promisify(exec);
-const DEFAULT_MODEL = process.env.TELL_MODEL || 'g';
+const EXEC_ASYNC = promisify(exec);
+const DEFAULT_MODEL = process.env['TELL_MODEL'] || 'g';
 const MAX_BUFFER = 32 * 1024 * 1024;
 const MAX_CHAIN_STEPS = 8;
 const EXEC_TIMEOUT = 120_000;
@@ -43,38 +43,38 @@ type PromptOptions = { chain?: boolean };
 type CommandResult = { output: string; exitCode: number };
 type ScriptsResult = { text: string; failed: boolean };
 
-const createdDirs = new Set<string>();
+const CREATED_DIRS = new Set<string>();
 
-function ensureDir(dir: string): void {
-  if (createdDirs.has(dir)) return;
+function ensure_dir(dir: string): void {
+  if (CREATED_DIRS.has(dir)) return;
   fs.mkdirSync(dir, { recursive: true });
-  createdDirs.add(dir);
+  CREATED_DIRS.add(dir);
 }
 
-function modelLabel(model: string): string {
-  const spec = resolveModelSpec(model);
+function model_label(model: string): string {
+  const spec = resolve_model_spec(model);
   return `${spec.vendor}:${spec.model}:${spec.thinking}${spec.fast ? ':fast' : ''}`;
 }
 
-function isModelSpec(value: string): boolean {
+function is_model_spec(value: string): boolean {
   try {
-    resolveModelSpec(value);
+    resolve_model_spec(value);
     return true;
   } catch {
     return false;
   }
 }
-function printModelHelp(): void {
-  const rows: [string, string][] = Object.entries(MODELS).map(([alias, spec]) => [alias, modelLabel(spec)]);
-  const aliasWidth = Math.max('Alias'.length, ...rows.map(([alias]) => alias.length));
+function print_model_help(): void {
+  const rows: [string, string][] = Object.entries(MODELS).map(([alias, spec]) => [alias, model_label(spec)]);
+  const alias_width = Math.max('Alias'.length, ...rows.map(([alias]) => alias.length));
   console.log('Usage: tell -m <model> "message"\n');
-  console.log(`${'Alias'.padEnd(aliasWidth)}  Model`);
-  console.log(`${'-'.repeat(aliasWidth)}  ${'-'.repeat(48)}`);
-  for (const [alias, spec] of rows) console.log(`${alias.padEnd(aliasWidth)}  ${spec}`);
+  console.log(`${'Alias'.padEnd(alias_width)}  Model`);
+  console.log(`${'-'.repeat(alias_width)}  ${'-'.repeat(48)}`);
+  for (const [alias, spec] of rows) console.log(`${alias.padEnd(alias_width)}  ${spec}`);
   console.log('\nFull specs are also accepted: vendor:model[:thinking]');
 }
 
-function getSystemPrompt(options: PromptOptions = {}): string {
+function get_system_prompt(options: PromptOptions = {}): string {
   const chain = Boolean(options.chain);
   return `
 You are a terminal assistant for developer tasks, running in ${chain ? 'multi-step' : 'one-shot'} mode on ${os.platform()} ${os.release()}.
@@ -124,9 +124,9 @@ Do not add any information beyond what has been explicitly asked.
 `.trim();
 }
 
-async function executeCommand(script: string): Promise<CommandResult> {
+async function execute_command(script: string): Promise<CommandResult> {
   try {
-    const { stdout, stderr } = await execAsync(script, {
+    const { stdout, stderr } = await EXEC_ASYNC(script, {
       cwd: process.cwd(),
       maxBuffer: MAX_BUFFER,
       shell: '/bin/bash',
@@ -135,9 +135,12 @@ async function executeCommand(script: string): Promise<CommandResult> {
     return { output: stdout + stderr, exitCode: 0 };
   } catch (error) {
     const err = error as any;
-    const exitCode = typeof err.code === 'number' ? err.code : 1;
+    const exit_code = typeof err.code === 'number' ? err.code : 1;
     if (err.killed && err.signal === 'SIGTERM') {
-      return { output: `Command timed out after ${EXEC_TIMEOUT / 1000}s:\n${script}`, exitCode: 124 };
+      return {
+        output: `Command timed out after ${EXEC_TIMEOUT / 1000}s:\n${script}`,
+        exitCode: 124,
+      };
     }
     const output = [
       typeof err.stdout === 'string' ? err.stdout : '',
@@ -146,11 +149,11 @@ async function executeCommand(script: string): Promise<CommandResult> {
     ]
       .filter(Boolean)
       .join('\n');
-    return { output, exitCode };
+    return { output, exitCode: exit_code };
   }
 }
 
-async function readStdin(): Promise<string> {
+async function read_stdin(): Promise<string> {
   if (process.stdin.isTTY) return '';
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -170,26 +173,26 @@ async function readStdin(): Promise<string> {
   });
 }
 
-function logFile(): string {
+function log_file(): string {
   const dir = path.join(os.homedir(), '.ai', 'tell_history');
-  ensureDir(dir);
+  ensure_dir(dir);
   const timestamp = new Date().toISOString().replace(/:/g, '-');
   return path.join(dir, `conversation_${timestamp}.txt`);
 }
 
-function contextFile(model: string): string {
+function context_file(model: string): string {
   const dir = path.join(os.homedir(), '.ai', 'tell_context');
-  const label = modelLabel(model);
+  const label = model_label(model);
   const hash = createHash('sha256').update(`${process.cwd()}\n${label}`).digest('hex');
   return path.join(dir, `${hash}.txt`);
 }
 
-function appendLog(file: string, text: string): void {
-  ensureDir(path.dirname(file));
+function append_log(file: string, text: string): void {
+  ensure_dir(path.dirname(file));
   fs.appendFileSync(file, `${text}\n`, 'utf8');
 }
 
-function readText(file: string): string {
+function read_text(file: string): string {
   try {
     return fs.readFileSync(file, 'utf8').trim();
   } catch {
@@ -197,21 +200,21 @@ function readText(file: string): string {
   }
 }
 
-function limitContext(text: string): string {
+function limit_context(text: string): string {
   if (text.length <= MAX_CONTEXT_CHARS) return text;
   return `[older context truncated]\n${text.slice(-MAX_CONTEXT_CHARS)}`;
 }
 
-function writeContext(file: string, content: string): void {
-  ensureDir(path.dirname(file));
-  fs.writeFileSync(file, `${limitContext(content).trim()}\n`, 'utf8');
+function write_context(file: string, content: string): void {
+  ensure_dir(path.dirname(file));
+  fs.writeFileSync(file, `${limit_context(content).trim()}\n`, 'utf8');
 }
 
-function saveIncrementalContext(contextPath: string, previousContext: string, state: ConversationState): void {
+function save_incremental_context(contextPath: string, previousContext: string, state: ConversationState): void {
   try {
-    const turn = stripThinkTags(conversationText(state));
-    const nextContext = previousContext ? `${previousContext}\n${turn}` : turn;
-    writeContext(contextPath, nextContext);
+    const turn = strip_think_tags(conversation_text(state));
+    const next_context = previousContext ? `${previousContext}\n${turn}` : turn;
+    write_context(contextPath, next_context);
   } catch (err) {
     process.stderr.write(
       `\x1b[33mWarning: failed to save incremental context: ${err instanceof Error ? err.message : String(err)}\x1b[0m\n`,
@@ -219,29 +222,31 @@ function saveIncrementalContext(contextPath: string, previousContext: string, st
   }
 }
 
-function stripMarkdownCodeBlocks(text: string): string {
+function strip_markdown_code_blocks(text: string): string {
   return text.replace(/```[\s\S]*?```/g, '');
 }
 
-function stripThinkTags(text: string): string {
+function strip_think_tags(text: string): string {
   return text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
 }
 
-function stripRunTags(text: string): string {
+function strip_run_tags(text: string): string {
   return text.replace(/<RUN>[\s\S]*?<\/RUN>/g, '').trim();
 }
 
-function extractRuns(text: string): { scripts: string[]; visible: string } {
-  const sanitized = stripMarkdownCodeBlocks(text);
+function extract_runs(text: string): { scripts: string[]; visible: string } {
+  const sanitized = strip_markdown_code_blocks(text);
   return {
-    scripts: [...sanitized.matchAll(/<RUN>([\s\S]*?)<\/RUN>/g)].map((match) => match[1]?.trim()).filter(Boolean),
+    scripts: [...sanitized.matchAll(/<RUN>([\s\S]*?)<\/RUN>/g)]
+      .map((match) => match[1]?.trim())
+      .filter((script): script is string => Boolean(script)),
     visible: text.replace(/<RUN>[\s\S]*?<\/RUN>/g, '').trim(),
   };
 }
 
-function isHighRiskScript(script: string): boolean {
+function is_high_risk_script(script: string): boolean {
   const compact = script.replace(/\\\n/g, ' ').replace(/\s+/g, ' ').trim();
-  const privilegedPath = [
+  const privileged_path = [
     String.raw`(?:/(?:etc|boot|dev|proc|sys|usr|bin|sbin|lib|lib64)(?:\b|/)|`,
     String.raw`/(?:var/(?:spool/cron|cron)|etc/cron(?:\.(?:d|daily|hourly|monthly|weekly))?)(?:\b|/)|`,
     String.raw`(?:~|\$HOME)/(?:\.config/(?:autostart|systemd/user)|\.local/share/systemd/user)(?:\b|/))`,
@@ -254,19 +259,22 @@ function isHighRiskScript(script: string): boolean {
     /\b(chmod|chown)\s+-R\b.*\s\/(?:\s|$)/,
     /(?:curl|wget)\b[^|;&]*\|\s*(?:ba)?sh\b/,
     /(?:^|[\s;&|])(?:crontab|systemctl\s+--user\s+enable)\b/,
-    new RegExp(String.raw`(?:^|[\s;&|])(?:cp|mv|ln)\b[^;&|]*\s["']?${privilegedPath}`),
-    new RegExp(String.raw`(?:^|[\s;&|])sed\b[^;&|]*\s-i[^\s;&|]*[^;&|]*\s["']?${privilegedPath}`),
-    new RegExp(String.raw`(?:^|[\s;&|])tee\b[^;&|]*\s["']?${privilegedPath}`),
-    new RegExp(String.raw`(?:^|[\s;&|])\d*(?:>>?|>\||&>)\s*["']?${privilegedPath}`),
+    new RegExp(String.raw`(?:^|[\s;&|])(?:cp|mv|ln)\b[^;&|]*\s["']?${privileged_path}`),
+    new RegExp(String.raw`(?:^|[\s;&|])sed\b[^;&|]*\s-i[^\s;&|]*[^;&|]*\s["']?${privileged_path}`),
+    new RegExp(String.raw`(?:^|[\s;&|])tee\b[^;&|]*\s["']?${privileged_path}`),
+    new RegExp(String.raw`(?:^|[\s;&|])\d*(?:>>?|>\||&>)\s*["']?${privileged_path}`),
   ].some((pattern) => pattern.test(compact));
 }
 
-async function confirmCommand(script: string, yes: boolean): Promise<boolean> {
-  const highRisk = isHighRiskScript(script);
-  if (yes && !highRisk) return true;
+async function confirm_command(script: string, yes: boolean): Promise<boolean> {
+  const high_risk = is_high_risk_script(script);
+  if (yes && !high_risk) return true;
   if (!process.stdin.isTTY) return false;
-  const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
-  const label = highRisk ? 'High-risk command requested' : 'Command requested';
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stderr,
+  });
+  const label = high_risk ? 'High-risk command requested' : 'Command requested';
   process.stderr.write(`${label}:\n${script}\n`);
   return new Promise((resolve) => {
     let settled = false;
@@ -286,44 +294,57 @@ async function confirmCommand(script: string, yes: boolean): Promise<boolean> {
   });
 }
 
-async function runScripts(scripts: string[], yes: boolean, execEnabled: boolean, log: string): Promise<ScriptsResult> {
+async function run_script(
+  script: string,
+  yes: boolean,
+  execEnabled: boolean,
+): Promise<{ result: string; failed: boolean }> {
+  if (!execEnabled) {
+    process.stderr.write('\x1b[33mCommand execution disabled (--no-exec).\x1b[0m\n');
+    return {
+      result: `Command execution disabled — not run:\n${script}`,
+      failed: false,
+    };
+  }
+  if (!(await confirm_command(script, yes))) {
+    process.stderr.write('\x1b[33mCommand skipped by user.\x1b[0m\n');
+    return { result: `Skipped by user:\n${script}`, failed: false };
+  }
+  const { output, exitCode } = await execute_command(script);
+  const text = output.trim();
+  if (text) process.stderr.write(process.stderr.isTTY ? `\x1b[2m${text}\x1b[0m\n` : `${text}\n`);
+  const failed = exitCode > 0;
+  const result = failed
+    ? `Command failed (exit code ${exitCode}):\n${script}\nOutput:\n${output}`
+    : `Executed command:\n${script}\nOutput:\n${output}`;
+  return { result, failed };
+}
+
+async function run_scripts(scripts: string[], yes: boolean, execEnabled: boolean, log: string): Promise<ScriptsResult> {
   const results: string[] = [];
   let failed = false;
   for (const script of scripts) {
-    let result: string;
-    if (!execEnabled) {
-      process.stderr.write('\x1b[33mCommand execution disabled (--no-exec).\x1b[0m\n');
-      result = `Command execution disabled — not run:\n${script}`;
-    } else if (await confirmCommand(script, yes)) {
-      const { output, exitCode } = await executeCommand(script);
-      const text = output.trim();
-      if (text) process.stderr.write(process.stderr.isTTY ? `\x1b[2m${text}\x1b[0m\n` : `${text}\n`);
-      if (exitCode > 0) {
-        failed = true;
-        result = `Command failed (exit code ${exitCode}):\n${script}\nOutput:\n${output}`;
-      } else {
-        result = `Executed command:\n${script}\nOutput:\n${output}`;
-      }
-    } else {
-      process.stderr.write('\x1b[33mCommand skipped by user.\x1b[0m\n');
-      result = `Skipped by user:\n${script}`;
-    }
-    appendLog(log, result);
+    const { result, failed: script_failed } = await run_script(script, yes, execEnabled);
+    failed = failed || script_failed;
+    append_log(log, result);
     results.push(result);
   }
   return { text: results.join('\n\n'), failed };
 }
 
-async function tellSilently(ai: AskInstance, message: string, options: PromptOptions = {}): Promise<string> {
+async function tell_silently(ai: AskInstance, message: string, options: PromptOptions = {}): Promise<string> {
   process.stderr.write('\x1b[2mThinking...\x1b[0m');
   try {
-    return await ai.ask(message, { system: getSystemPrompt(options), stream: false });
+    return await ai.ask(message, {
+      system: get_system_prompt(options),
+      stream: false,
+    });
   } finally {
     process.stderr.write('\r\x1b[K');
   }
 }
 
-function formatModelError(error: unknown): string {
+function format_model_error(error: unknown): string {
   const value = error as any;
   const status = typeof value?.status === 'number' ? value.status : undefined;
   let message = typeof value?.message === 'string' ? value.message : String(error);
@@ -334,44 +355,48 @@ function formatModelError(error: unknown): string {
   return status ? `Model error (${status}): ${message}` : `Model error: ${message}`;
 }
 
-function parseArgs(args: string[], optModel: string | undefined, readPipedInput = false): ParsedInput {
+function parse_args(args: string[], optModel: string | undefined, readPipedInput = false): ParsedInput {
   let model = optModel || DEFAULT_MODEL;
   let parts = args;
-  const firstArg = args[0];
-  const firstIsModel = !optModel && typeof firstArg === 'string' && isModelSpec(firstArg);
-  if (firstIsModel) {
-    model = firstArg;
+  const first_arg = args[0];
+  const first_is_model = !optModel && typeof first_arg === 'string' && is_model_spec(first_arg);
+  if (first_is_model) {
+    model = first_arg;
     parts = args.slice(1);
   }
-  return { model, parts, readStdin: !process.stdin.isTTY && (readPipedInput || parts.length === 0) };
+  return {
+    model,
+    parts,
+    readStdin: !process.stdin.isTTY && (readPipedInput || parts.length === 0),
+  };
 }
 
-function formatPrompt(userText: string, stdinText: string, opts: CliOptions): string {
-  const trimmedUserText = userText.trim();
-  const trimmedStdinText = stdinText.trim();
-  if (!opts.input) return [trimmedUserText, trimmedStdinText].filter(Boolean).join('\n').trim();
+function format_prompt(userText: string, stdinText: string, opts: CliOptions): string {
+  const trimmed_user_text = userText.trim();
+  const trimmed_stdin_text = stdinText.trim();
+  if (!opts.input) return [trimmed_user_text, trimmed_stdin_text].filter(Boolean).join('\n').trim();
 
-  if (!trimmedStdinText) return trimmedUserText;
-  if (!trimmedUserText) return trimmedStdinText;
-  return [`User request:\n${trimmedUserText}`, `Input:\n${trimmedStdinText}`].filter(Boolean).join('\n\n');
+  if (!trimmed_stdin_text) return trimmed_user_text;
+  if (!trimmed_user_text) return trimmed_stdin_text;
+  return [`User request:\n${trimmed_user_text}`, `Input:\n${trimmed_stdin_text}`].filter(Boolean).join('\n\n');
 }
 
-function conversationText(state: ConversationState): string {
+function conversation_text(state: ConversationState): string {
   return state.timeline.join('\n');
 }
 
-function continuationInstruction(state: ConversationState): string {
+function continuation_instruction(state: ConversationState): string {
   const instruction = state.chainLimitReached
     ? `The chain limit of ${MAX_CHAIN_STEPS} command rounds has been reached. Answer now without <RUN> tags.`
     : 'Request another command with <RUN> tags if needed; otherwise answer without <RUN> tags.';
   return instruction;
 }
 
-function wantsModelHelp(argv: string[]): boolean {
+function wants_model_help(argv: string[]): boolean {
   return argv.some((arg, index) => (arg === '-m' || arg === '--model') && argv[index + 1] === '--help');
 }
 
-function buildProgram(argv: string[]): Command {
+function build_program(argv: string[]): Command {
   return new Command()
     .name('tell')
     .description('One-shot terminal assistant')
@@ -385,20 +410,20 @@ function buildProgram(argv: string[]): Command {
     .parse(argv);
 }
 
-function formatMissingPromptError(program: Command): string {
+function format_missing_prompt_error(program: Command): string {
   return `error: missing prompt\n\n${program.helpInformation().trimEnd()}`;
 }
 
-function rememberAssistant(state: ConversationState, log: string, response: string): void {
-  appendLog(log, `Assistant:\n${response}`);
+function remember_assistant(state: ConversationState, log: string, response: string): void {
+  append_log(log, `Assistant:\n${response}`);
   state.timeline.push(`Assistant:\n${response}`);
 }
 
-function rememberCommandResult(state: ConversationState, result: string): void {
+function remember_command_result(state: ConversationState, result: string): void {
   state.timeline.push(result);
 }
 
-function rememberCommandRound(state: ConversationState): void {
+function remember_command_round(state: ConversationState): void {
   state.commandRounds += 1;
   state.chainLimitReached = state.commandRounds >= MAX_CHAIN_STEPS;
   if (state.chainLimitReached) {
@@ -406,63 +431,105 @@ function rememberCommandRound(state: ConversationState): void {
   }
 }
 
-async function runResponseLoop(
+function should_finish(scripts: string[], state: ConversationState): boolean {
+  return scripts.length === 0 || state.chainLimitReached;
+}
+
+function finish_round(state: ConversationState, visible: string): void {
+  if (state.chainLimitReached) {
+    process.stderr.write(
+      `\x1b[33mChain limit reached (${MAX_CHAIN_STEPS}); ignoring further requested commands.\x1b[0m\n`,
+    );
+  }
+  if (visible) console.log(visible);
+}
+
+async function handle_final_answer(ai: AskInstance, state: ConversationState, visible: string): Promise<void> {
+  if (visible) {
+    console.log(visible);
+    return;
+  }
+  const final_prompt = `${strip_think_tags(conversation_text(state))}`;
+  const final_response = await tell_silently(ai, final_prompt, {
+    chain: false,
+  });
+  const final_text = strip_run_tags(strip_think_tags(final_response));
+  if (final_text) console.log(final_text);
+}
+
+function build_feedback(state: ConversationState, failed: boolean): string {
+  const base = `${strip_think_tags(conversation_text(state))}\n\n${continuation_instruction(state)}`;
+  return failed ? `The command above FAILED. Analyze the error output and try a corrected approach.\n\n${base}` : base;
+}
+
+async function run_response_loop(
   ai: AskInstance,
   state: ConversationState,
   log: string,
   contextPath: string,
   previousContext: string,
 ): Promise<void> {
-  let response = await tellSilently(ai, state.firstPrompt, {
+  let response = await tell_silently(ai, state.firstPrompt, {
     chain: state.autoContinue,
   });
 
   for (;;) {
-    rememberAssistant(state, log, response);
-    if (state.saveContext) saveIncrementalContext(contextPath, previousContext, state);
-    response = stripThinkTags(response);
-    const { scripts, visible } = extractRuns(response);
-    if (scripts.length === 0 || state.chainLimitReached) {
-      if (state.chainLimitReached) {
-        process.stderr.write(
-          `\x1b[33mChain limit reached (${MAX_CHAIN_STEPS}); ignoring further requested commands.\x1b[0m\n`,
-        );
-      }
-      if (visible) console.log(visible);
+    remember_assistant(state, log, response);
+    if (state.saveContext) save_incremental_context(contextPath, previousContext, state);
+    response = strip_think_tags(response);
+    const { scripts, visible } = extract_runs(response);
+    if (should_finish(scripts, state)) {
+      finish_round(state, visible);
       break;
     }
 
-    const { text: resultText, failed } = await runScripts(scripts, state.yes, state.execEnabled, log);
-    rememberCommandResult(state, resultText);
-    if (state.saveContext) saveIncrementalContext(contextPath, previousContext, state);
+    const { text: result_text, failed } = await run_scripts(scripts, state.yes, state.execEnabled, log);
+    remember_command_result(state, result_text);
+    if (state.saveContext) save_incremental_context(contextPath, previousContext, state);
     if (!state.autoContinue) {
-      if (visible) {
-        console.log(visible);
-      } else {
-        const finalPrompt = `${stripThinkTags(conversationText(state))}`;
-        const finalResponse = await tellSilently(ai, finalPrompt, { chain: false });
-        const finalText = stripRunTags(stripThinkTags(finalResponse));
-        if (finalText) console.log(finalText);
-      }
+      await handle_final_answer(ai, state, visible);
       break;
     }
 
-    rememberCommandRound(state);
-    let feedback = `${stripThinkTags(conversationText(state))}\n\n${continuationInstruction(state)}`;
-    if (failed) {
-      feedback = `The command above FAILED. Analyze the error output and try a corrected approach.\n\n${feedback}`;
-    }
-    response = await tellSilently(ai, feedback, { chain: true });
+    remember_command_round(state);
+    response = await tell_silently(ai, build_feedback(state, failed), {
+      chain: true,
+    });
   }
 }
 
-async function runTell(model: string, prompt: string, opts: CliOptions): Promise<void> {
-  const label = modelLabel(model);
-  const context = contextFile(model);
-  const previousContext = opts.context ? readText(context) : '';
-  const firstPrompt = previousContext ? `Previous context:\n${previousContext}\n\nUser:\n${prompt}` : prompt;
+async function maybe_summarize_context(
+  ai: AskInstance,
+  state: ConversationState,
+  previousContext: string,
+  contextPath: string,
+): Promise<void> {
+  try {
+    const turn = strip_think_tags(conversation_text(state));
+    if (previousContext && previousContext.length + turn.length > MAX_CONTEXT_CHARS) {
+      try {
+        const summary = await summarize_context(ai, previousContext);
+        write_context(contextPath, `${summary}\n${turn}`);
+      } catch {
+        write_context(contextPath, `${previousContext}\n${turn}`);
+      }
+    }
+  } catch (error) {
+    console.error(
+      '\x1b[31mFailed to summarize context: %s\x1b[0m',
+      error instanceof Error ? error.message : String(error),
+    );
+    process.exitCode = 1;
+  }
+}
+
+async function run_tell(model: string, prompt: string, opts: CliOptions): Promise<void> {
+  const label = model_label(model);
+  const context = context_file(model);
+  const previous_context = opts.context ? read_text(context) : '';
+  const first_prompt = previous_context ? `Previous context:\n${previous_context}\n\nUser:\n${prompt}` : prompt;
   const state: ConversationState = {
-    firstPrompt,
+    firstPrompt: first_prompt,
     timeline: [`User:\n${prompt}`],
     commandRounds: 0,
     chainLimitReached: false,
@@ -472,59 +539,42 @@ async function runTell(model: string, prompt: string, opts: CliOptions): Promise
     saveContext: opts.context ?? false,
   };
   if (!opts.context) fs.rmSync(context, { force: true });
-  const log = logFile();
-  appendLog(log, `Model: ${label}\nUser:\n${prompt}`);
+  const log = log_file();
+  append_log(log, `Model: ${label}\nUser:\n${prompt}`);
 
   let ai: AskInstance | null = null;
   try {
-    ai = await createAskAI(model);
-    await runResponseLoop(ai, state, log, context, previousContext);
+    ai = await create_ask_ai(model);
+    await run_response_loop(ai, state, log, context, previous_context);
   } catch (error) {
-    console.error('\x1b[31m%s\x1b[0m', formatModelError(error));
+    console.error('\x1b[31m%s\x1b[0m', format_model_error(error));
     process.exitCode = 1;
     return;
   }
 
   // Summarize if context grew too large; otherwise incremental saves already handled it
   if (opts.context) {
-    try {
-      const turn = stripThinkTags(conversationText(state));
-      if (previousContext && previousContext.length + turn.length > MAX_CONTEXT_CHARS) {
-        try {
-          const summary = await summarizeContext(ai, previousContext);
-          writeContext(context, `${summary}\n${turn}`);
-        } catch {
-          // Fall back: incremental saves already wrote the full context, just truncate
-          writeContext(context, `${previousContext}\n${turn}`);
-        }
-      }
-    } catch (error) {
-      console.error(
-        '\x1b[31mFailed to summarize context: %s\x1b[0m',
-        error instanceof Error ? error.message : String(error),
-      );
-      process.exitCode = 1;
-    }
+    await maybe_summarize_context(ai, state, previous_context, context);
   }
 }
 
 async function main() {
-  if (wantsModelHelp(process.argv)) {
-    printModelHelp();
+  if (wants_model_help(process.argv)) {
+    print_model_help();
     return;
   }
 
-  const program = buildProgram(process.argv);
+  const program = build_program(process.argv);
   const opts = program.opts<CliOptions>();
-  const input = parseArgs(program.args, opts.model, Boolean(opts.input));
-  const stdinText = input.readStdin ? await readStdin().catch(() => '') : '';
-  const prompt = formatPrompt(input.parts.join(' '), stdinText, opts);
+  const input = parse_args(program.args, opts.model, Boolean(opts.input));
+  const stdin_text = input.readStdin ? await read_stdin().catch(() => '') : '';
+  const prompt = format_prompt(input.parts.join(' '), stdin_text, opts);
   if (!prompt) {
-    console.error(formatMissingPromptError(program));
+    console.error(format_missing_prompt_error(program));
     process.exitCode = 1;
     return;
   }
-  await runTell(input.model, prompt, opts);
+  await run_tell(input.model, prompt, opts);
 }
 
 if (typeof require !== 'undefined' && typeof module !== 'undefined' && require.main === module) {

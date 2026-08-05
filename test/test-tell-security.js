@@ -76,12 +76,12 @@ async function runTell(args, response, opts = {}) {
     if (name === './ai/index' || name === './ai') {
       return {
         MODELS: { d: 'deepseek:deepseek-v4-pro:medium', g: 'openai:gpt-5.5:medium' },
-        resolveModelSpec: (spec) => {
+        resolve_model_spec: (spec) => {
           const value = { d: 'deepseek:deepseek-v4-pro:medium', g: 'openai:gpt-5.5:medium' }[spec] || spec;
           const [vendor, model, thinking = 'auto'] = value.split(':');
           return { vendor, model, thinking, fast: false };
         },
-        createAskAI: async () => ({
+        create_ask_ai: async () => ({
           ask: async (message, options = {}) => {
             tellMessages.push(message);
             tellCalls.push({ message, options });
