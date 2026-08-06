@@ -7,7 +7,6 @@
     "target": "ES2020",
     "lib": ["ES2020"],
     "module": "ESNext",
-    "types": ["node"],
     "moduleResolution": "Bundler",
     "moduleDetection": "force",
     "verbatimModuleSyntax": true,
@@ -42,18 +41,8 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
 
-    /* --- Emissão --- */
-    "outDir": "dist",
-    "rootDir": "src",
-    "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true,
-    "noEmitOnError": true,
-    "importHelpers": false,
-
     /* --- Diagnóstico --- */
+    "importHelpers": false,
     "pretty": true
-  },
-  "include": ["src/*"],
-  "exclude": ["node_modules", "dist", "**/*.test.ts"]
+  }
 }
