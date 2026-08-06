@@ -7,7 +7,9 @@ const ts = require('typescript');
 const util = require('node:util');
 const vm = require('node:vm');
 
-const tellSource = ts.transpileModule(fs.readFileSync(path.join(__dirname, '..', 'src', 'Tell.ts'), 'utf8'), {
+const sdk = require('@tell-ai/sdk');
+
+const tellSource = ts.transpileModule(fs.readFileSync(path.join(__dirname, '..', 'packages', 'cli', 'src', 'Tell.ts'), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
 }).outputText;
 
@@ -73,14 +75,9 @@ async function runTell(args, response, opts = {}) {
 
   const moduleObj = { exports: {} };
   function mockRequire(name) {
-    if (name === './ai/index' || name === './ai') {
+    if (name === '@tell-ai/sdk') {
       return {
-        MODELS: { d: 'deepseek:deepseek-v4-pro:medium', g: 'openai:gpt-5.5:medium' },
-        resolve_model_spec: (spec) => {
-          const value = { d: 'deepseek:deepseek-v4-pro:medium', g: 'openai:gpt-5.5:medium' }[spec] || spec;
-          const [vendor, model, thinking = 'auto'] = value.split(':');
-          return { vendor, model, thinking, fast: false };
-        },
+        ...sdk,
         create_ask_ai: async () => ({
           ask: async (message, options = {}) => {
             tellMessages.push(message);
@@ -90,7 +87,9 @@ async function runTell(args, response, opts = {}) {
         }),
       };
     }
-    if (name === './summarize') return { summarizeContext: async () => '[summarized]' };
+    if (name === './env') {
+      return { load_sdk_config: async () => ({ keys: {}, urls: {} }) };
+    }
     if (name === 'child_process' || name === 'node:child_process') return { exec: mockExec };
     if (name === 'os' || name === 'node:os') return { ...require('node:os'), homedir: () => home };
     return require(name);
