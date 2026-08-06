@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.5.0 — 2026-08-05
+
+### Features
+- Split the codebase into a bun workspaces monorepo with two packages: `@tell-ai/sdk` (browser-safe AI library) and `tell-ai` (the `tell` CLI, now 0.5.0).
+- The SDK receives all environment concerns via an injected `SDKConfig` (`keys`/`urls`, both partial); it has zero `node:*` imports and zero `process.env` reads, so it runs in browsers, Node, and Bun without changes.
+- Environment resolution (env vars + `~/.config/<vendor>.token` fallback) now lives exclusively in the CLI (`packages/cli/src/env.ts`), which assembles the `SDKConfig` for `create_ask_ai(spec, config)`.
+
+### Refactors
+- Moved `MODELS`, `resolve_model_spec`, provider dispatch, `<RUN>`/`<think>`/markdown tag functions, and `summarize_context` into the SDK, exported from `packages/sdk/src/index.ts`.
+- Extracted the strict TypeScript configuration into `tsconfig.base.json`, extended by both packages; the SDK type-checks without `@types/node` to enforce browser safety.
+- CLI package builds to a minified CJS bundle (`dist/Tell.js`, `#!/usr/bin/env node`) with `commander`; the SDK builds to ESM + CJS + declarations via tsup.
+- Root package is now a private workspace that orchestrates everything with `bun run --filter`.
+- Removed `gpt-tokenizer` usage and the stale root `src/` layout (`src/ai`, `src/config`, `src/summarize.ts`, `src/Tell.ts`).
+
+### Tests
+- Security test suite now transpiles `packages/cli/src/Tell.ts` and mocks `@tell-ai/sdk` from the real built SDK (tag functions are exercised for real), depending on the SDK build step.
+
+### Documentation
+- Updated `AGENTS.md` to describe the monorepo architecture, package boundaries, and injected-config design.
+
+---
+
 ## v0.4.2 — 2026-07-25
 
 ### Features
