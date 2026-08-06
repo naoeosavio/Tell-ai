@@ -4,13 +4,9 @@
 # Re-include distribution output and metadata
 !examples/*
 !examples/
-!src/*
-!src/ai/*
-!src/**/*
 !docs/examples/*
 !docs/*
 !docs/
-!src/
 !test/*
 !test/
 !package.json
@@ -18,5 +14,20 @@
 !LICENSE*
 !.gitignore
 !tsconfig*
+!biome*
+!tsup*
 !CHANGELOG*
+!AGENTS.md
+!task.md
 !*.sh
+!bun.lock
+
+# Monorepo workspace packages
+!packages/
+!packages/*/
+!packages/**/src/
+!packages/**/src/*
+!packages/*/package.json
+!packages/*/tsconfig.json
+!packages/*/tsup.config.ts
+packages/*/dist/

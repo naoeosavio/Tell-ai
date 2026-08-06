@@ -1,0 +1,48 @@
+{
+  "compilerOptions": {
+    /* --- Target & runtime ---
+       ES2020 + lib sem "DOM" = roda em browser, Node e Bun sem diferença:
+       nenhuma API específica de um único ambiente é assumida.
+       Se a lib precisar de fetch/URL/etc no browser, adicione "DOM" ao lib. */
+    "target": "ES2020",
+    "lib": ["ES2020"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "moduleDetection": "force",
+    "verbatimModuleSyntax": true,
+
+    /* --- Interop --- */
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+
+    /* --- Strictness máxima (mata "implicit any" e acesso inseguro) --- */
+    "strict": true,
+    "noImplicitAny": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "useUnknownInCatchVariables": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "allowUnreachableCode": false,
+    "allowUnusedLabels": false,
+
+    /* --- Paradigma funcional ---
+       erasableSyntaxOnly bane enum, namespace com código, parameter
+       properties e "import =" — tudo que empurra para o lado
+       imperativo/OO. Força tipos via "type" e union literals. */
+    "erasableSyntaxOnly": true,
+
+    /* --- Higiene de código --- */
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+
+    /* --- Diagnóstico --- */
+    "importHelpers": false,
+    "pretty": true
+  }
+}

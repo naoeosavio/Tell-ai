@@ -1,69 +1,26 @@
 {
-  "name": "tell-ai",
-  "version": "0.4.2",
-  "description": "One-shot terminal assistant",
-  "bin": {
-    "tell": "dist/Tell.js"
-  },
+  "name": "tell-ai-monorepo",
+  "private": true,
+  "version": "0.5.0",
+  "description": "Monorepo for the tell-ai CLI and the @tell-ai/sdk browser-safe AI library",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
-    "build": "rm -rf dist && tsup && chmod +x dist/*.js",
-    "prepare": "npm run build",
-    "test": "npm run test:security",
-    "test:security": "npm run build && node test/test-tell-security.js",
-    "lint": "tsc",
-    "format": "biome check --write src",
-    "check:format": "biome check src",
-    "ci": "npm run lint && npm run check:format && npm run test && npm run build",
-    "prepublish": "npm run ci"
+    "build": "bun run --filter @tell-ai/sdk build && bun run --filter tell-ai build",
+    "lint": "bun run --filter @tell-ai/sdk lint && bun run --filter tell-ai lint",
+    "format": "biome check --write packages",
+    "check": "biome check packages",
+    "test": "bun run test:security",
+    "test:security": "bun run --filter @tell-ai/sdk build && node test/test-tell-security.js",
+    "ci": "bun run build && bun run lint && bun run check && bun run test"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/naoeosavio/Tell-ai.git"
   },
-  "keywords": [
-    "tell",
-    "shell-ai",
-    "ai-coding-cli",
-    "coding-agent",
-    "agentic-coding",
-    "terminal-ai",
-    "developer-tools",
-    "execution-first",
-    "repo-tools",
-    "cli-ai",
-    "code-completion",
-    "code-suggestions",
-    "shell",
-    "ai",
-    "cli",
-    "cli-tools",
-    "cli-suggestions",
-    "one-shot",
-    "command-execution",
-    "developer-tools",
-    "openai",
-    "anthropic",
-    "gemini"
-  ],
   "author": "it is not savio",
   "license": "GPL-3.0",
-  "bugs": {
-    "url": "https://github.com/naoeosavio/Tell-ai/issues"
-  },
-  "dependencies": {
-    "@ai-sdk/anthropic": "^4.0.8",
-    "@ai-sdk/cerebras": "^3.0.5",
-    "@ai-sdk/deepseek": "^3.0.5",
-    "@ai-sdk/fireworks": "^3.0.6",
-    "@ai-sdk/google": "^4.0.8",
-    "@ai-sdk/moonshotai": "^3.0.14",
-    "@ai-sdk/openai": "^4.0.8",
-    "@ai-sdk/xai": "^4.0.7",
-    "ai": "^7.0.16",
-    "commander": "15.0.0",
-    "gpt-tokenizer": "3.4.0"
-  },
-  "homepage": "https://github.com/naoeosavio/Tell-ai#readme",
   "devDependencies": {
     "@biomejs/biome": "2.2.6",
     "@types/node": "26.1.0",
