@@ -82,8 +82,11 @@ function model_label(model: string): string {
 }
 
 function is_model_spec(value: string): boolean {
+  const bare = value.startsWith('.') ? value.slice(1) : value;
+  if (MODELS[bare]) return true;
+  if (!bare.includes(':')) return false;
   try {
-    resolve_model_spec(value);
+    resolve_model_spec(bare);
     return true;
   } catch {
     return false;
@@ -344,20 +347,30 @@ function looks_like_index_or_hash_ref(value: string): boolean {
 }
 
 // Preserves backward compatibility: if the text after `-c`/`-C` doesn't look
-// like something that flag actually accepts, it was really meant as (part
-// of) the prompt — push it back onto the positional arguments and fall back
+// like something that flag actually accepts, it was really meant as (part of)
+// the prompt — push it back onto the positional arguments and fall back
 // to the flag's bare behavior, exactly like `tell -c "some prompt"` used to work.
 function reconcile_context_args(opts: CliOptions, positionalArgs: string[]): string[] {
   let args = positionalArgs;
   if (typeof opts.createContext === 'string' && !sanitize_context_name(opts.createContext)) {
-    args = [opts.createContext, ...args];
+    args = push_back_as_prompt(opts.createContext, args);
     opts.createContext = true;
   }
   if (typeof opts.context === 'string' && !looks_like_index_or_hash_ref(opts.context)) {
-    args = [opts.context, ...args];
+    args = push_back_as_prompt(opts.context, args);
     opts.context = true;
   }
   return args;
+}
+
+// Re-inserts a `-c`/`-C` value that was really prompt text. If the first
+// positional is a model spec, it must stay first so the model detection in
+// parse_args still picks it up; otherwise the value goes to the front.
+function push_back_as_prompt(value: string, args: string[]): string[] {
+  if (args.length > 0 && is_model_spec(args[0] as string)) {
+    return [args[0] as string, value, ...args.slice(1)];
+  }
+  return [value, ...args];
 }
 
 // Builds the effective context plan for this invocation from the parsed
