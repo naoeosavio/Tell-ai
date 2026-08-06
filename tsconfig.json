@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     /* --- Target & runtime ---
-       ES2022 + lib sem "DOM" = roda em browser, Node e Bun sem diferença:
+       ES2020 + lib sem "DOM" = roda em browser, Node e Bun sem diferença:
        nenhuma API específica de um único ambiente é assumida.
        Se a lib precisar de fetch/URL/etc no browser, adicione "DOM" ao lib. */
     "target": "ES2020",
