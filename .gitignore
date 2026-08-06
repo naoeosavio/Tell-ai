@@ -14,13 +14,8 @@
 !LICENSE*
 !.gitignore
 !tsconfig*
-!biome*
-!tsup*
 !CHANGELOG*
 !AGENTS.md
-!task.md
-!*.sh
-!bun.lock
 
 # Monorepo workspace packages
 !packages/

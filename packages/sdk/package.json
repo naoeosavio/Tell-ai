@@ -3,6 +3,27 @@
   "version": "0.1.0",
   "description": "Browser-safe AI provider layer for tell-ai: model resolution, vendor dispatch, RUN/think tag handling and context summarization",
   "license": "GPL-3.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/naoeosavio/Tell-ai.git"
+  },
+  "keywords": [
+    "tell-ai",
+    "ai-sdk",
+    "browser-safe",
+    "llm",
+    "multi-vendor",
+    "model-aliases",
+    "openai",
+    "anthropic",
+    "gemini",
+    "deepseek"
+  ],
+  "author": "it is not savio",
+  "homepage": "https://github.com/naoeosavio/Tell-ai#readme",
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",

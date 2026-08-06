@@ -2,7 +2,8 @@ import { defineConfig } from 'tsup';
 
 export default defineConfig({
   entry: ['src/Tell.ts'],
-  format: ['cjs'],
+  format: ['esm'],
+  outExtension: () => ({ js: '.mjs' }),
   dts: false,
   sourcemap: false,
   clean: true,

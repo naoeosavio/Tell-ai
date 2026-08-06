@@ -2,20 +2,53 @@
   "name": "tell-ai",
   "version": "0.5.0",
   "description": "One-shot terminal assistant",
-  "license": "GPL-3.0",
-  "main": "./dist/Tell.js",
+  "main": "./dist/Tell.mjs",
   "bin": {
-    "tell": "dist/Tell.js"
+    "tell": "dist/Tell.mjs"
   },
   "files": ["dist"],
   "scripts": {
-    "build": "tsup && chmod +x dist/Tell.js",
-    "prepare": "bun run build",
+    "build": "tsup && chmod +x dist/Tell.mjs",
     "lint": "tsc -p tsconfig.json",
     "format": "biome check --write src",
     "check": "biome check src",
     "ci": "npm run lint && npm run check && npm run build"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/naoeosavio/Tell-ai.git"
+  },
+  "author": "it is not savio",
+  "license": "GPL-3.0",
+  "homepage": "https://github.com/naoeosavio/Tell-ai#readme",
+  "bugs": {
+    "url": "https://github.com/naoeosavio/Tell-ai/issues"
+  },
+  "keywords": [
+    "tell",
+    "shell-ai",
+    "ai-coding-cli",
+    "coding-agent",
+    "agentic-coding",
+    "terminal-ai",
+    "developer-tools",
+    "execution-first",
+    "repo-tools",
+    "cli-ai",
+    "code-completion",
+    "code-suggestions",
+    "shell",
+    "ai",
+    "cli",
+    "cli-tools",
+    "cli-suggestions",
+    "one-shot",
+    "command-execution",
+    "developer-tools",
+    "openai",
+    "anthropic",
+    "gemini"
+  ],
   "dependencies": {
     "@tell-ai/sdk": "workspace:*",
     "commander": "15.0.0"
