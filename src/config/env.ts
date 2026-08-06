@@ -8,6 +8,7 @@ export type ApiKeys = {
   cerebras: string;
   moonshotai: string;
   openrouter: string;
+  alibaba: string;
 };
 
 export type ApiBaseUrls = {
@@ -16,6 +17,7 @@ export type ApiBaseUrls = {
   openrouter: string;
   vast: string;
   local: string;
+  alibaba: string;
 };
 
 export type EnvConfig = {
@@ -38,6 +40,7 @@ export const API_KEYS: ApiKeys = {
   cerebras: ENV('CEREBRAS_API_KEY'),
   moonshotai: ENV('MOONSHOTAI_API_KEY'),
   openrouter: ENV('OPENROUTER_API_KEY'),
+  alibaba: ENV('DASHSCOPE_API_KEY'),
 };
 
 export const API_URLS: ApiBaseUrls = {
@@ -46,4 +49,5 @@ export const API_URLS: ApiBaseUrls = {
   openrouter: 'https://openrouter.ai/api/v1',
   vast: ENV('VAST_BASE_URL'),
   local: ENV('LOCAL_OPENAI_BASE_URL'),
+  alibaba: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
 };

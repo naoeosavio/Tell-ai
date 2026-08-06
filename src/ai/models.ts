@@ -98,6 +98,9 @@ export const MODELS: Record<string, string> = {
 
   v: 'vast:/root/model:none',
 
+  a: 'alibaba:qwen3.8-max:medium',
+  A: 'alibaba:qwen3.8-max:high',
+
   'd-': 'deepseek:deepseek-v4-flash:none',
   d: 'deepseek:deepseek-v4-flash:high',
   'd+': 'deepseek:deepseek-v4-flash:max',
@@ -140,6 +143,7 @@ const SUPPORTED_VENDORS = new Set([
   'local',
   'fireworks',
   'deepseek',
+  'alibaba',
 ]);
 
 const VENDOR_KEY: Record<string, keyof ApiKeys> = {
@@ -152,6 +156,7 @@ const VENDOR_KEY: Record<string, keyof ApiKeys> = {
   cerebras: 'cerebras',
   moonshotai: 'moonshotai',
   openrouter: 'openrouter',
+  alibaba: 'alibaba',
 };
 
 const CEREBRAS_MODELS = new Set([
@@ -176,6 +181,7 @@ async function get_api_key(vendor: string): Promise<string | undefined> {
 
 function infer_vendor(model: string): string {
   const normalized = model.toLowerCase();
+  if (normalized.startsWith('alibaba/')) return 'alibaba';
   if (normalized.startsWith('gpt') || normalized.startsWith('o')) return 'openai';
   if (normalized.startsWith('claude')) return 'anthropic';
   if (normalized.startsWith('gemini')) return 'google';
@@ -194,6 +200,7 @@ let FIREWORKS: any = null;
 let CEREBRAS: any = null;
 let MOONSHOTAI: any = null;
 let OPENROUTER: any = null;
+let ALIBABA: any = null;
 const VAST_PROVIDERS: Record<string, any> = {};
 const LOCAL_PROVIDERS: Record<string, any> = {};
 
@@ -393,6 +400,17 @@ async function handle_openrouter(model: string, reasoning: string, fast: boolean
   const provider = await get_openrouter_provider();
   return { model: provider(model), reasoning, fast };
 }
+async function handle_alibaba(model: string, reasoning: string, fast: boolean): Promise<ModelHandle> {
+  if (!ALIBABA) {
+    const api_key = await get_api_key('alibaba');
+    ALIBABA = createOpenAI({
+      ...(api_key ? { apiKey: api_key } : {}),
+      baseURL: API_URLS.alibaba,
+      name: 'alibaba',
+    });
+  }
+  return { model: ALIBABA(model.replace(/^alibaba\//i, '')), reasoning, fast };
+}
 async function handle_vast(model: string, reasoning: string, fast: boolean): Promise<ModelHandle> {
   const provider = await get_vast_provider(API_URLS.vast);
   return { model: provider.chat(model), reasoning, fast };
@@ -412,6 +430,7 @@ const VENDOR_HANDLERS: Record<string, (m: string, r: string, f: boolean) => Prom
   fireworks: handle_fireworks,
   moonshotai: handle_moonshot_ai,
   openrouter: handle_openrouter,
+  alibaba: handle_alibaba,
   vast: handle_vast,
   local: handle_local,
 };
