@@ -88,7 +88,6 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 export GOOGLE_API_KEY="..."        # or GEMINI_API_KEY
 export XAI_API_KEY="..."
 export DEEPSEEK_API_KEY="..."
-export FIREWORKS_API_KEY="..."
 export CEREBRAS_API_KEY="..."
 export MOONSHOTAI_API_KEY="..."
 export OPENROUTER_API_KEY="..."
@@ -102,7 +101,6 @@ Token files (fallback):
 ~/.config/google.token
 ~/.config/xai.token
 ~/.config/deepseek.token
-~/.config/fireworks.token
 ~/.config/cerebras.token
 ~/.config/moonshotai.token
 ~/.config/openrouter.token

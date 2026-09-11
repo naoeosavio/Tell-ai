@@ -23,7 +23,6 @@ export async function load_sdk_config(): Promise<SDKConfig> {
     google: ENV('GOOGLE_API_KEY') || ENV('GEMINI_API_KEY') || (await read_token_file('google')),
     xai: ENV('XAI_API_KEY') || (await read_token_file('xai')),
     deepseek: ENV('DEEPSEEK_API_KEY') || (await read_token_file('deepseek')),
-    fireworks: ENV('FIREWORKS_API_KEY') || (await read_token_file('fireworks')),
     cerebras: ENV('CEREBRAS_API_KEY') || (await read_token_file('cerebras')),
     moonshotai: ENV('MOONSHOTAI_API_KEY') || (await read_token_file('moonshotai')),
     openrouter: ENV('OPENROUTER_API_KEY') || (await read_token_file('openrouter')),
@@ -32,8 +31,14 @@ export async function load_sdk_config(): Promise<SDKConfig> {
   };
   const urls: SDKUrls = {
     openai: 'https://api.openai.com/v1',
+    anthropic: 'https://api.anthropic.com/v1',
+    google: 'https://generativelanguage.googleapis.com/v1beta',
+    xai: 'https://api.x.ai/v1',
     deepseek: 'https://api.deepseek.com',
+    cerebras: 'https://api.cerebras.ai/v1',
+    moonshotai: 'https://api.moonshot.ai/v1',
     openrouter: 'https://openrouter.ai/api/v1',
+    alibaba: ENV('ALIBABA_BASE_URL') || 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
     zhipu: ENV('ZHIPU_BASE_URL') || 'https://api.z.ai/api/paas/v4',
     vast: ENV('VAST_BASE_URL'),
     local: ENV('LOCAL_OPENAI_BASE_URL'),
