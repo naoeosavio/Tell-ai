@@ -28,7 +28,7 @@ const answer = await tell('hello', { ask: ai });
 
 ## Browser ESM (`@tell-ai/sdk/browser`)
 
-A single self-contained module bundle (ESM only). All AI-SDK core and all nine providers are bundled in, so there are no bare imports to resolve — it can be imported directly in a browser with no bundler:
+A single self-contained module bundle (ESM only). All AI-SDK core and all eight providers are bundled in, so there are no bare imports to resolve — it can be imported directly in a browser with no bundler:
 
 ```html
 <script type="module">

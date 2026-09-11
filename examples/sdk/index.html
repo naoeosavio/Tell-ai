@@ -49,7 +49,7 @@
     <span id="status" class="hint"></span>
   </div>
   <div class="hint">
-    Direct mode: Gemini/OpenRouter/Fireworks/Cerebras accept CORS — fill in your browser key.
+    Direct mode: Gemini/OpenRouter/Cerebras accept CORS — fill in your browser key.
     <br />
     Proxy mode (key stays on the server): run <code>bun examples/web/proxy.ts</code>, open this page at
     http://localhost:3000/ and fill "Custom URL" with e.g. http://localhost:3000/google.
@@ -65,7 +65,7 @@
     import { tell, MODELS, get_system_prompt } from './browser.js';
 
     const $ = (id) => document.getElementById(id);
-    const VENDORS = ['openai', 'anthropic', 'google', 'xai', 'deepseek', 'fireworks', 'cerebras', 'moonshotai', 'openrouter'];
+    const VENDORS = ['openai', 'anthropic', 'google', 'xai', 'deepseek', 'cerebras', 'moonshotai', 'openrouter'];
 
     const select = $('model');
     for (const [alias, spec] of Object.entries(MODELS)) {

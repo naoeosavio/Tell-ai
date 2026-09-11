@@ -4,7 +4,6 @@ export type SDKKeys = {
   google?: string | undefined;
   xai?: string | undefined;
   deepseek?: string | undefined;
-  fireworks?: string | undefined;
   cerebras?: string | undefined;
   moonshotai?: string | undefined;
   openrouter?: string | undefined;
@@ -18,7 +17,6 @@ export type SDKUrls = {
   google?: string | undefined;
   xai?: string | undefined;
   deepseek?: string | undefined;
-  fireworks?: string | undefined;
   cerebras?: string | undefined;
   moonshotai?: string | undefined;
   openrouter?: string | undefined;

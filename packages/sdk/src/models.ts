@@ -1,7 +1,6 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createCerebras } from '@ai-sdk/cerebras';
 import { createDeepSeek } from '@ai-sdk/deepseek';
-import { createFireworks } from '@ai-sdk/fireworks';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createMoonshotAI } from '@ai-sdk/moonshotai';
 import { createOpenAI } from '@ai-sdk/openai';
@@ -143,10 +142,10 @@ export const MODELS: Record<string, string> = {
   'af++': 'alibaba:qwen3.8-flash:xhigh',
   AF: 'alibaba:qwen3.8-flash:high',
 
-  'd--': 'deepseek:deepseek-v4-flash-vision-exp:none',
-  'd-': 'deepseek:deepseek-v4-flash-vision-exp:low',
-  d: 'deepseek:deepseek-v4-flash-vision-exp:high',
-  'd+': 'deepseek:deepseek-v4-flash-vision-exp:max',
+  'd--': 'deepseek:deepseek-flash:none',
+  'd-': 'deepseek:deepseek-flash:low',
+  d: 'deepseek:deepseek-flash:high',
+  'd+': 'deepseek:deepseek-flash:max',
 
   'D--': 'deepseek:deepseek-v4-pro:none',
   'D-': 'deepseek:deepseek-v4-pro:low',
@@ -200,7 +199,6 @@ const SUPPORTED_VENDORS = new Set([
   'xai',
   'vast',
   'local',
-  'fireworks',
   'deepseek',
   'cerebras',
   'alibaba',
@@ -213,7 +211,6 @@ const VENDOR_KEY: Record<string, keyof SDKKeys> = {
   google: 'google',
   xai: 'xai',
   deepseek: 'deepseek',
-  fireworks: 'fireworks',
   cerebras: 'cerebras',
   moonshotai: 'moonshotai',
   openrouter: 'openrouter',
@@ -247,7 +244,6 @@ let ANTHROPIC: any = null;
 let GOOGLE: any = null;
 let XAI: any = null;
 let DEEPSEEK: any = null;
-let FIREWORKS: any = null;
 let CEREBRAS: any = null;
 let MOONSHOTAI: any = null;
 let OPENROUTER: any = null;
@@ -472,23 +468,6 @@ async function handle_deepseek(
   return { model: DEEPSEEK(model), reasoning, fast };
 }
 
-async function handle_fireworks(
-  model: string,
-  reasoning: string,
-  fast: boolean,
-  config: SDKConfig,
-): Promise<ModelHandle> {
-  if (!FIREWORKS) {
-    const api_key = get_api_key('fireworks', config);
-    const base_url = config.urls.fireworks;
-    FIREWORKS = createFireworks({
-      ...(api_key ? { apiKey: api_key } : {}),
-      ...(base_url ? { baseURL: base_url } : {}),
-    });
-  }
-  return { model: FIREWORKS(model), reasoning, fast };
-}
-
 async function handle_moonshot_ai(
   model: string,
   reasoning: string,
@@ -567,7 +546,6 @@ const VENDOR_HANDLERS: Record<string, (m: string, r: string, f: boolean, config:
   google: handle_google,
   xai: handle_xai,
   deepseek: handle_deepseek,
-  fireworks: handle_fireworks,
   cerebras: handle_cerebras,
   moonshotai: handle_moonshot_ai,
   openrouter: handle_openrouter,

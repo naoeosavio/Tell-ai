@@ -4,7 +4,6 @@ const TARGETS: Record<string, { base: string; envKey: string }> = {
   deepseek: { base: 'https://api.deepseek.com', envKey: 'DEEPSEEK_API_KEY' },
   xai: { base: 'https://api.x.ai/v1', envKey: 'XAI_API_KEY' },
   google: { base: 'https://generativelanguage.googleapis.com/v1beta', envKey: 'GOOGLE_API_KEY' },
-  fireworks: { base: 'https://api.fireworks.ai/v1', envKey: 'FIREWORKS_API_KEY' },
   cerebras: { base: 'https://api.cerebras.ai/v1', envKey: 'CEREBRAS_API_KEY' },
   moonshotai: { base: 'https://api.moonshot.ai/v1', envKey: 'MOONSHOTAI_API_KEY' },
   openrouter: { base: 'https://openrouter.ai/api/v1', envKey: 'OPENROUTER_API_KEY' },

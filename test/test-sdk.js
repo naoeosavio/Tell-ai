@@ -39,12 +39,15 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
   assert.strictEqual(dot.vendor, 'openai');
   assert.strictEqual(sdk.resolve_model_spec('g+').thinking, 'high');
   assert.strictEqual(sdk.resolve_model_spec('g--').thinking, 'none');
-  assert.deepStrictEqual(sdk.resolve_model_spec('deepseek:deepseek-v4-flash:high'), {
+  assert.deepStrictEqual(sdk.resolve_model_spec('deepseek:deepseek-flash:high'), {
     vendor: 'deepseek',
-    model: 'deepseek-v4-flash',
+    model: 'deepseek-flash',
     thinking: 'high',
     fast: false,
   });
+  assert.strictEqual(sdk.resolve_model_spec('d').model, 'deepseek-flash');
+  assert.strictEqual(sdk.resolve_model_spec('deepseek:deepseek-v4-flash:high').model, 'deepseek-v4-flash');
+  assert.strictEqual(sdk.resolve_model_spec('deepseek:deepseek-v4-flash-vision-exp:high').model, 'deepseek-v4-flash-vision-exp');
   assert.strictEqual(sdk.resolve_model_spec('openai:gpt-5.6-sol:medium:fast').fast, true);
   assert.throws(() => sdk.resolve_model_spec(''), /must be provided/);
   assert.throws(() => sdk.resolve_model_spec('notamodelatall'), /./);

@@ -4,7 +4,7 @@ import { get_system_prompt } from './systemPrompt';
 import { strip_run_tags, strip_think_tags } from './tags';
 
 export type TellOptions = {
-  /** Model alias or full spec (e.g. 'g', 'deepseek:deepseek-v4-flash:high'). Defaults to 'g'. */
+  /** Model alias or full spec (e.g. 'g', 'deepseek:deepseek-flash:high'). Defaults to 'g'. */
   model?: string;
   /** API keys by vendor; injected (never read from the environment). */
   keys?: SDKKeys;
