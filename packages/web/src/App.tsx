@@ -73,7 +73,6 @@ const KEYED_VENDORS = new Set([
   'google',
   'xai',
   'deepseek',
-  'fireworks',
   'openrouter',
   'moonshotai',
   'cerebras',
@@ -124,7 +123,6 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
     anthropic: false,
     xai: false,
     deepseek: false,
-    fireworks: false,
     openrouter: false,
   });
 

@@ -82,7 +82,6 @@ const VENDOR_LABELS: Record<string, string> = {
   anthropic: 'Anthropic',
   xai: 'xAI',
   deepseek: 'DeepSeek',
-  fireworks: 'Fireworks',
   cerebras: 'Cerebras',
   moonshotai: 'Moonshot AI',
   openrouter: 'OpenRouter',

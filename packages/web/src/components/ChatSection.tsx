@@ -91,7 +91,6 @@ const KEYED_VENDORS = new Set([
   'google',
   'xai',
   'deepseek',
-  'fireworks',
   'openrouter',
   'moonshotai',
   'cerebras',

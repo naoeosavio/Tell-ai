@@ -61,7 +61,7 @@ command goes to manual approval.
 `GET /api/auth/status` + `POST /api/auth/verify`, and `?token=` on WS;
 token lives only in browser memory — retyped on every connection) + vendor keys (`GEMINI_API_KEY`,
 `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XAI_API_KEY`, `DEEPSEEK_API_KEY`,
-`FIREWORKS_API_KEY`, `CEREBRAS_API_KEY`, `OPENROUTER_API_KEY`, …).
+`CEREBRAS_API_KEY`, `OPENROUTER_API_KEY`, …).
 
 `TELL_SCROLLBACK_MAX` (bytes/chars per terminal pane, default `262144` = 256KB)
 caps the PTY scrollback buffer. Panes running a program (`htop`, `opencode`,
