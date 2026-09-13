@@ -10,7 +10,7 @@ import type React from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch } from './api.ts';
 import AgentFeed from './components/AgentFeed.tsx';
-import ChatSection, { type ChatMessage } from './components/ChatSection.tsx';
+import ChatSection, { type ChatMessage, type StreamingReasoning } from './components/ChatSection.tsx';
 import ChatThreads, {
   type ChatThread,
   loadThreads,
@@ -25,6 +25,7 @@ import FileViewer from './components/FileViewer.tsx';
 import SettingsPanel from './components/SettingsPanel.tsx';
 import Terminal, { type TerminalLayout, type TerminalLine, type TerminalTabMeta } from './components/Terminal.tsx';
 import { useToast } from './components/Toast.tsx';
+import { consume_chat_stream } from './shared/chat-stream.ts';
 import { loadExecToggles, saveExecToggles } from './shared/exec-toggles.ts';
 import {
   clampTerminalWidthCh,
@@ -65,6 +66,10 @@ const MAX_CHAIN_ITERATIONS = 8;
 const FEEDBACK_OUTPUT_LIMIT = 4 * 1024;
 // beforeunload keepalive body budget: browsers reject keepalive bodies > 64KB.
 const UNLOAD_BODY_LIMIT = 60 * 1024;
+// Streaming UI cadence: update the in-flight assistant message at most every
+// 100ms and tick the reasoning timer every 500ms.
+const STREAM_FLUSH_MS = 100;
+const STREAM_TIMER_MS = 500;
 
 // Vendors that require an API key (mirrors ChatSection; used for the submit guard)
 const KEYED_VENDORS = new Set([
@@ -137,6 +142,15 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
     savedExecTogglesRef.current?.requireApproval ?? false,
   );
   const [noExec, setNoExec] = useState<boolean>(savedExecTogglesRef.current?.noExec ?? false);
+  // Default open state for reasoning headers; server `--think` seeds the first
+  // visit, and any manual expand/collapse persists (like the toggles above).
+  const [reasoningExpanded, setReasoningExpanded] = useState<boolean>(
+    savedExecTogglesRef.current?.reasoningExpanded ?? false,
+  );
+  // In-flight streaming state (never persisted): which assistant message is
+  // still receiving events and the live reasoning timer for its header.
+  const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
+  const [streamingReasoning, setStreamingReasoning] = useState<StreamingReasoning | null>(null);
   // Effective auto-run: No-Exec kills it; Require Approval keeps it for safe
   // commands only (risky ones are routed to the confirm card per command).
   const canAutoRun = autoExecute && !noExec;
@@ -277,8 +291,8 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
 
   // Execution toggles persist to localStorage so a reload keeps the user's last choice.
   useEffect(() => {
-    saveExecToggles({ autoExecute, requireApproval, noExec, chainMode });
-  }, [autoExecute, requireApproval, noExec, chainMode]);
+    saveExecToggles({ autoExecute, requireApproval, noExec, chainMode, reasoningExpanded });
+  }, [autoExecute, requireApproval, noExec, chainMode, reasoningExpanded]);
 
   // Best-effort final save on page unload. Trim the payload until it fits the
   // keepalive body budget (drop old messages first, then all of them); skip if still oversized.
@@ -337,6 +351,9 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
           setAutoExecute(data.autoExecute);
         if (typeof data.chain === 'boolean' && savedExecTogglesRef.current?.chainMode === undefined)
           setChainMode(data.chain);
+        // Server `--think` only seeds the expanded-by-default choice on the first visit.
+        if (typeof data.think === 'boolean' && savedExecTogglesRef.current?.reasoningExpanded === undefined)
+          setReasoningExpanded(data.think);
         // Server `--prompt`: fill the chat inbox (never auto-sent, never a message).
         if (typeof data.initialPrompt === 'string' && data.initialPrompt) setInputPrompt(data.initialPrompt);
       } catch (error) {
@@ -383,6 +400,7 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
               role: m.role,
               content: m.content,
               thought: m.thought,
+              thoughtDurationMs: m.thoughtDurationMs,
             }));
             // Seed the active thread only when it is still empty (fresh localStorage)
             setMessages((prev) => (prev.length > 0 ? prev : seeded));
@@ -644,6 +662,87 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
     await runAiTurn(base);
   };
 
+  // Reads an NDJSON `/api/tell` response, keeping the in-flight assistant
+  // message updated (throttled) and driving the reasoning timer for its
+  // header. Returns the accumulated reply plus the frozen reasoning time.
+  const consumeChatStreamReply = async (
+    res: Response,
+    messageId: string,
+  ): Promise<{ text: string; reasoning: string; reasoningMs: number }> => {
+    setStreamingMessageId(messageId);
+    let reasoningStartedAt = 0;
+    let isReasoningDone = false;
+    let reasoningMs = 0;
+    let timerId: number | null = null;
+    let lastFlush = -Infinity;
+
+    const stopTimer = () => {
+      if (timerId === null) return;
+      window.clearInterval(timerId);
+      timerId = null;
+    };
+    const freezeTimer = () => {
+      if (isReasoningDone) return;
+      isReasoningDone = true;
+      stopTimer();
+      if (reasoningStartedAt > 0) {
+        reasoningMs = Math.round(performance.now() - reasoningStartedAt);
+        setStreamingReasoning({ messageId, elapsedMs: reasoningMs, isDone: true });
+      }
+    };
+    const flush = (progress: { text: string; reasoning: string }, force: boolean) => {
+      const now = performance.now();
+      if (!force && now - lastFlush < STREAM_FLUSH_MS) return;
+      lastFlush = now;
+      const live: ChatMessage = {
+        id: messageId,
+        role: 'assistant',
+        content: progress.text,
+        ...(progress.reasoning ? { thought: progress.reasoning } : {}),
+      };
+      setMessagesAndSync((prev) => {
+        const index = prev.findIndex((m) => m.id === messageId);
+        if (index === -1) return [...prev, live];
+        const next = [...prev];
+        next[index] = live;
+        return next;
+      });
+    };
+
+    try {
+      const progress = await consume_chat_stream(res, (event, accumulated) => {
+        switch (event.type) {
+          case 'text':
+            // Fallback for providers that never emit reasoning_end.
+            if (!isReasoningDone) freezeTimer();
+            flush(accumulated, false);
+            break;
+          case 'reasoning':
+            if (reasoningStartedAt === 0) {
+              reasoningStartedAt = performance.now();
+              setStreamingReasoning({ messageId, elapsedMs: 0, isDone: false });
+              timerId = window.setInterval(() => {
+                setStreamingReasoning({
+                  messageId,
+                  elapsedMs: performance.now() - reasoningStartedAt,
+                  isDone: false,
+                });
+              }, STREAM_TIMER_MS);
+            }
+            flush(accumulated, false);
+            break;
+          default:
+            if (event.type === 'reasoning_end') freezeTimer();
+            break;
+        }
+      });
+      flush(progress, true);
+      return { text: progress.text, reasoning: progress.reasoning, reasoningMs };
+    } finally {
+      stopTimer();
+    }
+  };
+
   // Helper: run AI text generation step
   const runAiTurn = async (currentMessages: ChatMessage[]) => {
     if (chainDepthRef.current >= MAX_CHAIN_ITERATIONS) {
@@ -656,6 +755,7 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
     setLoading(true);
     const controller = new AbortController();
     abortRef.current = controller;
+    const messageId = crypto.randomUUID();
     try {
       const res = await apiFetch('/api/tell', {
         method: 'POST',
@@ -673,15 +773,27 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
         throw new Error(errData.error || 'AI generation failed');
       }
 
-      const data = await res.json();
-      const text = data.text || '';
-      const thought = data.reasoning || null;
+      let text = '';
+      let thought: string | null = null;
+      let thoughtDurationMs: number | null = null;
+
+      if ((res.headers.get('content-type') || '').includes('application/x-ndjson')) {
+        const streamed = await consumeChatStreamReply(res, messageId);
+        text = streamed.text;
+        thought = streamed.reasoning || null;
+        thoughtDurationMs = thought && streamed.reasoningMs > 0 ? streamed.reasoningMs : null;
+      } else {
+        const data = await res.json();
+        text = data.text || '';
+        thought = data.reasoning || null;
+      }
 
       const assistantMessage: ChatMessage = {
-        id: crypto.randomUUID(),
+        id: messageId,
         role: 'assistant',
         content: text,
-        thought: thought,
+        ...(thought ? { thought } : {}),
+        ...(thoughtDurationMs !== null ? { thoughtDurationMs } : {}),
       };
 
       const updatedMessages = [...currentMessages, assistantMessage];
@@ -731,6 +843,8 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
       setLoading(false);
     } finally {
       if (abortRef.current === controller) abortRef.current = null;
+      setStreamingMessageId(null);
+      setStreamingReasoning(null);
     }
   };
 
@@ -1397,6 +1511,10 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
           setNoExec(val);
           if (val) setAutoExecute(false);
         }}
+        reasoningExpanded={reasoningExpanded}
+        onReasoningToggle={(isOpen) => setReasoningExpanded(isOpen)}
+        streamingMessageId={streamingMessageId}
+        streamingReasoning={streamingReasoning}
         onSelectSample={(prompt) => {
           setInputPrompt(prompt);
         }}

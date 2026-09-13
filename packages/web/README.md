@@ -19,7 +19,7 @@ npm start        # node dist/server.js (production)
 ## CLI
 
 ```sh
-tell-web --cwd <path> --prompt <text> -m <model> --chain -y/--no-exec
+tell-web --cwd <path> --prompt <text> -m <model> --chain --stream --think -y/--no-exec
 tell-web --help
 ```
 
@@ -32,9 +32,22 @@ tell-web --help
 | `--host <addr>` | `127.0.0.1` | Bind address (`0.0.0.0` for LAN) |
 | `--exec-timeout <ms>` | `120000` (max `600000`) | Timeout per command |
 | `--chain` | off | Continue after output until final answer |
+| `--stream` | off | Stream responses as NDJSON instead of one JSON body |
+| `--think` | off | Start reasoning headers expanded (manual collapse/expand persists) |
 | `-y, --yes` | off | Auto-confirm execution |
 | `--no-exec` | off | Disable automatic execution |
 | `-h, --help` | — | Help |
+
+## Streaming (`--stream`)
+
+`/api/tell` replies become `application/x-ndjson` with one event per line:
+`reasoning`, `reasoning_end`, `text`, `done`, `error`. The client appends text
+to the assistant message as it arrives (throttled) and shows a collapsible
+reasoning header — 🧠 `Thinking… Ns` while the model reasons, then 🧠
+`Thought for N seconds ›`. Reasoning headers are collapsed by default;
+`--think` seeds them expanded. Expanding/collapsing a header persists the
+choice for future messages. Without `--stream`, `/api/tell` keeps returning
+the single-JSON response.
 
 ## Execution modes (chat toggles)
 
@@ -83,9 +96,9 @@ are not detected.
 | GET | `/api/models` | Models/aliases + `keysStatus` per vendor |
 | GET | `/api/auth/status` | Public: `{authRequired}` only (drives the isolated login screen) |
 | POST | `/api/auth/verify` | Public + rate-limited (5/15min/IP): `{token}` → `200`/`401` generic/`429` + `Retry-After` |
-| GET | `/api/config` | `defaultModel`, `autoExecute`, `chain`, `yes`, `cwd`, `initialPrompt` (requires auth when `TELL_TOKEN` is set) |
+| GET | `/api/config` | `defaultModel`, `autoExecute`, `chain`, `yes`, `stream`, `think`, `cwd`, `initialPrompt` (requires auth when `TELL_TOKEN` is set) |
 | GET | `/api/context` | Generated system prompt (tree + README + conventions) |
-| POST | `/api/tell` | `{messages, modelAlias?, systemPrompt?}` (400 invalid payload, 429) |
+| POST | `/api/tell` | `{messages, modelAlias?, systemPrompt?}` (400 invalid payload, 429); NDJSON event stream when `--stream`, JSON otherwise |
 | GET/PUT | `/api/session` | Persisted state + server facts + live scrollbacks |
 | GET | `/api/session/history` | List snapshots |
 | GET/DELETE | `/api/session/history/:name` | Read/delete snapshot (`:name` must end in `.json`) |
