@@ -7,7 +7,7 @@ The SDK has zero `node:*` imports and zero `process.env` reads. All environment 
 ## Features
 
 - **`MODELS` / `resolve_model_spec(model)`** — 70+ short aliases (e.g. `g` → `openai:gpt-5.6-sol:medium`) resolving to `vendor:model:thinking_budget` specs, with dot-prefix fast mode (`.g`).
-- **`create_ask_ai(spec, config)`** — returns an `AskInstance` with an `ask()` method backed by `generateText()` over openai, anthropic, google, xai, deepseek, cerebras, and moonshotai providers.
+- **`create_ask_ai(spec, config)`** — returns an `AskInstance` with `ask()` (one-shot, backed by `generateText()`) and `ask_stream()` (token-by-token, backed by `streamText()`) over openai, anthropic, google, xai, deepseek, cerebras, and moonshotai providers.
 - **`tell(message, options)`** — one-shot `tell --no-exec` as a library call: builds the tell system prompt (execution disabled by default), calls the model, and returns the answer with ` thinking`/`<RUN>` tags stripped.
 - **`get_system_prompt(options)`** — the shared tell system prompt (`PromptOptions { chain?, exec?, cwd?, platform? }`); `exec: false` emits the no-command-execution variant.
 - **Tag helpers** — `extract_runs`, `strip_run_tags`, `strip_think_tags`, `strip_markdown_code_blocks` for `<RUN>`/reasoning/markdown handling.
@@ -26,6 +26,41 @@ import { create_ask_ai, tell } from '@tell-ai/sdk';
 
 const ai = create_ask_ai('openai:gpt-5.6-sol', { keys: { openai: process.env.OPENAI_API_KEY } });
 const { text } = await ai.ask('explain this repository in one paragraph');
+```
+
+Streaming: consume reasoning/`text` deltas as the model generates them. `ask_stream` accepts a single prompt or a full multi-turn message array and returns a lazy `AsyncIterable` — the provider request only starts on first `next()`:
+
+```ts
+import { create_ask_ai } from '@tell-ai/sdk';
+
+const ai = await create_ask_ai('g', { keys: { openai: process.env.OPENAI_API_KEY } });
+let text = '';
+for await (const event of ai.ask_stream('explain this repo', { system: 'be brief' })) {
+  switch (event.type) {
+    case 'reasoning':
+      process.stderr.write(`\x1b[2m${event.text}\x1b[0m`);
+      break;
+    case 'reasoning_end': // provider finished reasoning (may never come on some models)
+      break;
+    case 'text':
+      text += event.text;
+      process.stdout.write(event.text);
+      break;
+  }
+}
+```
+
+Emits `AskStreamEvent`s in order: `reasoning` (deltas), `reasoning_end`, then `text` (deltas). Provider errors are thrown like `ask()`. Multi-turn:
+
+```ts
+const events = ai.ask_stream(
+  [
+    { role: 'user', content: 'what vendors are supported?' },
+    { role: 'assistant', content: 'openai, anthropic, google, ...' },
+    { role: 'user', content: 'give me an example' },
+  ],
+  { system: 'answer concisely' },
+);
 ```
 
 One-shot no-exec call (tag stripping included):

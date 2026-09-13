@@ -1,4 +1,4 @@
-export { type AskInstance, create_ask_ai } from './ask';
+export { type AskInstance, type AskStreamEvent, type AskStreamInput, create_ask_ai } from './ask';
 export type { SDKConfig, SDKKeys, SDKUrls } from './config';
 export type { ResolvedModelSpec } from './models';
 export { get_model, MODELS, type ModelHandle, resolve_model_spec } from './models';
