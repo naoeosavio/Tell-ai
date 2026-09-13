@@ -51,6 +51,17 @@ Multi-step chain mode — the assistant can run a command, see its output, and c
 tell --chain "find out why the build is failing and fix it"
 ```
 
+Stream the answer as it is generated (each chain round also streams):
+
+```bash
+tell --stream "explain this directory"
+tell --stream --think "why does this race condition happen?"  # reasoning on stderr
+```
+
+`--think` also works without `--stream`: the reasoning is printed dimmed on
+stderr once the response arrives. Streaming never changes what is logged or
+saved to the context.
+
 Include piped input with a prompt:
 
 ```bash

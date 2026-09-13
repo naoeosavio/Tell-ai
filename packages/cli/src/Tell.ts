@@ -41,6 +41,8 @@ type CliOptions = {
   exec?: boolean;
   input?: boolean;
   web?: boolean;
+  stream?: boolean;
+  think?: boolean;
   cwd?: string;
 };
 
@@ -69,6 +71,8 @@ type ConversationState = {
   execEnabled: boolean;
   yes: boolean;
   saveContext: boolean;
+  stream: boolean;
+  think: boolean;
 };
 
 type CommandResult = { output: string; exitCode: number };
@@ -459,10 +463,26 @@ async function run_scripts(scripts: string[], yes: boolean, execEnabled: boolean
   return { text: results.join('\n\n'), failed };
 }
 
-async function tell_silently(ai: AskInstance, message: string, options: PromptOptions = {}): Promise<string> {
+// Pulls the reasoning text out of a raw `<think>...</think>` response.
+function extract_think(response: string): string {
+  return /<think>([\s\S]*?)<\/think>/i.exec(response)?.[1]?.trim() ?? '';
+}
+
+function print_reasoning(reasoning: string): void {
+  if (!reasoning) return;
+  process.stderr.write(`\x1b[2m${reasoning}\x1b[0m\n`);
+}
+
+async function tell_silently(
+  ai: AskInstance,
+  message: string,
+  options: PromptOptions = {},
+  show_think = false,
+): Promise<string> {
   process.stderr.write('\x1b[2mThinking...\x1b[0m');
+  let response: string;
   try {
-    return await tell(message, {
+    response = await tell(message, {
       ask: ai,
       raw: true,
       system: get_system_prompt(options),
@@ -470,6 +490,81 @@ async function tell_silently(ai: AskInstance, message: string, options: PromptOp
   } finally {
     process.stderr.write('\r\x1b[K');
   }
+  if (show_think) print_reasoning(extract_think(response));
+  return response;
+}
+
+// Streams the response as it is generated: text goes to stdout as it arrives
+// and reasoning (only with `--think`) is printed dim on stderr. Returns the
+// same raw `<think>...</think>`-wrapped response the non-streaming path
+// returns, so log/context/`<RUN>` extraction stay identical.
+async function tell_streaming(
+  ai: AskInstance,
+  message: string,
+  options: PromptOptions = {},
+  show_think = false,
+): Promise<string> {
+  process.stderr.write('\x1b[2mThinking...\x1b[0m');
+  let is_indicator_active = true;
+  let is_reasoning_open = false;
+  let text = '';
+  let reasoning = '';
+
+  const clear_indicator = (): void => {
+    if (!is_indicator_active) return;
+    process.stderr.write('\r\x1b[K');
+    is_indicator_active = false;
+  };
+
+  // Reasoning is a dim stderr block; close its line before text or at the end.
+  const close_reasoning_line = (): void => {
+    if (!is_reasoning_open) return;
+    if (!reasoning.endsWith('\n')) process.stderr.write('\n');
+    is_reasoning_open = false;
+  };
+
+  try {
+    for await (const event of ai.ask_stream(message, { system: get_system_prompt(options) })) {
+      switch (event.type) {
+        case 'reasoning':
+          reasoning += event.text;
+          if (show_think) {
+            clear_indicator();
+            process.stderr.write(`\x1b[2m${event.text}\x1b[0m`);
+            is_reasoning_open = true;
+          }
+          break;
+        case 'text':
+          clear_indicator();
+          close_reasoning_line();
+          text += event.text;
+          process.stdout.write(event.text);
+          break;
+        default:
+          // reasoning_end: nothing to print, just close the dim block.
+          close_reasoning_line();
+          break;
+      }
+    }
+  } finally {
+    clear_indicator();
+    close_reasoning_line();
+  }
+
+  if (text && !text.endsWith('\n')) process.stdout.write('\n');
+  return reasoning ? `<think>${reasoning}</think>\n${text}` : text;
+}
+
+// Dispatch to the streaming or silent path — `--think` applies to both.
+function respond(
+  ai: AskInstance,
+  state: ConversationState,
+  message: string,
+  options: PromptOptions = {},
+): Promise<string> {
+  return state.stream
+    ? tell_streaming(ai, message, options, state.think)
+    : tell_silently(ai, message, options, state.think);
 }
 
 function format_model_error(error: unknown): string {
@@ -536,6 +631,8 @@ function build_program(argv: string[]): Command {
     .option('-l, --list', 'list saved contexts (@N, id, age, preview)')
     .option('-y, --yes', 'execute requested commands without confirmation')
     .option('--chain', 'continue after command output until the assistant gives a final answer')
+    .option('--stream', 'stream the response as it is generated')
+    .option('--think', 'show the model reasoning on stderr (works with and without --stream)')
     .option('-i, --input', 'read stdin and include it with the prompt')
     .option('-w, --web', 'launch the interactive Tell Web sandbox')
     .option('--cwd <path>', 'working directory for the sandbox (created if missing)')
@@ -574,20 +671,22 @@ function finish_round(state: ConversationState, visible: string): void {
       `\x1b[33mChain limit reached (${MAX_CHAIN_STEPS}); ignoring further requested commands.\x1b[0m\n`,
     );
   }
-  if (visible) console.log(visible);
+  // Streaming already printed the text as it was generated; only the
+  // non-streaming path needs to print the final visible answer.
+  if (visible && !state.stream) console.log(visible);
 }
 
 async function handle_final_answer(ai: AskInstance, state: ConversationState, visible: string): Promise<void> {
   if (visible) {
-    console.log(visible);
+    if (!state.stream) console.log(visible);
     return;
   }
   const final_prompt = `${strip_think_tags(conversation_text(state))}`;
-  const final_response = await tell_silently(ai, final_prompt, {
+  const final_response = await respond(ai, state, final_prompt, {
     chain: false,
   });
   const final_text = strip_run_tags(strip_think_tags(final_response));
-  if (final_text) console.log(final_text);
+  if (final_text && !state.stream) console.log(final_text);
 }
 
 function build_feedback(state: ConversationState, failed: boolean): string {
@@ -602,7 +701,7 @@ async function run_response_loop(
   contextPath: string,
   previousContext: string,
 ): Promise<void> {
-  let response = await tell_silently(ai, state.firstPrompt, {
+  let response = await respond(ai, state, state.firstPrompt, {
     chain: state.autoContinue,
   });
 
@@ -625,7 +724,7 @@ async function run_response_loop(
     }
 
     remember_command_round(state);
-    response = await tell_silently(ai, build_feedback(state, failed), {
+    response = await respond(ai, state, build_feedback(state, failed), {
       chain: true,
     });
   }
@@ -663,6 +762,8 @@ async function launch_web(opts: {
   noExec?: boolean | undefined;
   chain?: boolean | undefined;
   yes?: boolean | undefined;
+  stream?: boolean | undefined;
+  think?: boolean | undefined;
 }): Promise<void> {
   let cwd = process.cwd();
   if (opts.cwd) {
@@ -686,6 +787,8 @@ async function launch_web(opts: {
   if (opts.noExec) child_args.push('--no-exec');
   if (opts.chain) child_args.push('--chain');
   if (opts.yes) child_args.push('--yes');
+  if (opts.stream) child_args.push('--stream');
+  if (opts.think) child_args.push('--think');
   if (opts.prompt) child_args.push('--prompt', opts.prompt);
 
   const child = spawn('tell-web', child_args, {
@@ -752,6 +855,8 @@ async function run_tell(model: string, prompt: string, opts: CliOptions): Promis
     execEnabled: opts.exec !== false,
     yes: Boolean(opts.yes),
     saveContext: save_context,
+    stream: Boolean(opts.stream),
+    think: Boolean(opts.think),
   };
   if (plan.$ === 'none') fs.rmSync(context_path, { force: true });
   const log = log_file();
@@ -806,6 +911,8 @@ async function main() {
       noExec: opts.exec === false,
       chain: opts.chain,
       yes: opts.yes,
+      stream: opts.stream,
+      think: opts.think,
     });
     return;
   }
