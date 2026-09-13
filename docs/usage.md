@@ -127,6 +127,22 @@ tell --chain "find out why the build is failing and fix it"
 npm run build 2>&1 | tell --chain -i "fix the build errors"
 ```
 
+## Streaming (`--stream`, `--think`)
+
+Print the answer token by token as the model generates it. The full text is
+still accumulated for `<RUN>` extraction, logging and context — streaming only
+changes when you see it. Each `--chain` round also streams.
+
+```bash
+tell --stream "explain this directory"
+tell --stream --chain "find the failing test and fix it"
+tell --stream --think "why does this race condition happen?"
+```
+
+`--think` prints the model reasoning dimmed on stderr and works with or without
+`--stream` (without streaming, it is printed once the response arrives). Without
+it, a live `Thinking...` indicator shows until the first answer token.
+
 ## Persistent context (`-c`, `--ctx`, `-n`)
 
 Context flags are explicit — no value guessing. Only named contexts are saved:
