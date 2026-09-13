@@ -1,5 +1,3 @@
-
-
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal as Xterm } from '@xterm/xterm';
 import type React from 'react';

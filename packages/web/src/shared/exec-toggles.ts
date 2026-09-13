@@ -9,6 +9,8 @@ export interface ExecToggles {
   requireApproval?: boolean;
   noExec?: boolean;
   chainMode?: boolean;
+  /** Default open state for reasoning headers (seeded by `--think` on first visit). */
+  reasoningExpanded?: boolean;
 }
 
 export function loadExecToggles(): ExecToggles | null {
@@ -18,7 +20,7 @@ export function loadExecToggles(): ExecToggles | null {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
     const toggles: ExecToggles = {};
-    for (const key of ['autoExecute', 'requireApproval', 'noExec', 'chainMode'] as const) {
+    for (const key of ['autoExecute', 'requireApproval', 'noExec', 'chainMode', 'reasoningExpanded'] as const) {
       const value = (parsed as Record<string, unknown>)[key];
       if (typeof value === 'boolean') toggles[key] = value;
     }
