@@ -99,6 +99,22 @@ test('cli: --help/-h is detected', () => {
   assert.strictEqual(parseCliArgs([], '/tmp').help, false);
 });
 
+test('cli: --stream/--think default off and are detected independently', () => {
+  const defaults = parseCliArgs([], '/tmp');
+  assert.strictEqual(defaults.stream, false);
+  assert.strictEqual(defaults.think, false);
+  const streaming = parseCliArgs(['--stream'], '/tmp');
+  assert.strictEqual(streaming.stream, true);
+  assert.strictEqual(streaming.think, false);
+  const reasoning = parseCliArgs(['--think'], '/tmp');
+  assert.strictEqual(reasoning.stream, false);
+  assert.strictEqual(reasoning.think, true);
+  const both = parseCliArgs(['--stream', '--think', '--chain'], '/tmp');
+  assert.strictEqual(both.stream, true);
+  assert.strictEqual(both.think, true);
+  assert.strictEqual(both.chain, true);
+});
+
 test('cli: printHelp runs without throwing', () => {
   printHelp();
 });

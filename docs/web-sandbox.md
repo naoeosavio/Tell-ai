@@ -291,6 +291,9 @@ The chat header controls how AI-requested commands run:
 - **No-Exec** (seeded by `--no-exec`) — nothing executes; confirming a command
   just records what would have run and the chain continues with that feedback.
 
+Reasoning headers (🧠) are collapsed by default; `--think` starts them expanded
+and any manual expand/collapse persists for future messages.
+
 Precedence: `No-Exec` > per-command risk gate. These are client-side toggles
 whose last choice is remembered in `localStorage` (survives page reloads;
 `localStorage` → first-visit only, server flags like `-y`/`--no-exec` seed the

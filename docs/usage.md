@@ -196,6 +196,7 @@ tell --web                       # open the sandbox at http://localhost:3000
 tell -w --cwd /path/to/project   # run in another working directory (created if missing)
 tell -w --no-exec "ola"          # start the chat pre-seeded with "ola", auto-execution off
 tell -w -m g --chain -y "refactor"  # pick model, chain mode, auto-confirm execution
+tell -w --stream --think "debug"    # stream tokens + reasoning header in the browser
 ```
 
 Options:
@@ -206,6 +207,10 @@ Options:
 - `--no-exec` — disables automatic execution of AI-generated commands in the sandbox.
 - `-y` / `--yes` — auto-confirm command execution (turns on auto-execution in the sandbox).
 - `--chain` — multi-step mode: keep going after command output until the AI gives a final answer.
+- `--stream` — stream responses token by token in the browser (NDJSON); the reasoning
+  header ticks live and collapses to `Thought for N seconds` when done.
+- `--think` — start reasoning headers expanded (collapsed by default; manual
+  expand/collapse persists for future messages).
 - `-m` / `--model <model>` — set the sandbox model (shortcode or full spec).
 
 The project context (directory tree + README/AGENTS system prompt) is always generated

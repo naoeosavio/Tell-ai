@@ -521,11 +521,136 @@ describe('web sandbox: exec toggles', () => {
     assert.deepStrictEqual(loadExecToggles(), { autoExecute: true, chainMode: false });
   });
 
+  it('round-trips reasoningExpanded alongside the execution toggles', () => {
+    saveExecToggles({ autoExecute: false, reasoningExpanded: true });
+    assert.deepStrictEqual(loadExecToggles(), { autoExecute: false, reasoningExpanded: true });
+  });
+
   it('treats garbage/corrupted storage as no saved state', () => {
     store.set(EXEC_TOGGLES_KEY, 'not-json{{{');
     assert.strictEqual(loadExecToggles(), null);
     store.set(EXEC_TOGGLES_KEY, JSON.stringify({ tabs: [] }));
     assert.strictEqual(loadExecToggles(), null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NDJSON codec shared by /api/tell (encode) and the chat client (decode).
+// ---------------------------------------------------------------------------
+describe('web sandbox: chat stream codec', () => {
+  const {
+    consume_chat_stream,
+    decode_chat_stream_chunk,
+    encode_chat_stream_event,
+    CHAT_STREAM_MALFORMED_ERROR,
+  } = loadModule('src/shared/chat-stream.ts');
+
+  it('round-trips every event type', () => {
+    const events = [
+      { type: 'reasoning', text: 'think' },
+      { type: 'reasoning_end' },
+      { type: 'text', text: 'answer' },
+      { type: 'done' },
+      { type: 'error', error: 'boom' },
+    ];
+    const payload = events.map(encode_chat_stream_event).join('');
+    const { events: decoded, rest } = decode_chat_stream_chunk(payload);
+    assert.deepStrictEqual(decoded, events);
+    assert.strictEqual(rest, '');
+  });
+
+  it('keeps a partial trailing line as rest', () => {
+    const payload = `${encode_chat_stream_event({ type: 'text', text: 'one' })}{"type":"te`;
+    const { events, rest } = decode_chat_stream_chunk(payload);
+    assert.deepStrictEqual(events, [{ type: 'text', text: 'one' }]);
+    assert.strictEqual(rest, '{"type":"te');
+    const next = decode_chat_stream_chunk(`${rest}xt","text":"two"}\n`);
+    assert.deepStrictEqual(next.events, [{ type: 'text', text: 'two' }]);
+    assert.strictEqual(next.rest, '');
+  });
+
+  it('skips empty lines and surfaces malformed lines as errors', () => {
+    const { events } = decode_chat_stream_chunk('\nnot-json\n{"type":"nope"}\n');
+    assert.deepStrictEqual(events, [
+      { type: 'error', error: CHAT_STREAM_MALFORMED_ERROR },
+      { type: 'error', error: CHAT_STREAM_MALFORMED_ERROR },
+    ]);
+  });
+
+  it('rejects wrong payload shapes without losing the stream', () => {
+    const { events } = decode_chat_stream_chunk('{"type":"text","text":42}\n{"type":"done"}\n');
+    assert.deepStrictEqual(events, [{ type: 'error', error: CHAT_STREAM_MALFORMED_ERROR }, { type: 'done' }]);
+  });
+
+  it('consume_chat_stream accumulates progress and reports every event', async () => {
+    const encoder = new TextEncoder();
+    const chunks = [
+      encode_chat_stream_event({ type: 'reasoning', text: 'why' }),
+      encode_chat_stream_event({ type: 'reasoning_end' }),
+      encode_chat_stream_event({ type: 'text', text: 'answer ' }),
+      encode_chat_stream_event({ type: 'text', text: 'here' }),
+      encode_chat_stream_event({ type: 'done' }),
+    ];
+    // One event per network chunk exercises the incremental decoder.
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+        controller.close();
+      },
+    });
+    const seen = [];
+    const progress = await consume_chat_stream(new Response(stream), (event, accumulated) => {
+      seen.push(`${event.type}:${accumulated.text}|${accumulated.reasoning}`);
+    });
+    assert.deepStrictEqual(progress, { text: 'answer here', reasoning: 'why' });
+    assert.deepStrictEqual(seen, [
+      'reasoning:|why',
+      'reasoning_end:|why',
+      'text:answer |why',
+      'text:answer here|why',
+      'done:answer here|why',
+    ]);
+  });
+
+  it('consume_chat_stream throws on error events', async () => {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(encode_chat_stream_event({ type: 'error', error: 'boom' })));
+        controller.close();
+      },
+    });
+    await assert.rejects(consume_chat_stream(new Response(stream), () => {}), /boom/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Reasoning header labels (pure formatters behind the collapsible header).
+// ---------------------------------------------------------------------------
+describe('web sandbox: reasoning header', () => {
+  const { format_reasoning_duration, format_reasoning_elapsed, resolve_reasoning_open } =
+    loadModule('src/shared/reasoning-header.ts');
+
+  it('formats the live counter in whole seconds', () => {
+    assert.strictEqual(format_reasoning_elapsed(0), '0s');
+    assert.strictEqual(format_reasoning_elapsed(1499), '1s');
+    assert.strictEqual(format_reasoning_elapsed(59_900), '59s');
+    assert.strictEqual(format_reasoning_elapsed(-5), '0s');
+  });
+
+  it('formats the frozen duration with singular/plural', () => {
+    assert.strictEqual(format_reasoning_duration(1000), 'Thought for 1 second');
+    assert.strictEqual(format_reasoning_duration(1400), 'Thought for 1 second');
+    assert.strictEqual(format_reasoning_duration(4400), 'Thought for 4 seconds');
+    assert.strictEqual(format_reasoning_duration(0), 'Thought for 0 seconds');
+    assert.strictEqual(format_reasoning_duration(-100), 'Thought for 0 seconds');
+  });
+
+  it('resolves the header open state: explicit override wins over the default', () => {
+    assert.strictEqual(resolve_reasoning_open(undefined, false), false);
+    assert.strictEqual(resolve_reasoning_open(undefined, true), true);
+    assert.strictEqual(resolve_reasoning_open(true, false), true);
+    assert.strictEqual(resolve_reasoning_open(false, true), false);
   });
 });
 
