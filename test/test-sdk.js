@@ -72,6 +72,16 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
   await assert.rejects(sdk.get_model('q', EMPTY_CONFIG), /urls\.local/);
   await assert.rejects(sdk.get_model('nope:whatever', EMPTY_CONFIG), /./);
 
+  // create_ask_ai: constructed offline; ask_stream returns an async iterable
+  // without consuming it (the provider request only starts on first next()).
+  const ai = await sdk.create_ask_ai('g', EMPTY_CONFIG);
+  assert.strictEqual(typeof ai.ask, 'function');
+  assert.strictEqual(typeof ai.ask_stream, 'function');
+  const events = ai.ask_stream('hi', { system: 'test' });
+  assert.strictEqual(typeof events[Symbol.asyncIterator], 'function');
+  const multi_turn = ai.ask_stream([{ role: 'user', content: 'hi' }], { system: 'test' });
+  assert.strictEqual(typeof multi_turn[Symbol.asyncIterator], 'function');
+
   // get_system_prompt: exec vs no-exec variants.
   const exec_prompt = sdk.get_system_prompt({ chain: true });
   assert.match(exec_prompt, /terminal assistant/);
