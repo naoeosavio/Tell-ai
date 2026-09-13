@@ -5,10 +5,11 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { get_model, MODELS, resolve_model_spec, type SDKConfig } from '@tell-ai/sdk';
+import { create_ask_ai, get_model, MODELS, resolve_model_spec, type SDKConfig } from '@tell-ai/sdk';
 import { generateText } from 'ai';
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
+import { type ChatStreamEvent, encode_chat_stream_event } from '../shared/chat-stream';
 import { parseCliArgs, printHelp } from './cli-args';
 import { buildSystemPrompt } from './context-builder';
 import {
@@ -53,6 +54,8 @@ const AUTO_EXECUTE = cliArgs.autoExecute;
 const DEFAULT_MODEL = (cliArgs.model || process.env['TELL_MODEL'] || 'l').trim();
 const CHAIN = cliArgs.chain;
 const YES = cliArgs.yes;
+const STREAM = cliArgs.stream;
+const THINK = cliArgs.think;
 const PORT = cliArgs.port ?? Number(process.env['PORT'] || 3000);
 const HOST = cliArgs.host || '127.0.0.1';
 const EXEC_TIMEOUT_MS = cliArgs.execTimeout ?? 120_000;
@@ -548,6 +551,8 @@ app.get('/api/config', (_req, res) => {
     autoExecute: AUTO_EXECUTE,
     chain: CHAIN,
     yes: YES,
+    stream: STREAM,
+    think: THINK,
     cwd: CWD,
     initialPrompt: INITIAL_PROMPT || null,
   });
@@ -562,6 +567,56 @@ app.get('/api/context', (_req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// Streams a model response to the client as NDJSON (`--stream`). Model setup
+// errors still surface as a JSON 500; once headers are sent, failures become
+// an `error` event so the client can keep the partial answer it received.
+async function stream_tell(
+  res: express.Response,
+  modelSpec: string,
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>,
+  system: string,
+): Promise<void> {
+  const ai = await create_ask_ai(modelSpec, load_sdk_config_from_env());
+
+  let is_client_gone = false;
+  res.on('close', () => {
+    is_client_gone = true;
+  });
+
+  res.status(200);
+  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  const write_event = (event: ChatStreamEvent): void => {
+    if (!is_client_gone) res.write(encode_chat_stream_event(event));
+  };
+
+  try {
+    for await (const event of ai.ask_stream(messages, { system })) {
+      if (is_client_gone) break;
+      switch (event.type) {
+        case 'text':
+          write_event({ type: 'text', text: event.text });
+          break;
+        case 'reasoning':
+          write_event({ type: 'reasoning', text: event.text });
+          break;
+        default:
+          // reasoning_end: forwarded so the client can freeze its timer.
+          write_event({ type: 'reasoning_end' });
+          break;
+      }
+    }
+    write_event({ type: 'done' });
+  } catch (error: any) {
+    console.error('Error streaming AI text:', error);
+    write_event({ type: 'error', error: error?.message || 'AI generation failed' });
+  }
+  res.end();
+}
 
 // API: Model execution route (using Vercel AI SDK)
 app.post('/api/tell', async (req, res) => {
@@ -580,15 +635,12 @@ app.post('/api/tell', async (req, res) => {
   serverState.aiTurns += 1;
 
   try {
-    // Resolve model spec and get AI SDK model instance (via @tell-ai/sdk)
-    const handle = await get_model(modelSpec, load_sdk_config_from_env());
     try {
       const resolved = resolve_model_spec(modelSpec);
       serverState.keysUsed.add(resolved.vendor);
     } catch {
       /* vendor unknown; skip */
     }
-    const reasoning = handle.fast ? 'none' : handle.reasoning;
 
     // Convert messages to Vercel AI SDK format
     const formattedMessages = messages.map((m: any) => ({
@@ -597,6 +649,16 @@ app.post('/api/tell', async (req, res) => {
     }));
 
     const effectiveSystem = systemPrompt?.trim() ? systemPrompt : buildSystemPrompt(CWD);
+
+    // Streaming mode: NDJSON events; the model is resolved before headers are sent.
+    if (STREAM) {
+      await stream_tell(res, modelSpec, formattedMessages, effectiveSystem);
+      return;
+    }
+
+    // Resolve model spec and get AI SDK model instance (via @tell-ai/sdk)
+    const handle = await get_model(modelSpec, load_sdk_config_from_env());
+    const reasoning = handle.fast ? 'none' : handle.reasoning;
 
     // Call generateText
     const result = await generateText({

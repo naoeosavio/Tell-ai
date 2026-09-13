@@ -13,6 +13,10 @@ export interface CliArgs {
   chain: boolean;
   /** Whether command execution is auto-confirmed (autoExecute on). */
   yes: boolean;
+  /** Whether responses are streamed to the browser as they are generated (`--stream`). */
+  stream: boolean;
+  /** Whether reasoning headers start expanded (`--think`; collapse persists). */
+  think: boolean;
   /** TCP port for the web server (`--port`). Overrides PORT env. */
   port?: number | undefined;
   /** Bind address for the web server (`--host`). Defaults to 127.0.0.1. */
@@ -50,6 +54,8 @@ export function parseCliArgs(argv: string[], defaultCwd: string): CliArgs {
   const chain = has(argv, '--chain');
   const yes = has(argv, '-y', '--yes');
   const noExec = has(argv, '--no-exec');
+  const stream = has(argv, '--stream');
+  const think = has(argv, '--think');
   const portRaw = argValue(argv, '--port');
   const port = portRaw !== undefined ? Number(portRaw) : undefined;
   const host = argValue(argv, '--host');
@@ -62,6 +68,8 @@ export function parseCliArgs(argv: string[], defaultCwd: string): CliArgs {
     model,
     chain,
     yes,
+    stream,
+    think,
     port: port !== undefined && Number.isFinite(port) && port > 0 ? port : undefined,
     host,
     execTimeout:
@@ -84,6 +92,8 @@ Options:
   --exec-timeout <ms>
                     Per-command timeout in ms (default: 120000, max: 600000)
   --chain           Continue after command output until the AI gives a final answer
+  --stream          Stream responses to the browser as they are generated
+  --think           Start reasoning headers expanded (collapsed by default)
   -y, --yes         Auto-confirm command execution
   --no-exec         Disable automatic execution of AI-generated commands
   -h, --help        Show this help

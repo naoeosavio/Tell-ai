@@ -26,6 +26,11 @@ import {
   findLinkedFeedbackIndex,
   parseFeedback,
 } from '../shared/chain-feedback.ts';
+import {
+  format_reasoning_duration,
+  format_reasoning_elapsed,
+  resolve_reasoning_open,
+} from '../shared/reasoning-header.ts';
 import { useTheme } from '../theme.tsx';
 
 export interface ChatMessage {
@@ -33,6 +38,15 @@ export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   thought?: string | null;
+  /** Frozen reasoning duration (ms) measured while streaming; absent for legacy/non-stream messages. */
+  thoughtDurationMs?: number;
+}
+
+/** Live reasoning timer state for the in-flight streaming message. */
+export interface StreamingReasoning {
+  messageId: string;
+  elapsedMs: number;
+  isDone: boolean;
 }
 
 export interface ModelInfo {
@@ -63,6 +77,14 @@ interface ChatSectionProps {
   onRequireApprovalChange: (val: boolean) => void;
   noExec: boolean;
   onNoExecChange: (val: boolean) => void;
+  /** Default open state for reasoning headers (persisted; seeded by server `--think`). */
+  reasoningExpanded: boolean;
+  /** Called when the user expands/collapses a reasoning header, so the choice persists. */
+  onReasoningToggle: (isOpen: boolean) => void;
+  /** Assistant message currently receiving stream events (null when idle). */
+  streamingMessageId?: string | null;
+  /** Live reasoning timer for the streaming message, if it has reasoning. */
+  streamingReasoning?: StreamingReasoning | null;
   onSelectSample: (prompt: string) => void;
   onMinimize?: () => void;
   cwd?: string;
@@ -129,6 +151,10 @@ export default function ChatSection({
   onRequireApprovalChange,
   noExec,
   onNoExecChange,
+  reasoningExpanded,
+  onReasoningToggle,
+  streamingMessageId,
+  streamingReasoning,
   onSelectSample,
   onMinimize,
   cwd,
@@ -153,6 +179,33 @@ export default function ChatSection({
   // Explicit per-card open overrides; default follows content length (long starts collapsed).
   const [feedbackOpen, setFeedbackOpen] = useState<Record<string, boolean>>({});
   const isFeedbackOpen = (m: { id: string; content: string }) => feedbackOpen[m.id] ?? defaultFeedbackOpen(m.content);
+  // Explicit per-message reasoning overrides; undefined = the persisted default
+  // (`--think` seeds it expanded, and manual expand/collapse updates it).
+  const [reasoningOpen, setReasoningOpen] = useState<Record<string, boolean>>({});
+  const isReasoningStreaming = (m: ChatMessage): boolean => streamingMessageId === m.id;
+  const isReasoningLive = (m: ChatMessage): boolean =>
+    isReasoningStreaming(m) && streamingReasoning?.messageId === m.id && !streamingReasoning.isDone;
+  const isReasoningOpen = (m: ChatMessage): boolean => resolve_reasoning_open(reasoningOpen[m.id], reasoningExpanded);
+  const toggleReasoning = (m: ChatMessage): void => {
+    const next = !isReasoningOpen(m);
+    setReasoningOpen((prev) => ({ ...prev, [m.id]: next }));
+    onReasoningToggle(next);
+  };
+  const reasoningLabel = (m: ChatMessage): string => {
+    if (isReasoningLive(m)) {
+      return `Thinking… ${format_reasoning_elapsed(streamingReasoning?.elapsedMs ?? 0)}`;
+    }
+    const frozenMs =
+      isReasoningStreaming(m) && streamingReasoning?.messageId === m.id && streamingReasoning.isDone
+        ? streamingReasoning.elapsedMs
+        : m.thoughtDurationMs;
+    return frozenMs != null ? format_reasoning_duration(frozenMs) : 'Reasoning';
+  };
+  const thoughtText = (thought: string | null | undefined): string => {
+    if (typeof thought === 'string') return thought;
+    if (thought && typeof thought === 'object') return (thought as any).text || JSON.stringify(thought, null, 2);
+    return String(thought ?? '');
+  };
 
   // Chat width: custom layout reads customChatWrap (default 80ch, 'max' = free space)
   const chatWrap = config.layout === 'custom' ? config.customChatWrap : 80;
@@ -572,20 +625,29 @@ export default function ChatSection({
 
                 {/* Message Bubble */}
                 <div className={`space-y-2 min-w-0 ${isMaxWrap ? 'max-w-full' : 'max-w-[85%]'}`}>
-                  {/* Thought/Reasoning Panel */}
+                  {/* Thought/Reasoning Panel — single collapsed header line; the
+                      body is expanded live while the model thinks and collapses
+                      on done unless the user toggled it manually. */}
                   {m.thought && (
-                    <div className="bg-(--color-bg-secondary) border-l-2 border-(--color-accent) p-3.5 text-[11px] text-(--color-text-secondary) font-mono space-y-1">
-                      <div className="flex items-center gap-1.5 text-[9px] text-(--color-text-muted) font-bold uppercase tracking-widest select-none">
-                        <BrainCircuit className="w-3.5 h-3.5 text-(--color-accent)" />
-                        <span>Cognitive Sequence</span>
-                      </div>
-                      <div className="leading-relaxed pl-1 whitespace-pre-wrap">
-                        {typeof m.thought === 'string'
-                          ? m.thought
-                          : typeof m.thought === 'object' && m.thought !== null
-                            ? (m.thought as any).text || JSON.stringify(m.thought, null, 2)
-                            : String(m.thought)}
-                      </div>
+                    <div className="bg-(--color-bg-secondary) border-l-2 border-(--color-accent) text-[11px] text-(--color-text-secondary) font-mono">
+                      <button
+                        type="button"
+                        onClick={() => toggleReasoning(m)}
+                        title={isReasoningOpen(m) ? 'Collapse reasoning' : 'Expand reasoning'}
+                        className="w-full flex items-center gap-1.5 px-3.5 py-2.5 text-[9px] text-(--color-text-muted) font-bold uppercase tracking-widest select-none cursor-pointer hover:text-(--color-text-primary) transition-colors"
+                      >
+                        <span aria-hidden="true">🧠</span>
+                        <span className={isReasoningLive(m) ? 'animate-pulse' : ''}>{reasoningLabel(m)}</span>
+                        <ChevronDown
+                          className={`w-3 h-3 ml-auto transition-transform ${isReasoningOpen(m) ? '' : '-rotate-90'}`}
+                        />
+                      </button>
+                      {isReasoningOpen(m) && (
+                        <div className="px-3.5 pb-3.5 pl-1 leading-relaxed whitespace-pre-wrap normal-case tracking-normal">
+                          {thoughtText(m.thought)}
+                          {isReasoningLive(m) && <span className="animate-pulse">▍</span>}
+                        </div>
+                      )}
                     </div>
                   )}
 
