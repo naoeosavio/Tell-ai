@@ -1410,6 +1410,9 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
         onEditMessage={handleEditMessage}
         onRetryMessage={handleRetryMessage}
         onForkFromMessage={handleForkFromMessage}
+        pendingCommand={pendingCommand}
+        onConfirmPending={handleConfirmPending}
+        onSkipPending={handleSkipPending}
       />
     </div>
   );

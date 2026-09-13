@@ -1,4 +1,5 @@
 import {
+  AlertCircle,
   ArrowDown,
   BrainCircuit,
   Check,
@@ -8,6 +9,7 @@ import {
   GitFork,
   Minimize2,
   Pencil,
+  Play,
   RotateCcw,
   Send,
   Sparkles,
@@ -68,6 +70,10 @@ interface ChatSectionProps {
   onEditMessage?: (id: string, content: string) => void;
   onRetryMessage?: (id: string) => void;
   onForkFromMessage?: (id: string) => void;
+  /** Script awaiting authorization (rendered as a card in the chat flow). */
+  pendingCommand?: string | null;
+  onConfirmPending?: (command: string) => void;
+  onSkipPending?: () => void;
 }
 
 const SAMPLE_PROMPTS = [
@@ -130,6 +136,9 @@ export default function ChatSection({
   onEditMessage,
   onRetryMessage,
   onForkFromMessage,
+  pendingCommand,
+  onConfirmPending,
+  onSkipPending,
 }: ChatSectionProps) {
   const { config } = useTheme();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -171,6 +180,14 @@ export default function ChatSection({
       setShowJump(true);
     }
   }, []);
+
+  // Authorization requests must be visible: pull the chat to the bottom.
+  useEffect(() => {
+    if (!pendingCommand) return;
+    nearBottomRef.current = true;
+    setShowJump(false);
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+  }, [pendingCommand]);
 
   // Auto-resize the prompt input: grows up to MAX_INPUT_LINES visual lines,
   // then scrolls inside the box (overflowY toggles at the cap).
@@ -798,6 +815,41 @@ export default function ChatSection({
               </div>
             );
           })
+        )}
+
+        {/* Shell authorization request — rendered inside the chat flow */}
+        {pendingCommand && (
+          <div style={wrapStyle} className="mx-auto relative z-10">
+            <div className="border border-(--color-accent)/40 bg-(--color-bg-primary)/95 p-4 space-y-3 shadow-2xl">
+              <div className="flex items-center gap-2 text-(--color-accent) font-black text-xs uppercase tracking-wider select-none font-display">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>Permission Requested: Shell Execution</span>
+              </div>
+              <p className="text-[11px] text-(--color-text-secondary) font-sans select-none">
+                The AI requested to execute this script in workspace:
+              </p>
+              <pre className="p-3 bg-(--color-bg-tertiary) border border-(--color-border-subtle) text-(--color-accent-text) font-mono text-[10px] overflow-x-auto whitespace-pre-wrap select-text">
+                {pendingCommand}
+              </pre>
+              <div className="flex items-center justify-end gap-2 select-none">
+                <button
+                  type="button"
+                  onClick={onSkipPending}
+                  className="px-3 py-1.5 border border-(--color-border-medium) hover:bg-white/10 text-(--color-text-secondary) font-sans text-[10px] font-bold uppercase tracking-wider cursor-pointer"
+                >
+                  Skip
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onConfirmPending?.(pendingCommand)}
+                  className="flex items-center gap-1.5 px-4 py-1.5 bg-(--color-text-primary) hover:bg-(--color-accent) text-(--color-bg-primary) hover:text-white font-sans text-[10px] font-black uppercase tracking-wider cursor-pointer transition-colors"
+                >
+                  <Play className="w-3 h-3 fill-current" />
+                  Authorize & Execute
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
 

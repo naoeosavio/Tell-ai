@@ -1,3 +1,5 @@
+
+
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal as Xterm } from '@xterm/xterm';
 import type React from 'react';
@@ -9,7 +11,6 @@ import {
   Minimize2,
   Minus,
   Pencil,
-  Play,
   Plus,
   ShieldCheck,
   Square,
@@ -956,41 +957,6 @@ export default function Terminal({
                       registerFit={registerFit}
                       registerControl={registerControl}
                     />
-
-                    {/* Pending Command Authorization Prompt inside Pane */}
-                    {pendingCommand && isFocused && (
-                      <div className="absolute inset-0 z-20 flex items-center justify-center p-3">
-                        <div className="border border-(--color-accent)/40 bg-(--color-bg-primary)/95 p-3 w-full space-y-2 text-(--color-text-primary) shadow-2xl">
-                          <div className="flex items-center gap-1.5 text-(--color-accent) font-black text-xs uppercase tracking-wider select-none font-display">
-                            <AlertCircle className="w-3.5 h-3.5 text-(--color-accent) shrink-0" />
-                            <span>Permission Requested: Shell Execution</span>
-                          </div>
-                          <p className="text-[10px] text-(--color-text-secondary) font-sans select-none">
-                            The AI requested to execute this script in workspace:
-                          </p>
-                          <pre className="p-2 bg-(--color-bg-tertiary) border border-(--color-border-subtle) text-(--color-accent-text) font-mono text-[10px] overflow-x-auto whitespace-pre-wrap">
-                            {pendingCommand}
-                          </pre>
-                          <div className="flex items-center justify-end gap-2 pt-1 select-none">
-                            <button
-                              type="button"
-                              onClick={onSkipPending}
-                              className="px-3 py-1 border border-(--color-border-medium) hover:bg-white/10 text-(--color-text-secondary) font-sans text-[10px] font-bold uppercase tracking-wider cursor-pointer"
-                            >
-                              Skip
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => onConfirmPending(pendingCommand)}
-                              className="flex items-center gap-1 px-4 py-1 bg-(--color-text-primary) hover:bg-(--color-accent) text-(--color-bg-primary) hover:text-white font-sans text-[10px] font-black uppercase tracking-wider cursor-pointer transition-colors"
-                            >
-                              <Play className="w-3 h-3 fill-current" />
-                              Authorize & Execute
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    )}
                   </div>
                 </div>
               );
