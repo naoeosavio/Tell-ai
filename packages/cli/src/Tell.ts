@@ -45,6 +45,7 @@ type CliOptions = {
   stream?: boolean;
   think?: boolean;
   cwd?: string;
+  requireApproval?: boolean;
 };
 
 type ParsedInput = { model: string; parts: string[]; readStdin: boolean };
@@ -63,14 +64,20 @@ type ContextPlan =
   | { $: 'existing'; file: string; label: string }
   | { $: 'create'; file: string; label: string };
 
+// Effective execution mode, resolved once from the flags (fail-closed):
+// - 'no-exec': never execute — `--no-exec` wins over everything.
+// - 'confirm-all': every command needs manual confirmation (default, and
+//   `--require-approval` without `-y`).
+// - 'auto-risk': safe commands run directly (`-y`); high-risk ones always ask.
+type ExecMode = 'no-exec' | 'confirm-all' | 'auto-risk';
+
 type ConversationState = {
   firstPrompt: string;
   timeline: string[];
   commandRounds: number;
   chainLimitReached: boolean;
   autoContinue: boolean;
-  execEnabled: boolean;
-  yes: boolean;
+  execMode: ExecMode;
   saveContext: boolean;
   stream: boolean;
   think: boolean;
@@ -378,6 +385,9 @@ function is_high_risk_script(script: string): boolean {
     /\b(git\s+clean\s+-[^\s]*[xfd]|mkfs|shutdown|reboot)\b/,
     /\bdd\b.*\bof=/,
     /\b(chmod|chown)\s+-R\b.*\s\/(?:\s|$)/,
+    // Non-recursive permission/ownership changes on privileged paths
+    // (`chmod 777 /etc/passwd`) — recursive -R anywhere is covered above.
+    new RegExp(String.raw`\b(?:chmod|chown)\b[^;&|]*\s["']?${privileged_path}`),
     // Download piped straight into an interpreter (curl|sh, wget|bash,
     // curl|python3, base64 -d|sh, …).
     /(?:curl|wget|base64)\b[^|;&]*\|\s*(?:(?:ba|z|da|k)?sh|python3?|perl|ruby|php|node)\b/,
@@ -398,9 +408,9 @@ function is_high_risk_script(script: string): boolean {
   ].some((pattern) => pattern.test(compact));
 }
 
-async function confirm_command(script: string, yes: boolean): Promise<boolean> {
+async function confirm_command(script: string, mode: ExecMode): Promise<boolean> {
   const high_risk = is_high_risk_script(script);
-  if (yes && !high_risk) return true;
+  if (mode === 'auto-risk' && !high_risk) return true;
   if (!process.stdin.isTTY) return false;
   const rl = readline.createInterface({
     input: process.stdin,
@@ -426,19 +436,15 @@ async function confirm_command(script: string, yes: boolean): Promise<boolean> {
   });
 }
 
-async function run_script(
-  script: string,
-  yes: boolean,
-  execEnabled: boolean,
-): Promise<{ result: string; failed: boolean }> {
-  if (!execEnabled) {
+async function run_script(script: string, mode: ExecMode): Promise<{ result: string; failed: boolean }> {
+  if (mode === 'no-exec') {
     process.stderr.write('\x1b[33mCommand execution disabled (--no-exec).\x1b[0m\n');
     return {
       result: `Command execution disabled — not run:\n${script}`,
       failed: false,
     };
   }
-  if (!(await confirm_command(script, yes))) {
+  if (!(await confirm_command(script, mode))) {
     process.stderr.write('\x1b[33mCommand skipped by user.\x1b[0m\n');
     return { result: `Skipped by user:\n${script}`, failed: false };
   }
@@ -452,11 +458,11 @@ async function run_script(
   return { result, failed };
 }
 
-async function run_scripts(scripts: string[], yes: boolean, execEnabled: boolean, log: string): Promise<ScriptsResult> {
+async function run_scripts(scripts: string[], mode: ExecMode, log: string): Promise<ScriptsResult> {
   const results: string[] = [];
   let failed = false;
   for (const script of scripts) {
-    const { result, failed: script_failed } = await run_script(script, yes, execEnabled);
+    const { result, failed: script_failed } = await run_script(script, mode);
     failed = failed || script_failed;
     append_log(log, result);
     results.push(result);
@@ -631,6 +637,7 @@ function build_program(argv: string[]): Command {
     .option('-n, --name', 'reset a named context (--ctx <name> -n; starts empty, even if it exists)')
     .option('-l, --list', 'list saved contexts (@N, id, age, preview)')
     .option('-y, --yes', 'execute requested commands without confirmation')
+    .option('--require-approval', 'with -y: safe commands run directly, high-risk ones still ask for confirmation')
     .option('--chain', 'continue after command output until the assistant gives a final answer')
     .option('--stream', 'stream the response as it is generated')
     .option('--think', 'show the model reasoning on stderr (works with and without --stream)')
@@ -716,7 +723,7 @@ async function run_response_loop(
       break;
     }
 
-    const { text: result_text, failed } = await run_scripts(scripts, state.yes, state.execEnabled, log);
+    const { text: result_text, failed } = await run_scripts(scripts, state.execMode, log);
     remember_command_result(state, result_text);
     if (state.saveContext) save_incremental_context(contextPath, previousContext, state);
     if (!state.autoContinue) {
@@ -761,6 +768,7 @@ async function launch_web(opts: {
   prompt: string;
   cwd?: string | undefined;
   noExec?: boolean | undefined;
+  requireApproval?: boolean | undefined;
   chain?: boolean | undefined;
   yes?: boolean | undefined;
   stream?: boolean | undefined;
@@ -786,6 +794,7 @@ async function launch_web(opts: {
 
   const child_args = ['-m', opts.model, '--cwd', cwd];
   if (opts.noExec) child_args.push('--no-exec');
+  if (opts.requireApproval) child_args.push('--require-approval');
   if (opts.chain) child_args.push('--chain');
   if (opts.yes) child_args.push('--yes');
   if (opts.stream) child_args.push('--stream');
@@ -844,6 +853,10 @@ async function run_tell(model: string, prompt: string, opts: CliOptions): Promis
   // text is what reaches the log, the timeline, and the saved context.
   const full_prompt = await expand_mentions(raw_prompt, process.cwd(), { yes: Boolean(opts.yes) });
   const save_context = plan.$ !== 'none';
+  // `--no-exec` wins over everything; `-y` enables the risk-gated auto mode.
+  // `--require-approval` is declarative in the CLI (high-risk always asks even
+  // with -y, which is already `auto-risk` behavior) and is forwarded to -w.
+  const exec_mode: ExecMode = opts.exec === false ? 'no-exec' : opts.yes ? 'auto-risk' : 'confirm-all';
   // 'create' always starts empty, even if it reuses an existing name (an explicit reset).
   const context_path = plan.$ === 'none' ? context_file(model) : plan.file;
   const previous_context = plan.$ === 'default' || plan.$ === 'existing' ? read_text(plan.file) : '';
@@ -856,8 +869,7 @@ async function run_tell(model: string, prompt: string, opts: CliOptions): Promis
     commandRounds: 0,
     chainLimitReached: false,
     autoContinue: Boolean(opts.chain),
-    execEnabled: opts.exec !== false,
-    yes: Boolean(opts.yes),
+    execMode: exec_mode,
     saveContext: save_context,
     stream: Boolean(opts.stream),
     think: Boolean(opts.think),
@@ -913,6 +925,7 @@ async function main() {
       prompt,
       cwd: opts.cwd,
       noExec: opts.exec === false,
+      requireApproval: opts.requireApproval,
       chain: opts.chain,
       yes: opts.yes,
       stream: opts.stream,
