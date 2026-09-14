@@ -18,6 +18,7 @@ import {
 } from '@tell-ai/sdk';
 import { Command } from 'commander';
 import { load_sdk_config } from './env';
+import { expand_mentions } from './mentions';
 import { get_system_prompt, type PromptOptions } from './systemPrompt';
 
 const EXEC_ASYNC = promisify(exec);
@@ -838,7 +839,10 @@ async function run_tell(model: string, prompt: string, opts: CliOptions): Promis
   }
 
   // A multi-word `--ctx` value is prompt text for the fresh context it created.
-  const full_prompt = [plan.$ === 'default' ? (plan.promptFromRef ?? '') : '', prompt].filter(Boolean).join(' ');
+  const raw_prompt = [plan.$ === 'default' ? (plan.promptFromRef ?? '') : '', prompt].filter(Boolean).join(' ');
+  // `@path` mentions resolve against the working directory; the expanded
+  // text is what reaches the log, the timeline, and the saved context.
+  const full_prompt = await expand_mentions(raw_prompt, process.cwd(), { yes: Boolean(opts.yes) });
   const save_context = plan.$ !== 'none';
   // 'create' always starts empty, even if it reuses an existing name (an explicit reset).
   const context_path = plan.$ === 'none' ? context_file(model) : plan.file;
