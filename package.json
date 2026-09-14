@@ -13,9 +13,11 @@
     "check": "biome check packages",
     "test:security": "bun run --filter @tell-ai/sdk build && node test/test-tell-security.js",
     "test:context": "bun run --filter @tell-ai/sdk build && node test/test-tell-context.js",
+    "test:stream": "bun run --filter @tell-ai/sdk build && node test/test-tell-stream.js",
+    "test:mentions": "bun run --filter @tell-ai/sdk build && node test/test-tell-mentions.js",
     "test:sdk": "bun run --filter @tell-ai/sdk build && node test/test-sdk.js",
     "test:web": "node test/test-web-backend.js && node test/test-web-sandbox.js",
-    "test": "bun run test:sdk && bun run test:security && bun run test:context && bun run test:web",
+    "test": "bun run test:sdk && bun run test:security && bun run test:context && bun run test:stream && bun run test:mentions && bun run test:web",
     "ci": "bun run build && bun run lint && bun run check && bun run test"
   },
   "repository": {

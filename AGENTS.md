@@ -17,8 +17,10 @@ npm run build          # SDK (ESM+CJS+dts + 2 browser bundles) + tell-ai (minifi
 npm run lint           # tsc --noEmit in all three packages (type-check only)
 npm run format         # biome check --write packages/  (auto-fix formatting)
 npm run check          # biome check packages/  (check only)
-npm test               # security + context + web suites
+npm test               # sdk + security + context + stream + mentions + web suites
 npm run test:security  # build the SDK, then node test/test-tell-security.js
+npm run test:stream    # build the SDK, then node test/test-tell-stream.js (--stream/--think CLI behavior)
+npm run test:mentions  # build the SDK, then node test/test-tell-mentions.js (@path mention expansion + read gate)
 npm run test:web       # node test/test-web-backend.js (backend harness) + node --test test/test-web-sandbox.js (sandbox suite)
 npm run ci             # build + lint + format check + test (runs in order)
 ```
@@ -36,15 +38,15 @@ The codebase has four layers:
 - `package.json` — private, `"workspaces": ["packages/*"]`, orchestration scripts via `bun run --filter @tell-ai/sdk …` / `--filter tell-ai` / `--filter @tell-ai/web`.
 - `tsconfig.base.json` — strict shared TS config (noUncheckedIndexedAccess, exactOptionalPropertyTypes, erasableSyntaxOnly…), extended by all three packages.
 
-### LIB: `packages/sdk` (`@tell-ai/sdk` — ~600 lines)
+### LIB: `packages/sdk` (`@tell-ai/sdk` — ~900 lines)
 
 Browser-safe AI provider layer: **zero `node:*` imports, zero `process.env` reads**. All environment concerns are injected via `SDKConfig` (`{ keys, urls }`, both partial). Built by tsup to ESM + CJS + `.d.ts`/`.d.cts`.
 
 Key exports from `packages/sdk/src/index.ts`:
-- **`MODELS`** — Record of 70+ short aliases (e.g., `g` → `openai:gpt-5.6-sol:medium`)
+- **`MODELS`** — Record of 129 short aliases (e.g., `g` → `openai:gpt-5.6-sol:medium`)
 - **`resolve_model_spec(model)`** — Parses `vendor:model:thinking` specs, handles dot-prefix fast mode
 - **`get_model(spec, config)`** — Returns a `ModelHandle` (`{ model, reasoning, fast}`) backed by the vendor provider; used by `create_ask_ai()` and directly by the web server for multi-turn `generateText()` calls
-- **`create_ask_ai(spec, config)`** — Returns an `AskInstance` with an `ask()` method backed by `generateText()`
+- **`create_ask_ai(spec, config)`** — Returns an `AskInstance` with an `ask()` method (one-shot, `generateText()`) and an `ask_stream()` method (token-by-token, `streamText()`). Streaming yields `AskStreamEvent`s (`reasoning`/`reasoning_end`/`text`) as a **lazy** `AsyncIterable`; input is a prompt string or a multi-turn message array (`AskStreamInput`)
 - **`tell(message, options)`** — `tell --no-exec` as a function: builds the system prompt (execution disabled by default), calls the model, returns the answer with `<think>`/`<RUN>` stripped. `TellOptions`: `model?`, `keys?`, `urls?`, `exec?`, `cwd?`, `platform?`, `context?`, `system?`, `ask?` (reuse an existing `AskInstance`), `raw?` (skip stripping, used by the CLI's `tell_silently`)
 - **`get_system_prompt(options)`** — Shared tell system prompt with `PromptOptions { chain?, exec?, cwd?, platform? }`; `exec: false` emits the no-command-execution variant used by `tell()` in the browser
 - **`extract_runs`, `strip_run_tags`, `strip_think_tags`, `strip_markdown_code_blocks`** — `<RUN>`/`<think>`/markdown handling
@@ -55,7 +57,7 @@ Files:
 - `src/browser.ts` — browser ESM entry (re-exports the browser-safe API)
 - `src/browser-global.ts` — IIFE entry: assigns `globalThis.TellSDK`
 - `src/shims/node.cjs` — CJS stubs for `path`/`fs`/`os` aliased into the browser bundles (see below)
-- `src/ask.ts` — `create_ask_ai()` factory, `AskInstance`
+- `src/ask.ts` — `create_ask_ai()` factory, `AskInstance` (`ask` + `ask_stream`), `AskStreamEvent`/`AskStreamInput` types
 - `src/models.ts` — `MODELS` table, alias resolution, provider instances, injected key/url lookup (all providers honor `config.urls` via `baseURL`)
 - `src/config.ts` — `SDKConfig`/`SDKKeys`/`SDKUrls` types (partial, injected)
 - `src/systemPrompt.ts` — shared exec/no-exec system prompt (`get_system_prompt()`), `PromptOptions`
@@ -67,11 +69,14 @@ Builds: tsup emits ESM + CJS + dts (`dist/`) plus two self-contained browser bun
 
 To keep the browser bundles self-contained, `tsup.config.ts` lists `ai` + all `@ai-sdk/*` providers in `noExternal` **explicitly** — a `'@ai-sdk/*'` glob does not match scoped packages and silently leaves bare imports. `@vercel/oidc` (a transitive dep of `ai`) requires `path`/`fs`/`os` and touches `process` at module scope, so those builtins are aliased to `src/shims/node.cjs` and a `var process = { version:'', env:{}, platform:'browser' }` banner is prepended. Full variant comparison: `docs/sdk/imports.md`.
 
-### CLI: `packages/cli` (`tell-ai` — ~500 lines)
+### CLI: `packages/cli` (`tell-ai` — ~930 lines + `mentions.ts`)
 
 Single-file Node entry point for the `tell` binary (CJS bundle, `#!/usr/bin/env node`). Uses `commander` for CLI parsing. Key behaviors:
 - Reads piped stdin (30s timeout, `-i` flag)
+- Expands `@path` mentions in the prompt (`src/mentions.ts`): files inline as `File:` blocks (64 KB cap), directories as 3-level trees; missing/binary targets warn and pass through; outside-cwd reads need confirmation even with `-y`
 - Extracts `<RUN>...</RUN>` tags from AI responses and prompts before executing commands
+- `--stream` prints the answer token by token as generated (each `--chain` round streams too; the full response is still accumulated, so log/context/`<RUN>` extraction stay identical to the non-stream path)
+- `--think` prints the model reasoning dimmed on stderr, with or without `--stream` (without streaming, it appears once the response arrives); reasoning never reaches stdout or the saved context
 - `--chain` iterates up to 8 steps, feeding command outputs back to the model
 - `-c` persists the default per-directory+model context (SHA-256 hash, `~/.ai/tell_context/`)
 - `--ctx [ref]` use-or-create context: bare = default context (`-c` synonym); `@N` (recency) or `#hash` prefix (must exist); name (created if missing); multi-word value = prompt text for the default context (unnamed contexts are never saved). A lone single token is a NAME, never a prompt — one-word prompts go on `-c` or as multi-word `--ctx` values
@@ -84,6 +89,7 @@ Single-file Node entry point for the `tell` binary (CJS bundle, `#!/usr/bin/env 
 
 Files:
 - `src/Tell.ts` — CLI: commander, stdin, exec, confirm/high-risk, context/logs, loop chain, main
+- `src/mentions.ts` — `expand_mentions()` + `is_outside_cwd()` read gate, called in `run_tell()` before context/log assembly
 - `src/systemPrompt.ts` — the `<RUN>`/injection-policy execution system prompt (`get_system_prompt()`), with `PromptOptions`
 - `src/env.ts` — Node-only: reads `process.env` + `~/.config/<vendor>.token` files, assembles the `SDKConfig` passed to `create_ask_ai()`
 
@@ -97,10 +103,12 @@ Key behaviors:
 - `.tell/` session persistence (`session.json`, `history/`, `latest` symlink)
 - Stricter `isHighRiskScript()` than the CLI (`src/server/guards.ts`: blocks all interpreter `-c`/`-e`, `env` launches, `base64 -d`, shell expansions — test-pinned divergence, do not "dedupe")
 - Execution toggles (chat header, per browser session): `Auto-Run` / `Require Approval` / `No-Exec` (`No-Exec` > per-command risk gate via `POST /api/risk-check`, fail-closed to approval); feedback cards start minimized
+- `--stream` replies on `/api/tell` as NDJSON (`reasoning`/`reasoning_end`/`text`/`done`/`error`; codec shared in `src/shared/chat-stream.ts`); collapsed reasoning headers with a live `Thinking… Ns` timer
+- `--think` seeds reasoning headers expanded on first visit; manual expand/collapse persists to `localStorage`. Provider `reasoning_end` is not universal — the client freezes the timer on the first `text` delta
 - Sensitive files never served (`.env*` except `.env.example`, `.tell/**`, `.git/**`, `*.key`, `*.pem`); per-IP rate limits on chat/execute/auth
 
 Files:
-- `src/server/server.ts` — express app + `/api/*` routes + vite/static serving (~730 lines)
+- `src/server/server.ts` — express app + `/api/*` routes + vite/static serving (~790 lines)
 - `src/server/guards.ts` — pure guards (sensitive paths, rate limiter, PTY/auth guards, payload validation, risk patterns); loaded directly by `test/test-web-backend.js`, keep dependency-light
 - `src/server/context-builder.ts` — project tree (4 levels) + README/AGENTS system-prompt context
 - `src/server/cli-args.ts`, `src/server/paths.ts`, `src/server/pty.ts`, `src/server/session.ts` — flags, traversal guard, terminal server, `.tell/` persistence
@@ -109,7 +117,7 @@ Files:
 
 ### Model alias conventions
 
-- **First character(s)** = vendor+model: `g` = GPT-5.6 Sol, `o` = Claude Opus 5, `s` = Claude Sonnet 5, `f` = Claude Fable 5, `l` = Gemini 3.6 Flash, `j` = Gemini 3.5 Flash Lite, `d` = DeepSeek V4 Flash, `z` = GLM-5.3 (Z.ai)
+- **First character(s)** = vendor+model: `g` = GPT-5.6 Sol, `o` = Claude Opus 5, `s` = Claude Sonnet 5, `f` = Claude Fable 5, `l` = Gemini 3.8 Flash, `j` = Gemini 3.5 Flash Lite, `d` = DeepSeek Flash, `z` = GLM-5.3 (Z.ai)
 - **Suffix** = thinking budget: `--` none, `-` low, (none) medium, `+` high, `++` xhigh/max
 - **Dot prefix** (`.g`) = fast mode
 - **Self-hosted**: `q` = local `/root/model`, `v` = vast `/root/model`
@@ -118,7 +126,7 @@ Canonical format: `vendor:official_model_name:thinking_budget` (e.g., `openai:gp
 
 ## Dependencies
 
-- **[ai](https://sdk.vercel.ai)** — AI SDK core (`generateText`)
+- **[ai](https://sdk.vercel.ai)** — AI SDK core (`generateText` + `streamText`)
 - **[@ai-sdk/openai](https://www.npmjs.com/package/@ai-sdk/openai)** — OpenAI provider
 - **[@ai-sdk/anthropic](https://www.npmjs.com/package/@ai-sdk/anthropic)** — Anthropic provider
 - **[@ai-sdk/google](https://www.npmjs.com/package/@ai-sdk/google)** — Google provider
@@ -137,7 +145,8 @@ API keys are resolved in the CLI (`packages/cli/src/env.ts`): env vars (`OPENAI_
 
 ## Related docs
 
-- `docs/sdk/imports.md` — SDK build variants (Node ESM/CJS vs browser ESM vs IIFE global)
+- `docs/sdk/` — SDK reference: `README.md` (index), `api.md` (API surface), `models.md` (aliases/specs), `streaming.md` (AskStream events), `config.md` (SDKConfig injection/browser safety), `imports.md` (build variants)
+- `docs/cli/` — CLI reference pages (flags, context, execution, chain mode, env config, security, development, mentions)
 - `docs/usage.md`, `docs/integrations.md` — CLI usage and integrations
 - `docs/web-sandbox.md`, `packages/web/README.md` — web sandbox guide (`tell --web`) and package reference (flags, `/api/*` routes, `.tell/` layout); backend harness `test/test-web-backend.js`, sandbox suite `test/test-web-sandbox.js` (`bun run --filter @tell-ai/web test`)
 - `examples/web/` — browser demo: `proxy.ts` (API proxy + static serving) + `index.html` (uses the IIFE `TellSDK` build) + `demo.ts` (end-to-end walkthrough)
