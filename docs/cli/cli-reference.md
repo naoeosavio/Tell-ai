@@ -37,11 +37,12 @@ Full spec format: `vendor:model[:thinking]` with thinking in `none|low|medium|hi
 | `-n, --name` | boolean | Reset modifier: `--ctx <name> -n` always starts empty. Requires a valid name. |
 | `-l, --list` | boolean | List saved contexts (`@N`, id, age, preview), newest first. No model call. |
 | `-y, --yes` | boolean | Auto-approve commands. High-risk still requires confirmation. No-op without TTY for risky scripts (auto-reject). |
+| `--require-approval` | boolean | Explicit Require Approval mode: with `-y`, safe commands run directly and high-risk ones still ask; without `-y`, every command asks (same as default). Never weakens the high-risk gate. Forwarded by `-w`/`--web` to seed the web sandbox toggle. |
 | `--chain` | boolean | Loop up to 8 command rounds, feeding output back to the model. |
 | `-i, --input` | boolean | Force stdin capture and wrap as `User request:` + `Input:` sections. |
 | `--no-exec` | boolean | Never execute; report `Command execution disabled` per script. Overrides `-y`. |
 
-`exec` in `CliOptions` is `false` only with `--no-exec` (commander negated boolean); `run_tell` maps it to `execEnabled: opts.exec !== false` (`Tell.ts:691`).
+`exec` in `CliOptions` is `false` only with `--no-exec` (commander negated boolean); `run_tell` resolves the flags once into `execMode: 'no-exec' | 'confirm-all' | 'auto-risk'` — `--no-exec` wins over everything, `-y` (with or without `--require-approval`) selects `auto-risk`, anything else confirms every command.
 
 ## Flag interactions
 

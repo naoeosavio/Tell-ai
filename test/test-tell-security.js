@@ -185,6 +185,10 @@ function assertPromptInjectionPolicy(result) {
     "sed -i.bak 's/root/pwned/' /etc/passwd",
     'doas ls /root',
     'pkexec sh -c "id"',
+    // non-recursive permission changes on privileged paths
+    'chmod 777 /etc/passwd',
+    'chmod +x /usr/local/bin/pwned',
+    'chown root:root /etc/shadow',
     'echo "* * * * * touch /tmp/pwned" | crontab -',
     'mkdir -p ~/.config/autostart && echo pwned > ~/.config/autostart/pwned.desktop',
     'systemctl --user enable pwned.service',
@@ -214,6 +218,28 @@ function assertPromptInjectionPolicy(result) {
     result = await runTell(args, runBlock(script));
     assertSkipped(result);
   }
+
+  // --require-approval without -y: everything needs confirmation — non-TTY
+  // stdin cannot confirm, so even safe commands are skipped (fail-closed).
+  result = await runTell(['--require-approval', 'd', 'safe command'], runBlock(`echo SAFE_REQ`));
+  assertSkipped(result);
+
+  // -y --require-approval: same as -y — safe commands run directly...
+  result = await runTell(['--yes', '--require-approval', 'd', 'safe command'], runBlock(`echo SAFE_REQ`), {
+    execStdout: 'SAFE_REQ\n',
+  });
+  assert.strictEqual(result.execCalls.length, 1);
+  // ...and high-risk commands still ask (skipped without a TTY).
+  result = await runTell(['--yes', '--require-approval', 'd', 'risky'], runBlock('sudo ls /'));
+  assertSkipped(result);
+
+  // --no-exec wins over both -y and --require-approval.
+  result = await runTell(
+    ['--yes', '--require-approval', '--no-exec', 'd', 'run safe command'],
+    runBlock(`echo DISABLED`),
+  );
+  assert.deepStrictEqual(result.execCalls, []);
+  assert.match(result.stderr, /Command execution disabled/);
 
   result = await runTell(['d', 'answer normally'], 'normal answer');
   assertPromptInjectionPolicy(result);
@@ -390,11 +416,17 @@ function assertPromptInjectionPolicy(result) {
   assert.ok(result.spawnCalls[0].args.includes('--chain'));
   assert.ok(result.spawnCalls[0].args.includes('--yes'));
 
+  // --web forwards --require-approval to the sandbox server (seed for the
+  // Require Approval toggle once the web side learns the flag).
+  result = await runTell(['-w', '--require-approval', '-m', 'g', 'go'], 'unused response');
+  assert.ok(result.spawnCalls[0].args.includes('--require-approval'));
+
   // --chain/--yes are absent from the child args when not requested.
   result = await runTell(['-w', '-m', 'd', 'plain'], 'unused response');
   assert.ok(!result.spawnCalls[0].args.includes('--chain'));
   assert.ok(!result.spawnCalls[0].args.includes('--yes'));
   assert.ok(!result.spawnCalls[0].args.includes('--no-exec'));
+  assert.ok(!result.spawnCalls[0].args.includes('--require-approval'));
 
   // --web without a prompt still launches (empty seed, no --prompt flag).
   result = await runTell(['-w', '-m', 'd'], 'unused response');

@@ -26,12 +26,14 @@ Per script:
 
 * `is_high_risk_script` → label `High-risk command requested`, else `Command requested`; script echoed to stderr.
 * `-y` approves only non-high-risk scripts. High-risk with `-y` still prompts.
+* `--require-approval` makes the approval posture explicit: combined with `-y` the behavior is unchanged (safe commands auto-run, high-risk asks); alone every command asks, same as the default. It never weakens the gate and is forwarded by `-w`/`--web` to seed the sandbox's Require Approval toggle.
 * Non-TTY stdin: always reject (return `false`) — automation cannot be tricked into approving.
 * TTY prompt `Execute this command? [y/N]` accepts `y`/`yes` (case-insensitive); anything else rejects. Auto-rejects after `EXEC_TIMEOUT` (120s).
 
 ```bash
 tell d "run ls -la"        # asks before executing
 tell -y d "run ls -la"     # auto-approves safe commands; high-risk still asks
+tell -y --require-approval d "run ls -la"  # same as -y, posture explicit (forwarded to -w)
 tell --no-exec d "run ls"  # never executes
 ```
 
@@ -39,7 +41,7 @@ tell --no-exec d "run ls"  # never executes
 
 ## What is blocked
 
-`is_high_risk_script` (`Tell.ts:361-392`) normalizes backslash-newlines and whitespace, then matches: `sudo/doas/pkexec`, `rm -rf` (any `-rf` flag combo), `git clean -[xfd]`, `mkfs/shutdown/reboot`, `dd … of=`, `curl|wget|base64 … | sh|bash|python|perl|ruby|php|node`, process substitution `<(curl|wget|base64…)` / `sh … <(…)`, network/decode-coupled interpreter one-liners (`node|python|perl|ruby|php -e/-c/-r … http…|urllib|requests|socket|base64|eval|exec|system|popen`), `curl|wget|base64 … ;|&&|| … interpreter`, `crontab` / `systemctl --user enable`, writes/redirects into `/etc /boot /dev /proc /sys /usr /bin /sbin /lib* /var/spool/cron /etc/cron* ~/.config/autostart ~/.local/share/systemd/user` via `cp|mv|ln|sed -i|tee|>`. Full pattern table in [security.md](security.md).
+`is_high_risk_script` (`Tell.ts:361-392`) normalizes backslash-newlines and whitespace, then matches: `sudo/doas/pkexec`, `rm -rf` (any `-rf` flag combo), `git clean -[xfd]`, `mkfs/shutdown/reboot`, `dd … of=`, `chmod|chown` on privileged paths (non-recursive included; recursive `-R` anywhere), `curl|wget|base64 … | sh|bash|python|perl|ruby|php|node`, process substitution `<(curl|wget|base64…)` / `sh … <(…)`, network/decode-coupled interpreter one-liners (`node|python|perl|ruby|php -e/-c/-r … http…|urllib|requests|socket|base64|eval|exec|system|popen`), `curl|wget|base64 … ;|&&|| … interpreter`, `crontab` / `systemctl --user enable`, writes/redirects into `/etc /boot /dev /proc /sys /usr /bin /sbin /lib* /var/spool/cron /etc/cron* ~/.config/autostart ~/.local/share/systemd/user` via `cp|mv|ln|sed -i|tee|>`. Full pattern table in [security.md](security.md).
 
 Deliberately allowed: local-only interpreter one-liners such as `node -e "console.log(1)"` — only network/decode-coupled inline code is high-risk (asserted in `test-tell-security.js:179-183`).
 

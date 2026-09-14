@@ -13,6 +13,7 @@ Input is normalized (`\\\n` → space, runs of whitespace → single space) into
 | 3 | `\b(git clean -[xfd]\|mkfs\|shutdown\|reboot)\b` | `git clean -xfd`, `mkfs /dev/sda` |
 | 4 | `\bdd\b.*\bof=` | `dd if=/dev/zero of=/dev/sda bs=1M` |
 | 5 | `(chmod\|chown) -R … /` | `chmod -R 777 /` |
+| 5b | `(chmod\|chown) … privileged_path` (non-recursive included) | `chmod 777 /etc/passwd`, `chown root:root /etc/shadow` |
 | 6 | `(curl\|wget\|base64)…\|\s*(sh\|bash\|zsh\|dash\|ksh\|python\|perl\|ruby\|php\|node)` | `curl …/install.sh \| sh`, `curl …/x.py \| python3`, `echo … \| base64 -d \| sh` |
 | 7 | `<\(\s*(curl\|wget\|base64)` | `bash <(curl -s …/install.sh)` |
 | 8 | `(^¦[\s;&¦])sh…<\( ` | `sh … <(…)` (shell fed by process substitution) |
