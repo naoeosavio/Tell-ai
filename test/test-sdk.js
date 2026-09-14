@@ -1,9 +1,11 @@
-// @tell-ai/sdk unit tests — pure/local only, no network and no LLM calls.
+// @tell-ai/sdk unit tests — pure/local only, no external network and no LLM
+// calls (the streaming-error test talks to a throwaway localhost server).
 // Covers the public exports from packages/sdk/src/index.ts: model resolution,
 // provider handles (constructed, never called), system prompts and tag helpers.
-// create_ask_ai/tell/summarize_context are intentionally not exercised here
-// (they call the model); the CLI suites cover them with stubs.
+// create_ask_ai/tell/summarize_context success paths are intentionally not
+// exercised here (they call the model); the CLI suites cover them with stubs.
 const assert = require('node:assert');
+const http = require('node:http');
 
 const sdk = require('@tell-ai/sdk');
 
@@ -81,6 +83,37 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
   assert.strictEqual(typeof events[Symbol.asyncIterator], 'function');
   const multi_turn = ai.ask_stream([{ role: 'user', content: 'hi' }], { system: 'test' });
   assert.strictEqual(typeof multi_turn[Symbol.asyncIterator], 'function');
+
+  // ask_stream regression: a provider failure must propagate to the caller
+  // without the AI SDK default onError dumping the raw error (request body,
+  // response headers/cookies) to stderr.
+  const provider = http.createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end('{"error":{"message":"mock provider failure"}}');
+    });
+  });
+  await new Promise((resolve) => provider.listen(0, '127.0.0.1', resolve));
+  const port = provider.address().port;
+  const logged_errors = [];
+  const original_error = console.error;
+  console.error = (...args) => logged_errors.push(args);
+  try {
+    const failing = await sdk.create_ask_ai('openrouter:mock/model:free', {
+      keys: { openrouter: 'test-key' },
+      urls: { openrouter: `http://127.0.0.1:${port}/v1` },
+    });
+    await assert.rejects(async () => {
+      for await (const _event of failing.ask_stream('hi', { system: 'test' })) {
+        // no events expected
+      }
+    }, /mock provider failure/);
+  } finally {
+    console.error = original_error;
+    provider.close();
+  }
+  assert.deepStrictEqual(logged_errors, [], 'streamText must not log raw provider errors by default');
 
   // get_system_prompt: exec vs no-exec variants.
   const exec_prompt = sdk.get_system_prompt({ chain: true });

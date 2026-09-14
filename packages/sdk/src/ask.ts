@@ -33,7 +33,13 @@ async function* stream_events(
     reasoning,
     ...(typeof input === 'string' ? { prompt: input } : { messages: input }),
   };
-  const result = streamText(gen_options);
+  const result = streamText({
+    ...gen_options,
+    // The AI SDK default would console.error the raw provider error, dumping
+    // request bodies and response headers (cookies) to stderr/server logs.
+    // Errors still propagate through the stream for the caller to format.
+    onError: () => {},
+  });
   for await (const part of result.fullStream) {
     switch (part.type) {
       case 'text-delta':

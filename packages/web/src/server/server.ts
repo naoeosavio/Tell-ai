@@ -568,6 +568,20 @@ app.get('/api/context', (_req, res) => {
   }
 });
 
+// Extracts a clean, log-safe message from provider errors: AI SDK errors often
+// carry the raw response body JSON as the message and the full error object
+// (request body, response headers/cookies) as properties — neither belongs in
+// server logs or in the client-facing error event.
+function model_error_message(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed?.error?.message || parsed?.message || raw;
+  } catch {
+    return raw;
+  }
+}
+
 // Streams a model response to the client as NDJSON (`--stream`). Model setup
 // errors still surface as a JSON 500; once headers are sent, failures become
 // an `error` event so the client can keep the partial answer it received.
@@ -612,8 +626,8 @@ async function stream_tell(
     }
     write_event({ type: 'done' });
   } catch (error: any) {
-    console.error('Error streaming AI text:', error);
-    write_event({ type: 'error', error: error?.message || 'AI generation failed' });
+    console.error('Error streaming AI text:', model_error_message(error));
+    write_event({ type: 'error', error: model_error_message(error) || 'AI generation failed' });
   }
   res.end();
 }
@@ -674,7 +688,7 @@ app.post('/api/tell', async (req, res) => {
       reasoning: sanitizeReasoning((result as any).reasoning),
     });
   } catch (error: any) {
-    console.error('Error generating AI text:', error);
+    console.error('Error generating AI text:', model_error_message(error));
     return res.status(500).json({ error: 'AI generation failed. Check server logs.' });
   }
 });
