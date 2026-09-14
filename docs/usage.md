@@ -118,6 +118,20 @@ Without `-i`, stdin is captured only when no prompt arguments are given:
 echo "explain this" | tell    # stdin becomes the prompt
 ```
 
+## File mentions (`@path`)
+
+Mention a file or directory with `@` and its content is injected into the prompt automatically — no copy-pasting:
+
+```bash
+tell "ache o memory leak em @server.ts"
+tell "liste @src e sugira onde por testes"
+tell --no-exec "revise @packages/cli/src/mentions.ts"
+```
+
+Files inline as `File:` blocks (truncated at 64 KB with a `[truncated]` marker); directories inject a tree listing (3 levels, skipping `node_modules`, `.git`, `dist`, `.env`, `.tell`). Missing or binary targets print a warning and pass through untouched, never failing the prompt. `\@` is a literal `@`.
+
+Paths resolve against the current directory. Absolute paths work, but anything outside the working directory asks for confirmation first — even with `-y`. Mentions expand inside positional text, `-i` stdin, and `--ctx` prompt text alike, and the expanded prompt is what gets logged and saved to the context.
+
 ## Chain mode (`--chain`)
 
 The assistant can run commands, see their output, and continue with follow-up commands until it reaches a final answer. Up to 8 command rounds.

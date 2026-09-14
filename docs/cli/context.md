@@ -35,6 +35,8 @@ Entries are listed newest-first (`list_context_entries`, `Tell.ts:184-198`); ind
 
 Name validation (`sanitize_context_name`, `Tell.ts:256-260`): trimmed, no whitespace, charset `^[A-Za-z0-9._-]{1,100}$`. This excludes `@`/`#` (ref syntax) and blocks path traversal (`../../evil` rejected; covered by `test_name_reset_path_traversal_name_rejected`). `-n` with a missing/invalid name is `error: -n/--name requires a context name: --ctx <name> -n`, exit 1, no model call.
 
+No conflict with `@path` file mentions: `--ctx @N` refs are flag values resolved by `resolve_or_create_context_ref`, while `@file` mentions are prompt tokens expanded by `expand_mentions` — different namespaces by construction (see [mentions.md](mentions.md)).
+
 Stderr notices: `Created context: <label>` for `create`, `Using context: <label>` for `existing` (`Tell.ts:668-674`). `none`/`default` are silent (legacy behavior).
 
 ## Files and listing

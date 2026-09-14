@@ -73,6 +73,18 @@ tell d -c ola                    # one-word prompt on default context
 tell d --ctx "say hello"         # multi-word → prompt on default context
 ```
 
+## File mentions (`@path`)
+
+Any `@path` token in the prompt is expanded before the model call (`expand_mentions`, `Tell.ts:842-845`): files inline as `File:` blocks, directories as trees. Applies to positional text, `-i` stdin, and multi-word `--ctx` alike. Missing/binary targets warn on stderr and pass through intact; `\@` is literal. Targets outside the cwd need interactive confirmation even with `-y`. Full rules: [mentions.md](mentions.md).
+
+```bash
+tell 'ache o bug em @server.ts'
+tell 'liste @src e sugira testes'
+tell --ctx "revise @a.ts com cuidado" "resuma em uma frase"
+```
+
+Prompt `@N` tokens do not conflict with `--ctx @N`: context refs are flag values, never prompt tokens (an unmatched `@0` in the prompt just warns and passes through).
+
 ## Exit codes and streams
 
 * `0`: answer printed to stdout (visible text only, tags stripped).
@@ -84,6 +96,8 @@ tell d --ctx "say hello"         # multi-word → prompt on default context
 
 ```bash
 tell "explain this directory"
+tell "ache o bug em @server.ts"  # file content injected, no pasting
+tell "liste @src"                # directory tree injected
 tell -y d "run ls -la"           # auto-approve safe commands
 tell --no-exec d "run ls -la"    # show, don't run
 tell --chain "find why the build fails and fix it"

@@ -25,6 +25,15 @@ tell -m d "run ls -la"
 tell -m --help
 ```
 
+Mention files or directories with `@` — content is injected into the prompt, no pasting:
+
+```bash
+tell "ache o memory leak em @server.ts"
+tell "liste @src e sugira onde por testes"
+```
+
+Files inline as `File:` blocks (64 KB cap, binaries skipped with a warning); directories inject a tree listing. Missing targets warn and pass through intact; `\@` is literal. Anything outside the working directory asks for confirmation first, even with `-y`. Full rules: `docs/cli/mentions.md`.
+
 Command execution is interactive by default:
 
 ```bash
@@ -131,6 +140,7 @@ Run the prompt-injection and command-execution safety checks with:
 
 ```bash
 npm run test:security
+npm run test:mentions   # @path expansion + outside-cwd read gate
 ```
 
 License

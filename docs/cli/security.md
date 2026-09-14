@@ -2,7 +2,7 @@
 
 Threat model: the model output, piped stdin, and stored context are all untrusted. Only model-emitted `<RUN>` blocks that survive think-tag stripping and the high-risk guard may execute, and only after confirmation (or `-y` for safe scripts on a TTY).
 
-## High-risk guard (`is_high_risk_script`, `Tell.ts:361-392`)
+## High-risk guard (`is_high_risk_script`, `Tell.ts:368-399`)
 
 Input is normalized (`\\\n` → space, runs of whitespace → single space) into `compact`; every pattern below is tested against it. Match → high-risk: `-y` does not approve, TTY confirmation is still required, non-TTY auto-rejects.
 
@@ -24,11 +24,15 @@ Input is normalized (`\\\n` → space, runs of whitespace → single space) into
 | 14 | `tee … privileged_path` | `echo pwned ¦ tee /etc/hosts` |
 | 15 | `\d*(>>?¦>\|¦&>) privileged_path` | `echo pwned > /etc/profile`, `bad-command 2> /etc/hosts` |
 
-`privileged_path` (`Tell.ts:363-367`): `/(etc|boot|dev|proc|sys|usr|bin|sbin|lib|lib64)(/¦\b)`, `/var/spool/cron`, `/var/cron`, `/etc/cron[.d|daily|…]`, `~/.config/autostart`, `~/.config/systemd/user`, `~/.local/share/systemd/user` (with `$HOME` variants).
+`privileged_path` (`Tell.ts:370-374`): `/(etc|boot|dev|proc|sys|usr|bin|sbin|lib|lib64)(/¦\b)`, `/var/spool/cron`, `/var/cron`, `/etc/cron[.d|daily|…]`, `~/.config/autostart`, `~/.config/systemd/user`, `~/.local/share/systemd/user` (with `$HOME` variants).
 
 Deliberately allowed: local-only one-liners like `node -e "require('fs').writeFileSync('pwned','1')"` — the `-e` rule fires only with a network/decode token. This is asserted, not accidental (`test-tell-security.js:179-183`).
 
 Guard limits: regex heuristics, not a sandbox. Do not rely on it in production/trusted hosts without a container/VM. `--no-exec` always wins over `-y`.
+
+## File-mention read gate (`mentions.ts:39-58`, `Tell.ts:845`)
+
+`@path` expansion resolves against the cwd; targets outside it need interactive confirmation even with `-y` (non-TTY denies). The check covers the lexical path and its `realpath`, so a symlink inside the cwd pointing outside still prompts. Failures (missing/binary/unreadable) warn and pass through — expansion never throws. Injected file content is prompt data: a file containing `<RUN>echo PWN</RUN>` never auto-executes, exactly like poisoned stored context. Full rules: [mentions.md](mentions.md).
 
 ## Prompt-injection policy
 
@@ -59,8 +63,9 @@ Consequences, all covered by tests:
 | Chain limit 8 + messages | `keep running until stopped` |
 | Context isolation/round-trip/clear | `test-tell-security.js:315-330`, `test-tell-context.js` |
 | Named/hash/index addressing, `-n` reset, `-l`, traversal | `test-tell-context.js: TESTS` (22 cases) |
+| `@path` expansion, outside-cwd denial, poisoned-file inertness | `test-tell-mentions.js: TESTS` (22 cases) |
 | Incremental-save no-duplication | `test_incremental_context_saves_do_not_duplicate_turns_on_chain` |
 
-Run: `npm run test:security`, `npm run test` (security + context, builds SDK first). See [development.md](development.md).
+Run: `npm run test:security`, `npm run test:mentions`, `npm run test` (all suites, builds SDK first). See [development.md](development.md).
 
-Sources: `Tell.ts:361-420`, `src/systemPrompt.ts`, `test/test-tell-security.js`, `test/test-tell-context.js`.
+Sources: `Tell.ts:368-427`, `src/mentions.ts`, `src/systemPrompt.ts`, `test/test-tell-security.js`, `test/test-tell-context.js`, `test/test-tell-mentions.js`.
