@@ -25,6 +25,13 @@ const tell_source = ts.transpileModule(
   { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } },
 ).outputText;
 
+// `./mentions` is required by Tell.js at load time; compile it into the same
+// vm sandbox on demand so it binds to the faked process/fs view per test.
+const mentions_source = ts.transpileModule(
+  fs.readFileSync(path.join(__dirname, '..', 'packages', 'cli', 'src', 'mentions.ts'), 'utf8'),
+  { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } },
+).outputText;
+
 function fake_stdin(text) {
   const stdin = new EventEmitter();
   stdin.isTTY = false;
@@ -134,7 +141,14 @@ async function run_tell(args, response, opts = {}) {
   }
 
   const module_obj = { exports: {} };
+  let active_context = null;
   function mock_require(name) {
+    if (name === './mentions') {
+      const mentions_module = { exports: {} };
+      const factory = vm.runInContext(`(function(require, module, exports) {${mentions_source}\n})`, active_context);
+      factory(mock_require, mentions_module, mentions_module.exports);
+      return mentions_module.exports;
+    }
     if (name === '@tell-ai/sdk') {
       return {
         ...sdk,
@@ -182,6 +196,7 @@ async function run_tell(args, response, opts = {}) {
   };
 
   try {
+    active_context = context;
     vm.runInNewContext(tell_source, context, { filename: 'Tell.js' });
     await wait_for_main();
     return {
