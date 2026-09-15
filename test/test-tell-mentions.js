@@ -31,6 +31,13 @@ const mentions_source = ts.transpileModule(
   { compilerOptions: COMMON_COMPILER_OPTIONS },
 ).outputText;
 
+// `./history` is required by Tell.js at load time; compile it into the same
+// vm sandbox on demand, like `./mentions`.
+const history_source = ts.transpileModule(
+  fs.readFileSync(path.join(__dirname, '..', 'packages', 'cli', 'src', 'history.ts'), 'utf8'),
+  { compilerOptions: COMMON_COMPILER_OPTIONS },
+).outputText;
+
 const tell_source = ts.transpileModule(
   fs.readFileSync(path.join(__dirname, '..', 'packages', 'cli', 'src', 'Tell.ts'), 'utf8'),
   { compilerOptions: COMMON_COMPILER_OPTIONS },
@@ -453,6 +460,12 @@ async function run_tell(args, response, opts = {}) {
       const factory = vm.runInContext(`(function(require, module, exports) {${mentions_source}\n})`, active_context);
       factory(mock_require, mentions_module, mentions_module.exports);
       return mentions_module.exports;
+    }
+    if (name === './history') {
+      const history_module = { exports: {} };
+      const factory = vm.runInContext(`(function(require, module, exports) {${history_source}\n})`, active_context);
+      factory(mock_require, history_module, history_module.exports);
+      return history_module.exports;
     }
     if (name === '@tell-ai/sdk') {
       return {

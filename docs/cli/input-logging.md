@@ -31,13 +31,13 @@ Piped content is untrusted data: it travels inside the user message, and the sys
 
 `log_file` (`Tell.ts:158-163`): `~/.ai/tell_history/conversation_<ISO-timestamp>.txt` (`:` → `-`). Created per invocation via `ensure_dir` (mkdir cached in `CREATED_DIRS`, `Tell.ts:75-81`).
 
-Appended (`append_log`, `Tell.ts:333-336`): `Model: <label>\nUser:\n<prompt>`, then `Assistant:\n<response>` per round (`remember_assistant`, `Tell.ts:648-651`) and each command result (`run_scripts`, `Tell.ts:455-465`). The logged `<prompt>` is the post-expansion text — `@path` mentions already inlined (see [mentions.md](mentions.md)). Logs are append-only and never read back — history is observability, context files are memory.
+Appended (`append_log`, `Tell.ts`): `Model: <label>\nUser:\n<prompt>`, then `Assistant:\n<response>` per round (`remember_assistant`) and each command result (`run_scripts`). The logged `<prompt>` is the post-expansion text — `@path` mentions already inlined (see [mentions.md](mentions.md)). Logs are append-only and local-only; they are read back exclusively by `--history` (listing, `#N` cat, search — see [history.md](history.md)), never by the conversation loop — context files are memory, logs are observability.
 
 ## Filesystem summary
 
 | Path | Written when | Read back? |
 |------|--------------|------------|
-| `~/.ai/tell_history/conversation_*.txt` | always | no |
+| `~/.ai/tell_history/conversation_*.txt` | always | yes, via `--history` (`#N` / search) |
 | `~/.ai/tell_context/<sha256>.txt` | `-c` / `--ctx` (default plan) | yes, next `-c` / `--ctx` in same cwd+model |
 | `~/.ai/tell_context/<name>.txt` | `--ctx <name>` | yes, next `--ctx <name>|@N|#hash` |
 

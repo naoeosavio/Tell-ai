@@ -18,6 +18,16 @@ import {
 } from '@tell-ai/sdk';
 import { Command } from 'commander';
 import { load_sdk_config } from './env';
+import {
+  type ContextEntry,
+  list_sessions,
+  print_history_list,
+  print_search_results,
+  search_contexts,
+  search_sessions,
+  short_id,
+  show_entry,
+} from './history';
 import { expand_mentions, is_outside_cwd } from './mentions';
 import { get_system_prompt, type PromptOptions } from './systemPrompt';
 
@@ -36,7 +46,7 @@ type CliOptions = {
   context?: boolean;
   ctx?: boolean | string;
   name?: boolean;
-  list?: boolean;
+  history?: boolean | string;
   yes?: boolean;
   chain?: boolean;
   exec?: boolean;
@@ -49,9 +59,6 @@ type CliOptions = {
 };
 
 type ParsedInput = { model: string; parts: string[]; readStdin: boolean };
-
-// A saved context file on disk, addressable by recency index, hash prefix, or name.
-type ContextEntry = { file: string; id: string; mtimeMs: number };
 
 // The resolved plan for how the current invocation should read/write context:
 // - 'none': no context flag was given (legacy one-shot behavior, default context is cleared).
@@ -169,8 +176,12 @@ async function read_stdin(): Promise<string> {
   });
 }
 
+function history_dir(): string {
+  return path.join(os.homedir(), '.ai', 'tell_history');
+}
+
 function log_file(): string {
-  const dir = path.join(os.homedir(), '.ai', 'tell_history');
+  const dir = history_dir();
   ensure_dir(dir);
   const timestamp = new Date().toISOString().replace(/:/g, '-');
   return path.join(dir, `conversation_${timestamp}.txt`);
@@ -211,50 +222,55 @@ function list_context_entries(): ContextEntry[] {
   return entries;
 }
 
-// Shortens long random/hash ids for display; leaves human-readable names untouched.
-function short_id(id: string): string {
-  const HASH_ID_LENGTH = 16;
-  const SHORT_ID_LENGTH = 8;
-  return /^[0-9a-f]+$/i.test(id) && id.length >= HASH_ID_LENGTH ? id.slice(0, SHORT_ID_LENGTH) : id;
-}
-
-function format_age(mtimeMs: number): string {
-  const MS_PER_MINUTE = 60_000;
-  const MINUTES_PER_HOUR = 60;
-  const HOURS_PER_DAY = 24;
-  const minutes = Math.floor((Date.now() - mtimeMs) / MS_PER_MINUTE);
-  if (minutes < 1) return 'just now';
-  if (minutes < MINUTES_PER_HOUR) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / MINUTES_PER_HOUR);
-  if (hours < HOURS_PER_DAY) return `${hours}h ago`;
-  return `${Math.floor(hours / HOURS_PER_DAY)}d ago`;
-}
-
-function context_preview(file: string): string {
-  const PREVIEW_MAX_CHARS = 60;
-  const text = read_text(file);
-  const first_line = (text.split('\n').find((line) => line.trim().length > 0) || '').replace(/^User:\s*/, '').trim();
-  return first_line.length > PREVIEW_MAX_CHARS ? `${first_line.slice(0, PREVIEW_MAX_CHARS - 3)}...` : first_line;
-}
-
-function print_context_list(entries: ContextEntry[]): void {
-  if (entries.length === 0) {
-    console.log('No saved contexts.');
+// Handles `-l/--history`: bare lists both stores; `@N` reprints a context,
+// `#N` reprints a conversation (errors name the namespace total); any other
+// value searches contexts + conversations. Runs before prompt/stdin handling,
+// so it needs neither a prompt nor an API key — everything stays local.
+function run_history_dispatch(ref: boolean | string): void {
+  const entries = list_context_entries();
+  if (ref === true) {
+    print_history_list(list_sessions(history_dir()), entries);
     return;
   }
-  const rows = entries.map((entry, index) => ({
-    ref: `@${index}`,
-    id: short_id(entry.id),
-    age: format_age(entry.mtimeMs),
-    preview: context_preview(entry.file),
-  }));
-  const ref_width = Math.max(...rows.map((row) => row.ref.length));
-  const id_width = Math.max(...rows.map((row) => row.id.length));
-  const age_width = Math.max(...rows.map((row) => row.age.length));
-  for (const row of rows) {
-    const columns = `${row.ref.padEnd(ref_width)}  ${row.id.padEnd(id_width)}  ${row.age.padEnd(age_width)}`;
-    console.log(`${columns}  ${row.preview}`);
+
+  if (typeof ref === 'boolean') {
+    // Unreachable: commander only yields `true` for the bare flag and there
+    // is no `--no-history` negation. Kept for exhaustiveness.
+    return;
   }
+
+  const value = ref.trim();
+  const index_match = /^([@#])(\d+)$/.exec(value);
+  if (index_match?.[1] && index_match[2] !== undefined) {
+    const index = Number(index_match[2]);
+    const is_context = index_match[1] === '@';
+    const sessions = is_context ? [] : list_sessions(history_dir());
+    const target = is_context ? entries[index] : sessions[index];
+    if (!target) {
+      const total = is_context ? entries.length : sessions.length;
+      const message = is_context
+        ? `No context at index ${index} (have ${total} saved context${total === 1 ? '' : 's'})`
+        : `No conversation at index ${index} (have ${total} conversation${total === 1 ? '' : 's'})`;
+      console.error('\x1b[31m%s\x1b[0m', message);
+      process.exitCode = 1;
+      return;
+    }
+    show_entry(target.file);
+    return;
+  }
+
+  if (!value) {
+    console.log('Empty search term — pass a term, @N (context), or #N (conversation).');
+    return;
+  }
+
+  const results = [...search_contexts(value, entries), ...search_sessions(value, history_dir())];
+  if (results.length === 0) {
+    console.error('\x1b[31m%s\x1b[0m', `No matches for "${value}" in contexts or conversations.`);
+    process.exitCode = 1;
+    return;
+  }
+  print_search_results(results, value);
 }
 
 // Validates a token as a human-readable context name: no whitespace, a safe
@@ -665,7 +681,7 @@ function build_program(argv: string[]): Command {
     .option('-c, --context', 'use the default context for this directory and model')
     .option('--ctx [ref]', 'use-or-create: @N, #hash-prefix, name, or prompt text for the default context')
     .option('-n, --name', 'reset a named context (--ctx <name> -n; starts empty, even if it exists)')
-    .option('-l, --list', 'list saved contexts (@N, id, age, preview)')
+    .option('-l, --history [ref]', 'list contexts + conversations; @N/#N show an entry; any other value searches both')
     .option('-y, --yes', 'execute requested commands without confirmation')
     .option('--require-approval', 'with -y: safe commands run directly, high-risk ones still ask for confirmation')
     .option('--chain', 'continue after command output until the assistant gives a final answer')
@@ -934,8 +950,8 @@ async function main() {
   const program = build_program(process.argv);
   const opts = program.opts<CliOptions>();
 
-  if (opts.list) {
-    print_context_list(list_context_entries());
+  if (opts.history !== undefined) {
+    run_history_dispatch(opts.history);
     return;
   }
 

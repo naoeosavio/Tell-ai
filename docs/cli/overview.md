@@ -17,7 +17,7 @@ The CLI depends on the SDK (`packages/cli/package.json:52-55`): `@tell-ai/sdk` +
 main (Tell.ts:886)
  ├─ wants_model_help? → print_model_help, return
  ├─ build_program (commander) → opts
- ├─ --list? → print_context_list, return
+ ├─ --history? → run_history_dispatch (list/cat/search), return
  ├─ reject --ctx + -c combination
  ├─ parse_args (positional model detect) → { model, parts }
  ├─ read_stdin (if piped) → format_prompt → prompt
@@ -52,7 +52,7 @@ Execution uses `/bin/bash` with `cwd: process.cwd()` (`Tell.ts:116-143`). Non-ze
 
 ## Core types (`Tell.ts:34-77`)
 
-* `CliOptions`: parsed commander flags (`model`, `context`, `ctx`, `name`, `list`, `yes`, `chain`, `exec`, `input`).
+* `CliOptions`: parsed commander flags (`model`, `context`, `ctx`, `name`, `history`, `yes`, `chain`, `exec`, `input`).
 * `ParsedInput`: `{ model, parts, readStdin }` from `parse_args`.
 * `ContextEntry`: `{ file, id, mtimeMs }` — one saved context file.
 * `ContextPlan`: `'none' | 'default' | 'existing' | 'create'` — how this invocation reads/writes context. See [context.md](context.md).

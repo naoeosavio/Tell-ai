@@ -67,7 +67,7 @@ Consequences, all covered by tests:
 | Think-tag stripping | `think tags stripped…`, `run inside think must not execute` |
 | Chain limit 8 + messages | `keep running until stopped` |
 | Context isolation/round-trip/clear | `test-tell-security.js:315-330`, `test-tell-context.js` |
-| Named/hash/index addressing, `-n` reset, `-l`, traversal | `test-tell-context.js: TESTS` (22 cases) |
+| Named/hash/index addressing, `-n` reset, `--history`, traversal | `test-tell-context.js: TESTS` (28 cases) |
 | `@path` expansion, outside-cwd denial, poisoned-file inertness | `test-tell-mentions.js: TESTS` (22 cases) |
 | Incremental-save no-duplication | `test_incremental_context_saves_do_not_duplicate_turns_on_chain` |
 

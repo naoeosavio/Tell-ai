@@ -1,4 +1,6 @@
-# Context (`-c`, `--ctx`, `-n`, `-l`)
+# Context (`-c`, `--ctx`, `-n`)
+
+Contexts no longer have their own lister: `-l` is inherited by `--history` (see [history.md](history.md)), which lists contexts and conversations together and reopens entries by `@N`/`#N`.
 
 Explicit design: no value guessing. A single token after `--ctx` is always a ref/name, never a prompt. Multi-word values are prompt text for the default context. Unnamed contexts are never saved.
 
@@ -44,7 +46,7 @@ Stderr notices: `Created context: <label>` for `create`, `Using context: <label>
 * Dir: `~/.ai/tell_context/` (`context_dir`, `Tell.ts:165-167`).
 * Default file: `sha256("<cwd>\n<model_label>") + ".txt"` (`context_file`, `Tell.ts:169-173`), where `model_label` is `vendor:model:thinking[:fast]` (`model_label`, `Tell.ts:83-86`). Same directory + same resolved label share one file; different model → different file.
 * Named file: `<name>.txt` (`named_context_file`, `Tell.ts:178-180`).
-* `-l/--list` prints `@N  id  age  preview`, newest first (`print_context_list`, `Tell.ts:226-244`). `short_id` truncates 16+ hex ids to 8 chars, leaves names intact (`Tell.ts:201-205`). `format_age`: `just now` / `Nm ago` / `Nh ago` / `Nd ago` (`Tell.ts:207-217`). `context_preview`: first non-empty line, `User:` prefix stripped, 60 chars max (`Tell.ts:219-224`). Empty → `No saved contexts.`.
+* `-l/--list` is gone: listing lives in `--history` ([history.md](history.md)) — `@N | id | age | preview`, newest first. `short_id` truncates 16+ hex ids to 8 chars, leaves names intact (`history.ts`). `format_age`: `just now` / `Nm ago` / `Nh ago` / `Nd ago` (`history.ts`). Preview: first user turn, 60 chars max (`preview_from_text`, `history.ts` — handles both `User: text` and `User:\ntext` layouts). Empty → `No saved contexts.`.
 
 ## Persistence mechanics
 
@@ -63,7 +65,7 @@ tell --ctx myproj "seed the project"        # Created context: myproj
 tell --ctx myproj "continue"                # Using context: myproj
 tell --ctx myproj -n "start over"           # Created context: myproj (empty)
 
-tell -l                                     # @0 beta … / @1 alpha …
+tell --history @0                            # cat the most recent context (from history)
 tell --ctx @0 "resume most recent"
 tell --ctx '#abc12' "resume by hash"
 ```

@@ -36,6 +36,13 @@ const mentions_source = ts.transpileModule(
   { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } },
 ).outputText;
 
+// `./history` is required by Tell.js at load time; compile it into the same
+// vm sandbox on demand, like `./mentions`.
+const history_source = ts.transpileModule(
+  fs.readFileSync(path.join(__dirname, '..', 'packages', 'cli', 'src', 'history.ts'), 'utf8'),
+  { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } },
+).outputText;
+
 function fake_stdin(text) {
   const stdin = new EventEmitter();
   stdin.isTTY = false;
@@ -143,6 +150,12 @@ async function run_tell(args, response, opts = {}) {
       const factory = vm.runInContext(`(function(require, module, exports) {${mentions_source}\n})`, active_context);
       factory(mock_require, mentions_module, mentions_module.exports);
       return mentions_module.exports;
+    }
+    if (name === './history') {
+      const history_module = { exports: {} };
+      const factory = vm.runInContext(`(function(require, module, exports) {${history_source}\n})`, active_context);
+      factory(mock_require, history_module, history_module.exports);
+      return history_module.exports;
     }
     if (name === '@tell-ai/sdk') {
       return {
@@ -470,10 +483,119 @@ async function test_context_list_shows_saved_entries() {
 
     const listed = await run_tell(['-l'], 'unused', { dir });
     assert.strictEqual(listed.tellCalls.length, 0);
+    assert_includes(listed.stdout, 'Contexts:');
     assert_includes(listed.stdout, '@0');
     assert_includes(listed.stdout, '@1');
     assert_includes(listed.stdout, 'beta');
     assert_includes(listed.stdout, 'alpha');
+    // `-l` is inherited by --history: conversations are listed in the same output
+    assert_includes(listed.stdout, 'Conversations:');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------------
+// `-l/--history`: combined listing, `@N`/`#N` cat, search
+// ---------------------------------------------------------------------
+
+async function test_history_listing_shows_conversations() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
+  try {
+    await run_tell(['d', 'first prompt here'], 'first answer', { dir });
+    await sleep(15);
+    await run_tell(['d', 'second prompt here'], 'second answer', { dir });
+
+    const listed = await run_tell(['-l'], 'unused', { dir });
+    assert.strictEqual(listed.tellCalls.length, 0);
+    assert_includes(listed.stdout, 'Conversations:');
+    assert_includes(listed.stdout, '#0');
+    assert_includes(listed.stdout, '#1');
+    assert_includes(listed.stdout, 'second prompt here');
+    assert_includes(listed.stdout, 'first prompt here');
+    // date + model columns
+    assert.match(listed.stdout, /#\d+\s+\d{4}-\d{2}-\d{2} \d{2}:\d{2}/);
+    assert_includes(listed.stdout, 'deepseek');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+async function test_history_at_ref_reprints_context() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
+  try {
+    await run_tell(['d', '--ctx', 'ctxshow', '-n', 'ctxshow prompt'], 'ctxshow answer', { dir });
+
+    const shown = await run_tell(['--history', '@0'], 'unused', { dir });
+    assert.strictEqual(shown.tellCalls.length, 0);
+    assert_includes(shown.stdout, 'ctxshow prompt');
+    assert_includes(shown.stdout, 'ctxshow answer');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+async function test_history_hash_ref_reprints_session() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
+  try {
+    await run_tell(['d', 'session prompt here'], 'session answer here', { dir });
+
+    const shown = await run_tell(['--history', '#0'], 'unused', { dir });
+    assert.strictEqual(shown.tellCalls.length, 0);
+    assert_includes(shown.stdout, 'session prompt here');
+    assert_includes(shown.stdout, 'session answer here');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+async function test_history_search_finds_context_and_conversation() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
+  try {
+    await run_tell(['d', '--ctx', 'needle', '-n', 'needle prompt'], 'needle answer', { dir });
+
+    const found = await run_tell(['--history', 'needle answer'], 'unused', { dir });
+    assert.strictEqual(found.tellCalls.length, 0);
+    assert.match(found.stdout, /@0\s+context\s+/);
+    assert.match(found.stdout, /#\d+\s+conversation\s+/);
+
+    // a hit is navigable: the same ref reopens the entry in full
+    const reopened = await run_tell(['--history', '#0'], 'unused', { dir });
+    assert_includes(reopened.stdout, 'needle answer');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+async function test_history_invalid_refs_error_with_totals() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
+  try {
+    await run_tell(['d', '--ctx', 'only', '-n', 'seed'], 'seed answer', { dir });
+
+    const bad_context = await run_tell(['--history', '@9'], 'unused', { dir });
+    assert.strictEqual(bad_context.exitCode, 1);
+    assert_includes(bad_context.stderr, 'No context at index 9 (have 1 saved context)');
+
+    const bad_session = await run_tell(['--history', '#5'], 'unused', { dir });
+    assert.strictEqual(bad_session.exitCode, 1);
+    assert_includes(bad_session.stderr, 'No conversation at index 5 (have 1 conversation)');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+async function test_history_empty_term_exit_zero_and_no_match_exit_one() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
+  try {
+    await run_tell(['d', 'some prompt'], 'some answer', { dir });
+
+    const empty = await run_tell(['--history', ''], 'unused', { dir });
+    assert.strictEqual(empty.exitCode, undefined);
+    assert_includes(empty.stdout, 'Empty search term');
+
+    const miss = await run_tell(['--history', 'zzznotfoundterm'], 'unused', { dir });
+    assert.strictEqual(miss.exitCode, 1);
+    assert_includes(miss.stderr, 'No matches');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -586,6 +708,12 @@ const TESTS = [
   test_ctx_name_creates_when_missing_then_resumes,
   test_ctx_invalid_single_token_is_hard_error,
   test_context_list_shows_saved_entries,
+  test_history_listing_shows_conversations,
+  test_history_at_ref_reprints_context,
+  test_history_hash_ref_reprints_session,
+  test_history_search_finds_context_and_conversation,
+  test_history_invalid_refs_error_with_totals,
+  test_history_empty_term_exit_zero_and_no_match_exit_one,
   test_multiword_prompt_with_default_context_flag,
   test_short_numeric_prompt_reaches_the_model,
   test_no_exec_overrides_yes_flag,

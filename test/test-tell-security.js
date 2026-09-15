@@ -20,6 +20,13 @@ const mentionsSource = ts.transpileModule(
   { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } },
 ).outputText;
 
+// `./history` is required by Tell.js at load time; compile it into the same
+// vm sandbox on demand, like `./mentions`.
+const historySource = ts.transpileModule(
+  fs.readFileSync(path.join(__dirname, '..', 'packages', 'cli', 'src', 'history.ts'), 'utf8'),
+  { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } },
+).outputText;
+
 function fakeStdin(text) {
   const stdin = new EventEmitter();
   stdin.isTTY = false;
@@ -99,6 +106,12 @@ async function runTell(args, response, opts = {}) {
       const factory = vm.runInContext(`(function(require, module, exports) {${mentionsSource}\n})`, activeContext);
       factory(mockRequire, mentionsModule, mentionsModule.exports);
       return mentionsModule.exports;
+    }
+    if (name === './history') {
+      const historyModule = { exports: {} };
+      const factory = vm.runInContext(`(function(require, module, exports) {${historySource}\n})`, activeContext);
+      factory(mockRequire, historyModule, historyModule.exports);
+      return historyModule.exports;
     }
     if (name === '@tell-ai/sdk') {
       return {

@@ -59,7 +59,7 @@ All CLI suites avoid network/LLM by transpiling the real `Tell.ts` (`typescript.
 * `child_process.exec[promisify.custom]`: records scripts, returns canned stdout/stderr.
 * `os.homedir`: redirected into a temp dir; `process.cwd`: temp work dir; `argv/stdin/stdout/stderr/exitCode`: faked.
 
-`test/test-tell-security.js` (426 lines): risky-script skips, injection policy, stdin shapes, `<RUN>`/`<think>` extraction, chain, context hygiene. `test/test-tell-context.js` (599 lines, 22 tests): addressing (`@N`, `#hash`, names), `-n` reset + traversal rejection, `-l`, multi-word semantics, incremental-save non-duplication, poisoned-context safety. `test/test-tell-mentions.js` (22 tests): unit layer (file/dir/missing/binary/truncation/escape/punctuation/tree limits/`is_outside_cwd`/symlink/FIFO) + integration layer (model/log/context receive the expansion, outside-cwd denial, poisoned-file inertness, stdin + `--ctx` combo).
+`test/test-tell-security.js` (426 lines): risky-script skips, injection policy, stdin shapes, `<RUN>`/`<think>` extraction, chain, context hygiene. `test/test-tell-context.js` (28 tests): addressing (`@N`, `#hash`, names), `-n` reset + traversal rejection, `--history` (combined listing, `@N`/`#N` cat, search, exit codes), multi-word semantics, incremental-save non-duplication, poisoned-context safety. `test/test-tell-mentions.js` (22 tests): unit layer (file/dir/missing/binary/truncation/escape/punctuation/tree limits/`is_outside_cwd`/symlink/FIFO) + integration layer (model/log/context receive the expansion, outside-cwd denial, poisoned-file inertness, stdin + `--ctx` combo).
 
 ```bash
 bun run test:security   # via root; builds SDK first (tag fns exercised for real)
