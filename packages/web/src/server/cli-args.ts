@@ -13,6 +13,8 @@ export interface CliArgs {
   chain: boolean;
   /** Whether command execution is auto-confirmed (autoExecute on). */
   yes: boolean;
+  /** Whether the Require Approval toggle is seeded on the client's first visit (`--require-approval`). */
+  requireApproval: boolean;
   /** Whether responses are streamed to the browser as they are generated (`--stream`). */
   stream: boolean;
   /** Whether reasoning headers start expanded (`--think`; collapse persists). */
@@ -54,6 +56,7 @@ export function parseCliArgs(argv: string[], defaultCwd: string): CliArgs {
   const chain = has(argv, '--chain');
   const yes = has(argv, '-y', '--yes');
   const noExec = has(argv, '--no-exec');
+  const requireApproval = has(argv, '--require-approval');
   const stream = has(argv, '--stream');
   const think = has(argv, '--think');
   const portRaw = argValue(argv, '--port');
@@ -64,10 +67,13 @@ export function parseCliArgs(argv: string[], defaultCwd: string): CliArgs {
   return {
     cwd: path.resolve(argCwd || defaultCwd),
     initialPrompt,
-    autoExecute: yes || !noExec,
+    // `--no-exec` always wins (same precedence as the CLI); `-y` is not part
+    // of this expression — autoExecute merely reflects the default toggle state.
+    autoExecute: !noExec,
     model,
     chain,
     yes,
+    requireApproval,
     stream,
     think,
     port: port !== undefined && Number.isFinite(port) && port > 0 ? port : undefined,
@@ -96,6 +102,9 @@ Options:
   --think           Start reasoning headers expanded (collapsed by default)
   -y, --yes         Auto-confirm command execution
   --no-exec         Disable automatic execution of AI-generated commands
+  --require-approval
+                    Seed the Require Approval toggle on the client's first visit
+                    (safe commands auto-run, risky ones need the confirm card)
   -h, --help        Show this help
 `);
 }

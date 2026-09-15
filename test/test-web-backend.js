@@ -119,6 +119,23 @@ test('cli: printHelp runs without throwing', () => {
   printHelp();
 });
 
+test('cli: --require-approval is detected, default off, never a value', () => {
+  const defaults = parseCliArgs([], '/tmp');
+  assert.strictEqual(defaults.requireApproval, false);
+  assert.strictEqual(parseCliArgs(['--require-approval'], '/tmp').requireApproval, true);
+  // Not swallowed as the value of a preceding value-flag.
+  const seeded = parseCliArgs(['--cwd', '/tmp/proj', '--require-approval', '--prompt', 'hello'], '/tmp');
+  assert.strictEqual(seeded.requireApproval, true);
+  assert.strictEqual(seeded.cwd, '/tmp/proj');
+  assert.strictEqual(seeded.initialPrompt, 'hello');
+  // Combines with -y/--no-exec: `--no-exec` wins the autoExecute seed,
+  // matching the CLI precedence (`tell --yes --no-exec` never executes).
+  const combo = parseCliArgs(['-y', '--require-approval', '--no-exec'], '/tmp');
+  assert.strictEqual(combo.yes, true);
+  assert.strictEqual(combo.requireApproval, true);
+  assert.strictEqual(combo.autoExecute, false);
+});
+
 // ---------------------------------------------------------------------------
 // Path traversal guard
 // ---------------------------------------------------------------------------

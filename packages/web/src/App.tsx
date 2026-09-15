@@ -351,6 +351,9 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
           setAutoExecute(data.autoExecute);
         if (typeof data.chain === 'boolean' && savedExecTogglesRef.current?.chainMode === undefined)
           setChainMode(data.chain);
+        // Server `--require-approval` seeds the toggle on the first visit only.
+        if (typeof data.requireApproval === 'boolean' && savedExecTogglesRef.current?.requireApproval === undefined)
+          setRequireApproval(data.requireApproval);
         // Server `--think` only seeds the expanded-by-default choice on the first visit.
         if (typeof data.think === 'boolean' && savedExecTogglesRef.current?.reasoningExpanded === undefined)
           setReasoningExpanded(data.think);

@@ -54,6 +54,7 @@ const AUTO_EXECUTE = cliArgs.autoExecute;
 const DEFAULT_MODEL = (cliArgs.model || process.env['TELL_MODEL'] || 'l').trim();
 const CHAIN = cliArgs.chain;
 const YES = cliArgs.yes;
+const REQUIRE_APPROVAL = cliArgs.requireApproval;
 const STREAM = cliArgs.stream;
 const THINK = cliArgs.think;
 const PORT = cliArgs.port ?? Number(process.env['PORT'] || 3000);
@@ -551,6 +552,7 @@ app.get('/api/config', (_req, res) => {
     autoExecute: AUTO_EXECUTE,
     chain: CHAIN,
     yes: YES,
+    requireApproval: REQUIRE_APPROVAL,
     stream: STREAM,
     think: THINK,
     cwd: CWD,
