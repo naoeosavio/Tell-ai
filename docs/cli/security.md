@@ -29,6 +29,10 @@ Input is normalized (`\\\n` → space, runs of whitespace → single space) into
 
 Deliberately allowed: local-only one-liners like `node -e "require('fs').writeFileSync('pwned','1')"` — the `-e` rule fires only with a network/decode token. This is asserted, not accidental (`test-tell-security.js:179-183`).
 
+## Outside-cwd command gate (`script_touches_outside_cwd`, `Tell.ts`)
+
+Independent of the pattern table: with `-y`, any command referencing a path that resolves outside the working directory requires confirmation — reads included (`cat /etc/os-release`, `cat ~/.ssh/id_rsa`, `rm ../outside-file`, `ls --output=/tmp/out`), mirroring the `@path` mention read gate in `mentions.ts`. Path tokens are matched in absolute, home (`~/`, `$HOME`), traversal (`../`, `./`, bare `..`/`~`), after-`=` and quoted forms, then resolved via `is_outside_cwd` (lexical + symlink/realpath — a symlink inside `cwd` pointing outside counts as outside). When cwd IS `$HOME`, `~/x` resolves inside and stays allowed. Non-TTY stdin rejects (fail-closed), same as the high-risk guard.
+
 Guard limits: regex heuristics, not a sandbox. Do not rely on it in production/trusted hosts without a container/VM. `--no-exec` always wins over `-y`.
 
 ## File-mention read gate (`mentions.ts:39-58`, `Tell.ts:845`)

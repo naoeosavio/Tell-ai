@@ -36,7 +36,7 @@ Full spec format: `vendor:model[:thinking]` with thinking in `none|low|medium|hi
 | `--ctx [ref]` | optional string | Use-or-create: bare = default; `@N` recency; `#hash` prefix; `name`; multi-word = prompt text for default. Cannot combine with `-c`. |
 | `-n, --name` | boolean | Reset modifier: `--ctx <name> -n` always starts empty. Requires a valid name. |
 | `-l, --list` | boolean | List saved contexts (`@N`, id, age, preview), newest first. No model call. |
-| `-y, --yes` | boolean | Auto-approve commands. High-risk still requires confirmation. No-op without TTY for risky scripts (auto-reject). |
+| `-y, --yes` | boolean | Auto-approve commands. High-risk **and** any reference to paths outside the working directory still require confirmation. No-op without TTY for those (auto-reject). |
 | `--require-approval` | boolean | Explicit Require Approval mode: with `-y`, safe commands run directly and high-risk ones still ask; without `-y`, every command asks (same as default). Never weakens the high-risk gate. Forwarded by `-w`/`--web` to seed the web sandbox toggle. |
 | `--chain` | boolean | Loop up to 8 command rounds, feeding output back to the model. |
 | `-i, --input` | boolean | Force stdin capture and wrap as `User request:` + `Input:` sections. |
