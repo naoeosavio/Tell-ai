@@ -18,7 +18,7 @@ import {
 } from '@tell-ai/sdk';
 import { Command } from 'commander';
 import { load_sdk_config } from './env';
-import { expand_mentions } from './mentions';
+import { expand_mentions, is_outside_cwd } from './mentions';
 import { get_system_prompt, type PromptOptions } from './systemPrompt';
 
 const EXEC_ASYNC = promisify(exec);
@@ -408,15 +408,45 @@ function is_high_risk_script(script: string): boolean {
   ].some((pattern) => pattern.test(compact));
 }
 
+// Matches path-like tokens inside a command script: absolute (`/x`), home
+// (`~/x`, `$HOME/x`, bare `$HOME`), relative with traversal (`../x`, `./x`,
+// bare `..`), optionally after `=` (`--output=/x`) and inside quotes. The
+// token body stops at whitespace or shell separators.
+const OUTSIDE_PATH_TOKEN =
+  /(?:^|[\s;&|("'=`])((?:\/|~\/|\$HOME\/?|\.{1,2}\/)[^\s;&|'"]*|\$HOME|[~.]{1,2})(?=$|[\s;&|'")=])/g;
+
+// True when the script references any path that resolves outside `cwd` —
+// reads included, mirroring the `@path` mention read gate. Resolution is
+// delegated to `is_outside_cwd` (lexical + symlink/realpath, mentions.ts);
+// `~`/`$HOME` expand via `os.homedir()`, so when cwd IS `$HOME` a `~/x`
+// reference resolves inside and stays allowed.
+function script_touches_outside_cwd(script: string, cwd: string): boolean {
+  const home = os.homedir();
+  const compact = script.replace(/\\\n/g, ' ');
+  for (const match of compact.matchAll(OUTSIDE_PATH_TOKEN)) {
+    const token = match[1];
+    if (!token) continue;
+    const expanded = token.replace(/^\$HOME/, home).replace(/^~(?=\/|$)/, home);
+    const resolved = path.resolve(cwd, expanded);
+    if (is_outside_cwd(resolved, cwd)) return true;
+  }
+  return false;
+}
+
 async function confirm_command(script: string, mode: ExecMode): Promise<boolean> {
   const high_risk = is_high_risk_script(script);
-  if (mode === 'auto-risk' && !high_risk) return true;
+  const touches_outside = mode === 'auto-risk' && !high_risk && script_touches_outside_cwd(script, process.cwd());
+  if (mode === 'auto-risk' && !high_risk && !touches_outside) return true;
   if (!process.stdin.isTTY) return false;
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stderr,
   });
-  const label = high_risk ? 'High-risk command requested' : 'Command requested';
+  const label = high_risk
+    ? 'High-risk command requested'
+    : touches_outside
+      ? 'Command touches paths outside the working directory'
+      : 'Command requested';
   process.stderr.write(`${label}:\n${script}\n`);
   return new Promise((resolve) => {
     let settled = false;

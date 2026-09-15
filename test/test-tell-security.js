@@ -241,6 +241,28 @@ function assertPromptInjectionPolicy(result) {
   assert.deepStrictEqual(result.execCalls, []);
   assert.match(result.stderr, /Command execution disabled/);
 
+  // -y + any path outside the cwd needs confirmation (reads included,
+  // mirroring the @path mention gate): non-TTY rejects, fail-closed.
+  for (const script of [
+    'cat ~/.ssh/id_rsa',
+    'rm ../outside-file',
+    'cat /etc/os-release',
+    'grep x /var/log/syslog',
+    'cp local.txt $HOME/secrets.txt',
+    'ls --output=/tmp/out',
+    'cd ..',
+    'tar czf backup.tgz -C / /etc',
+  ]) {
+    result = await runTell(['--yes', 'd', 'outside path'], runBlock(script));
+    assertSkipped(result);
+  }
+
+  // -y + paths that resolve inside the cwd still run without confirmation.
+  for (const script of ['ls -la', 'cat ./local.txt', 'cat ./a/../local.txt', 'echo "quotes" > out.txt', 'cd .']) {
+    result = await runTell(['--yes', 'd', 'inside path'], runBlock(script), { execStdout: 'OK\n' });
+    assert.strictEqual(result.execCalls.length, 1);
+  }
+
   result = await runTell(['d', 'answer normally'], 'normal answer');
   assertPromptInjectionPolicy(result);
   assert.strictEqual(result.tellCalls[0].options.stream, false);
