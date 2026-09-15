@@ -12,7 +12,7 @@
 | `reasoning_end` | `{ type: 'reasoning_end' }` | Marks the end of reasoning. **Not every provider sends one — always handle its absence.** |
 | `text` | `{ type: 'text', text: string }` | A delta of the answer text. |
 
-The underlying `streamText()` `fullStream` is consumed exactly once; tool calls, sources, and framework lifecycle parts are ignored (`ask.ts:37-53`). AI SDK `error` parts are re-thrown so callers keep the same error handling as `ask()`.
+The underlying `streamText()` `stream` is consumed exactly once; tool calls, sources, and framework lifecycle parts are ignored (`ask.ts:37-53`). AI SDK `error` parts are re-thrown so callers keep the same error handling as `ask()`.
 
 ## Emit-time guarantees
 

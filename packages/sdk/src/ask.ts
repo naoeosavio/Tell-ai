@@ -17,7 +17,7 @@ export interface AskInstance {
 }
 
 /**
- * Consumes `streamText`'s fullStream exactly once and re-emits only the
+ * Consumes `streamText`'s stream exactly once and re-emits only the
  * reasoning/text deltas as AskStreamEvents. Provider `error` parts are thrown
  * so callers keep the same error handling as `ask`.
  */
@@ -26,11 +26,13 @@ async function* stream_events(
   reasoning: string,
   input: AskStreamInput,
   system: string,
+  provider_options?: Record<string, any>,
 ): AsyncGenerator<AskStreamEvent> {
   const gen_options: any = {
     model,
     instructions: system,
     reasoning,
+    ...(provider_options ? { providerOptions: provider_options } : {}),
     ...(typeof input === 'string' ? { prompt: input } : { messages: input }),
   };
   const result = streamText({
@@ -40,7 +42,7 @@ async function* stream_events(
     // Errors still propagate through the stream for the caller to format.
     onError: () => {},
   });
-  for await (const part of result.fullStream) {
+  for await (const part of result.stream) {
     switch (part.type) {
       case 'text-delta':
         yield { type: 'text', text: part.text };
@@ -71,12 +73,13 @@ export async function create_ask_ai(modelSpec: string, config: SDKConfig): Promi
         instructions: options.system,
         prompt: message,
         reasoning,
+        ...(handle.providerOptions ? { providerOptions: handle.providerOptions } : {}),
       };
       const result = await generateText(gen_options);
       const model_reasoning = result.finalStep.reasoningText;
       return model_reasoning ? `<think>${model_reasoning}</think>\n${result.text}` : result.text;
     },
     ask_stream: (input: AskStreamInput, options: { system: string }) =>
-      stream_events(handle.model, reasoning, input, options.system),
+      stream_events(handle.model, reasoning, input, options.system, handle.providerOptions),
   };
 }

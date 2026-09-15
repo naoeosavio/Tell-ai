@@ -57,7 +57,7 @@ const handle = await get_model('s', { keys: { anthropic: process.env.ANTHROPIC_A
 const result = await generateText({ model: handle.model, prompt: 'hi', reasoning: handle.reasoning });
 ```
 
-`ModelHandle` (`models.ts:20`): `{ model, reasoning, fast }` where `model` is a provider language-model instance, `reasoning` is the AI SDK thinking level (`none`/`low`/`medium`/`high`/`xhigh`), and `fast` reflects dot/`:fast` mode.
+`ModelHandle` (`models.ts:20`): `{ model, reasoning, fast }` where `model` is a provider language-model instance, `reasoning` is the AI SDK thinking level (`none`/`low`/`medium`/`high`/`xhigh`/`max`), and `fast` reflects dot/`:fast` mode.
 
 ## `resolve_model_spec(spec)` → `ResolvedModelSpec`
 

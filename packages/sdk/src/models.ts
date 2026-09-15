@@ -21,6 +21,8 @@ export interface ModelHandle {
   model: any;
   reasoning: string;
   fast: boolean;
+  /** Explicit vendor options forwarded as `providerOptions` (e.g. Anthropic effort). */
+  providerOptions?: Record<string, any>;
 }
 
 export const MODELS: Record<string, string> = {
@@ -186,7 +188,7 @@ const AI_SDK_THINKING: Record<string, string> = {
   medium: 'medium',
   high: 'high',
   xhigh: 'xhigh',
-  max: 'xhigh',
+  max: 'max',
   auto: 'medium',
 };
 
@@ -555,9 +557,51 @@ const VENDOR_HANDLERS: Record<string, (m: string, r: string, f: boolean, config:
   local: handle_local,
 };
 
+/**
+ * Maps a thinking level to the wire reasoning value plus explicit provider
+ * options. The generic reasoning→effort map has no `max` entry, so vendors
+ * whose enums top out elsewhere need a per-vendor rule — otherwise `max`
+ * warns as unsupported and is dropped. Explicit options always take
+ * precedence over the generic mapping. Fast mode never carries explicit
+ * thinking: callers force `reasoning: 'none'` there, so it would leak
+ * reasoning into a no-think request.
+ */
+function resolve_reasoning(
+  vendor: string,
+  mapped: string,
+  fast: boolean,
+): { reasoning: string; providerOptions?: Record<string, any> } {
+  if (fast) return { reasoning: 'none' };
+  if (mapped !== 'max') return { reasoning: mapped };
+  switch (vendor) {
+    case 'anthropic':
+      return {
+        reasoning: 'max',
+        providerOptions: { anthropic: { effort: 'max', thinking: { type: 'adaptive', display: 'summarized' } } },
+      };
+    case 'deepseek':
+      return { reasoning: 'max', providerOptions: { deepseek: { reasoningEffort: 'max' } } };
+    case 'moonshotai':
+      return { reasoning: 'max', providerOptions: { moonshotai: { reasoningEffort: 'max' } } };
+    case 'xai':
+      // Grok tops out at `xhigh` (kept verbatim on grok-4.6, else `high`).
+      return { reasoning: 'xhigh' };
+    case 'google':
+      // Gemini thinking levels top out at `high`.
+      return { reasoning: 'high' };
+    default:
+      // OpenAI and OpenAI-compatible endpoints forward `max` verbatim.
+      return { reasoning: mapped };
+  }
+}
+
 export async function get_model(spec: string, config: SDKConfig): Promise<ModelHandle> {
   const resolved = resolve_model_spec(spec);
-  const reasoning = AI_SDK_THINKING[resolved.thinking] ?? 'medium';
+  const { reasoning, providerOptions } = resolve_reasoning(
+    resolved.vendor,
+    AI_SDK_THINKING[resolved.thinking] ?? 'medium',
+    resolved.fast,
+  );
 
   if (resolved.vendor === 'openai' && CEREBRAS_MODELS.has(resolved.model)) {
     return handle_cerebras(resolved.model, reasoning, resolved.fast, config);

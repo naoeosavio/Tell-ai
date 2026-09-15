@@ -74,6 +74,55 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
   await assert.rejects(sdk.get_model('q', EMPTY_CONFIG), /urls\.local/);
   await assert.rejects(sdk.get_model('nope:whatever', EMPTY_CONFIG), /./);
 
+  // Compat vendors (no native provider): handlers build offline via
+  // OpenAI-compatible defaults, keys/URLs optional at construction.
+  for (const alias of ['l', 'x', 'd', 'D', 'K', 'k', 'a', 'zf']) {
+    const compat_handle = await sdk.get_model(alias, EMPTY_CONFIG);
+    assert.strictEqual(typeof compat_handle.model, 'object');
+    assert.strictEqual(compat_handle.fast, false);
+  }
+
+  // Reasoning mapping: `max` goes explicit where the generic map has no
+  // entry, else the closest natively supported level (never warns/drops).
+  // NOTE: `m++` (openrouter) is intentionally not resolved here — its
+  // cached provider would pin EMPTY_CONFIG and poison the localhost test below.
+  for (const [alias, expected] of [
+    ['d+', 'max'],
+    ['D+', 'max'],
+    ['g++', 'max'],
+    ['l++', 'high'],
+    ['K+', 'max'],
+    ['z++', 'max'],
+    ['s++', 'max'],
+    ['o++', 'max'],
+    ['f++', 'max'],
+    ['x++', 'xhigh'],
+    ['a++', 'xhigh'],
+  ]) {
+    assert.strictEqual((await sdk.get_model(alias, EMPTY_CONFIG)).reasoning, expected, alias);
+  }
+
+  // Explicit `max` carries vendor options (generic map has no `max` entry):
+  // anthropic effort+adaptive thinking, deepseek/moonshotai reasoningEffort.
+  assert.deepStrictEqual((await sdk.get_model('s++', EMPTY_CONFIG)).providerOptions, {
+    anthropic: { effort: 'max', thinking: { type: 'adaptive', display: 'summarized' } },
+  });
+  assert.deepStrictEqual((await sdk.get_model('d+', EMPTY_CONFIG)).providerOptions, {
+    deepseek: { reasoningEffort: 'max' },
+  });
+  assert.deepStrictEqual((await sdk.get_model('K+', EMPTY_CONFIG)).providerOptions, {
+    moonshotai: { reasoningEffort: 'max' },
+  });
+  assert.strictEqual((await sdk.get_model('s', EMPTY_CONFIG)).providerOptions, undefined);
+  assert.strictEqual((await sdk.get_model('l++', EMPTY_CONFIG)).providerOptions, undefined);
+  // Fast mode never carries explicit thinking: `.s++`/`.d+` must not leak reasoning.
+  for (const alias of ['.s++', '.d+']) {
+    const fast_max = await sdk.get_model(alias, EMPTY_CONFIG);
+    assert.strictEqual(fast_max.fast, true);
+    assert.strictEqual(fast_max.reasoning, 'none');
+    assert.strictEqual(fast_max.providerOptions, undefined);
+  }
+
   // create_ask_ai: constructed offline; ask_stream returns an async iterable
   // without consuming it (the provider request only starts on first next()).
   const ai = await sdk.create_ask_ai('g', EMPTY_CONFIG);
