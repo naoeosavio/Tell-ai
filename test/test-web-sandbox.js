@@ -17,13 +17,50 @@ const WebSocket = require('ws');
 
 const WEB_SRC = path.join(__dirname, '..', 'packages', 'web');
 const CACHE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-web-sandbox-'));
-// Transpiled web modules live in a temp dir, so link the web package's
-// node_modules there — web sources import bare deps (node-pty, ws) whose
-// native builds only exist under packages/web (same as the old helper).
+// Transpiled web modules live in a temp dir, so expose dependencies there.
+// Bun workspaces hoist everything to the repo root, while npm keeps native
+// builds (node-pty) under packages/web — overlay both scopes, web wins.
+const ROOT_NM = path.join(__dirname, '..', 'node_modules');
+const WEB_NM = path.join(WEB_SRC, 'node_modules');
+function link_nm_entries(base) {
+  let entries = [];
+  try {
+    entries = fs.readdirSync(base);
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (entry.startsWith('@')) {
+      const scope_dir = path.join(CACHE_DIR, 'node_modules', entry);
+      fs.mkdirSync(scope_dir, { recursive: true });
+      let scoped = [];
+      try {
+        scoped = fs.readdirSync(path.join(base, entry));
+      } catch {
+        continue;
+      }
+      for (const sub of scoped) {
+        try {
+          fs.symlinkSync(path.join(base, entry, sub), path.join(scope_dir, sub), 'dir');
+        } catch {
+          // already linked from the higher-priority base — keep it
+        }
+      }
+      continue;
+    }
+    try {
+      fs.symlinkSync(path.join(base, entry), path.join(CACHE_DIR, 'node_modules', entry), 'dir');
+    } catch {
+      // already linked from the higher-priority base — keep it
+    }
+  }
+}
 try {
-  fs.symlinkSync(path.join(WEB_SRC, 'node_modules'), path.join(CACHE_DIR, 'node_modules'), 'dir');
+  fs.mkdirSync(path.join(CACHE_DIR, 'node_modules'), { recursive: true });
+  link_nm_entries(WEB_NM);
+  link_nm_entries(ROOT_NM);
 } catch {
-  /* already linked */
+  // cache dir setup failed — module loading below will surface it
 }
 
 const compiled = new Map();
@@ -57,7 +94,11 @@ function loadModule(name) {
   return require(file);
 }
 
-const TSX_CLI = path.join(WEB_SRC, 'node_modules', 'tsx', 'dist', 'cli.mjs');
+// Live suites boot the production bundle, so bundling regressions
+// (externals, __dirname static path, ESM startup) fail here, not in prod.
+// Requires `bun run --filter @tell-ai/web build` first (wired into test:web).
+const DIST_SERVER = path.join(WEB_SRC, 'dist', 'server.js');
+assert.ok(fs.existsSync(DIST_SERVER), `bundle missing: ${DIST_SERVER} (run the web build first)`);
 
 // ---------------------------------------------------------------------------
 // Server guards: isHighRiskScript + isSensitiveRelPath (task_build cases)
@@ -1128,7 +1169,7 @@ describe('web sandbox: pty-policy', () => {
 // ---------------------------------------------------------------------------
 // Auth: login isolation (task-login) — token never persisted client-side;
 // server verifies with constant-time compare + strict rate limit; WS drops
-// tokenless upgrades. Spins a real server via tsx.
+// tokenless upgrades. Spins the production bundle (dist/server.js).
 // ---------------------------------------------------------------------------
 describe('web sandbox: auth', () => {
   const { isValidTokenInput, loginBackoffMs, authFailureMessage, AUTH_TOKEN_MAX_LENGTH } =
@@ -1215,9 +1256,8 @@ describe('web sandbox: auth', () => {
   before(async () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-web-auth-'));
     fs.writeFileSync(path.join(dir, 'hello.txt'), 'hi\n');
-    child = spawn(process.execPath, [TSX_CLI, 'src/server/server.ts', '--cwd', dir], {
-      cwd: WEB_SRC,
-      env: { ...process.env, PORT: '0', TELL_TOKEN: TOKEN },
+    child = spawn(process.execPath, [DIST_SERVER, '--cwd', dir], {
+      env: { ...process.env, PORT: '0', NODE_ENV: 'production', TELL_TOKEN: TOKEN },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     base = await waitForServer(child);
@@ -1344,7 +1384,7 @@ describe('web sandbox: auth', () => {
 // ---------------------------------------------------------------------------
 // Routes: HTTP routes against a real server on an ephemeral port (fetch, no
 // supertest). Covers task_build: traversal 403, .env 403, /tell 400,
-// /snapshot returns name. Spins a real server via tsx.
+// /snapshot returns name. Spins the production bundle (dist/server.js).
 // ---------------------------------------------------------------------------
 describe('web sandbox: api routes', () => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1392,10 +1432,9 @@ describe('web sandbox: api routes', () => {
     fs.writeFileSync(path.join(dir, '.env'), 'SECRET=1\n');
     fs.writeFileSync(path.join(dir, '.env.example'), 'PORT="3000"\n');
     fs.writeFileSync(path.join(dir, 'hello.txt'), 'hi\n');
-    const env = { ...process.env, PORT: '0' };
+    const env = { ...process.env, PORT: '0', NODE_ENV: 'production' };
     delete env.TELL_TOKEN;
-    child = spawn(process.execPath, [TSX_CLI, 'src/server/server.ts', '--cwd', dir], {
-      cwd: WEB_SRC,
+    child = spawn(process.execPath, [DIST_SERVER, '--cwd', dir], {
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -1423,6 +1462,12 @@ describe('web sandbox: api routes', () => {
       assert.strictEqual(res.status, 200);
       const body = await res.json();
       assert.ok(body.content.includes('PORT='));
+    });
+
+    it('/ serves the bundled index.html (production static path)', async () => {
+      const res = await fetch(`${base}/`);
+      assert.strictEqual(res.status, 200);
+      assert.ok((await res.text()).includes('<div id="root">'));
     });
 
     it('/tell with an invalid payload returns 400', async () => {
@@ -1502,7 +1547,7 @@ describe('web sandbox: api routes', () => {
 
 // ---------------------------------------------------------------------------
 // Initial prompt: `--prompt` fills the chat inbox via /api/config instead of
-// being injected as a chat message. Spins a real server via tsx.
+// being injected as a chat message. Spins the production bundle (dist/server.js).
 // ---------------------------------------------------------------------------
 describe('web sandbox: initial prompt', () => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1547,10 +1592,9 @@ describe('web sandbox: initial prompt', () => {
 
   before(async () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-web-prompt-'));
-    const env = { ...process.env, PORT: '0' };
+    const env = { ...process.env, PORT: '0', NODE_ENV: 'production' };
     delete env.TELL_TOKEN;
-    child = spawn(process.execPath, [TSX_CLI, 'src/server/server.ts', '--cwd', dir, '--prompt', 'go'], {
-      cwd: WEB_SRC,
+    child = spawn(process.execPath, [DIST_SERVER, '--cwd', dir, '--prompt', 'go'], {
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
