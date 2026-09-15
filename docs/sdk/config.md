@@ -69,6 +69,29 @@ create_ask_ai('g', {
 
 Google can authenticate with an `x-goog-api-key` header instead of `Authorization: Bearer`, which some proxies find easier to forward; the demo uses that.
 
+## Custom endpoints
+
+Any `urls.<vendor>` slot overrides the built-in default — a CORS proxy, a localhost mock, or a self-hosted server (Ollama and friends via the keyless `local`/`vast` vendors). `examples/sdk/custom-endpoint.ts` walks through all three shapes and runs offline:
+
+```ts
+// 1. Any vendor pointed at a custom OpenAI-compatible URL (no key needed).
+const ai = await create_ask_ai('local:mock-model:high', {
+  keys: {},
+  urls: { local: 'http://127.0.0.1:11434/v1' },
+});
+await ai.ask('hi', { system: 'be concise', stream: false });
+
+// 2. Self-hosted via CLI: LOCAL_OPENAI_BASE_URL=<url> tell -m q "..."
+// 3. Brand-new vendor: add the name to SUPPORTED_VENDORS plus a URL —
+//    vendors without a dedicated handler fall back to the generic
+//    OpenAI-compatible provider, so no handler code is needed.
+```
+
+```bash
+bun examples/sdk/custom-endpoint.ts                    # offline mock, no keys
+OLLAMA_MODEL=qwen3 bun examples/sdk/custom-endpoint.ts # needs `ollama serve`
+```
+
 ## Design contract (tests)
 
 `test/test-sdk.js` verifies: public export surface, spec parsing (aliases/fast/thinking budgets), the `MODELS` round-trip invariant (every spec re-parses to itself), offline `get_model` handles — including that `vast`/`local` reject an empty config with the `urls.*` error — and the exec/no-exec system prompts plus tag helpers.

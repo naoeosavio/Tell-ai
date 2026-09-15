@@ -39,8 +39,8 @@ const server = Bun.serve({
     if (req.method === 'OPTIONS') return new Response(null, { headers: cors(req) });
 
     const files: Record<string, string> = {
-      '/': '/examples/web/index.html',
-      '/index.html': '/examples/web/index.html',
+      '/': '/examples/sdk/index.html',
+      '/index.html': '/examples/sdk/index.html',
       '/browser.js': '/packages/sdk/dist/browser.js',
       '/browser-global.global.js': '/packages/sdk/dist/browser-global.global.js',
     };

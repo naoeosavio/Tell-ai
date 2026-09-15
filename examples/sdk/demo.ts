@@ -44,6 +44,6 @@ await raw_demo();
 await sdk_demo();
 
 console.log('\n=== Summary ===');
-console.log('1. Run the proxy with the keys:  GOOGLE_API_KEY=... bun examples/web/proxy.ts');
+console.log('1. Run the proxy with the keys:  GOOGLE_API_KEY=... bun examples/sdk/proxy.ts');
 console.log(`2. The client uses urls.google = '${PROXY}/google' and keys.google = 'proxy' (any string).`);
 console.log('3. The proxy replaces the placeholder with the server key — the real key never reaches the browser.');

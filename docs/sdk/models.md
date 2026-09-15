@@ -89,4 +89,6 @@ Used for single-part specs and unknown-vendor cases: `alibaba/` prefix → aliba
 
 Base URLs all honor `SDKConfig.urls.<vendor>` via `baseURL` (`config.ts:14-27`); the `zai` default is `https://api.z.ai/api/paas/v4` (`models.ts:522`). Self-hosted `vast`/`local` have no default and throw without their URL.
 
+Walkthrough: `examples/sdk/custom-endpoint.ts` (custom URL via `SDKConfig`, optional Ollama scenario, CLI equivalents; runs offline with `bun examples/sdk/custom-endpoint.ts`).
+
 Sources: `models.ts:26-181`, `models.ts:183-240`, `models.ts:325-354`, `models.ts:543-569`.

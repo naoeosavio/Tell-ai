@@ -105,7 +105,7 @@ const answer = await tell('what is in this repo?', {
 </script>
 ```
 
-See `examples/web/` in the repository for a no-build demo page and an optional Bun CORS proxy.
+See `examples/sdk/` in the repository for a no-build demo page, an optional Bun CORS proxy, and a custom-endpoint walkthrough (`custom-endpoint.ts`, runs offline).
 
 ## Build variants
 
