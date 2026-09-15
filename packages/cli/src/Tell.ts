@@ -227,7 +227,7 @@ function list_context_entries(): ContextEntry[] {
 }
 
 // Handles `-l/--history`: bare lists both stores; `@N` reprints a context,
-// `#N` reprints a conversation (errors name the namespace total); any other
+// `%N` reprints a conversation (errors name the namespace total); any other
 // value searches contexts + conversations. Runs before prompt/stdin handling,
 // so it needs neither a prompt nor an API key — everything stays local.
 function run_history_dispatch(ref: boolean | string): void {
@@ -244,7 +244,7 @@ function run_history_dispatch(ref: boolean | string): void {
   }
 
   const value = ref.trim();
-  const index_match = /^([@#])(\d+)$/.exec(value);
+  const index_match = /^([@%])(\d+)$/.exec(value);
   if (index_match?.[1] && index_match[2] !== undefined) {
     const index = Number(index_match[2]);
     const is_context = index_match[1] === '@';
@@ -264,7 +264,7 @@ function run_history_dispatch(ref: boolean | string): void {
   }
 
   if (!value) {
-    console.log('Empty search term — pass a term, @N (context), or #N (conversation).');
+    console.log('Empty search term — pass a term, @N (context), or %N (conversation).');
     return;
   }
 
@@ -685,7 +685,7 @@ function build_program(argv: string[]): Command {
     .option('-c, --context', 'use the default context for this directory and model')
     .option('--ctx [ref]', 'use-or-create: @N, #hash-prefix, name, or prompt text for the default context')
     .option('-n, --name', 'reset a named context (--ctx <name> -n; starts empty, even if it exists)')
-    .option('-l, --history [ref]', 'list contexts + conversations; @N/#N show an entry; any other value searches both')
+    .option('-l, --history [ref]', 'list contexts + conversations; @N/%N show an entry; any other value searches both')
     .option('-y, --yes', 'execute requested commands without confirmation')
     .option('--require-approval', 'with -y: safe commands run directly, high-risk ones still ask for confirmation')
     .option('--chain', 'continue after command output until the assistant gives a final answer')

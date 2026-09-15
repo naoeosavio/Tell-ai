@@ -161,7 +161,7 @@ function find_snippet(text: string, needle: string): string | null {
 
 function search_files(
   term: string,
-  prefix: '@' | '#',
+  prefix: '@' | '%',
   kind: SearchResult['kind'],
   files: { file: string }[],
 ): SearchResult[] {
@@ -186,13 +186,13 @@ export function search_contexts(term: string, entries: ContextEntry[]): SearchRe
 
 /**
  * Case-insensitive search over saved conversation logs; hits are
- * re-addressable with the returned `#N` ref.
+ * re-addressable with the returned `%N` ref.
  *
  * @param term - Term to look for (case-insensitive).
  * @param dir  - History directory (`~/.ai/tell_history`).
  */
 export function search_sessions(term: string, dir: string): SearchResult[] {
-  return search_files(term, '#', 'conversation', session_files(dir));
+  return search_files(term, '%', 'conversation', session_files(dir));
 }
 
 /** Highlights the matched term on TTY stdout; plain text elsewhere. */
@@ -207,7 +207,7 @@ function highlight(snippet: string, term: string): string {
 
 /**
  * Prints search hits as `ref  kind  snippet` rows; each ref reopens the
- * entry via `--history @N` / `--history #N`.
+ * entry via `--history @N` / `--history %N`.
  */
 export function print_search_results(results: SearchResult[], term: string): void {
   const ref_width = Math.max(0, ...results.map((result) => result.ref.length));
@@ -221,7 +221,7 @@ export function print_search_results(results: SearchResult[], term: string): voi
 /**
  * Prints the combined `--history` listing: the contexts table
  * (`@N | id | age | preview`) followed by the conversations table
- * (`#N | date | model | preview`), both newest first.
+ * (`%N | date | model | preview`), both newest first.
  */
 export function print_history_list(sessions: HistoryEntry[], contexts: ContextEntry[]): void {
   if (contexts.length === 0) {
@@ -249,7 +249,7 @@ export function print_history_list(sessions: HistoryEntry[], contexts: ContextEn
   } else {
     console.log('Conversations:');
     const rows = sessions.map((session, index) => ({
-      ref: `#${index}`,
+      ref: `%${index}`,
       date: session.date,
       model: session.model,
       preview: session.preview,
@@ -267,7 +267,7 @@ export function print_history_list(sessions: HistoryEntry[], contexts: ContextEn
 /**
  * Reprints a context or conversation entry in full (cat to stdout).
  *
- * @param file - Entry file, addressed by `--history @N` / `--history #N`.
+ * @param file - Entry file, addressed by `--history @N` / `--history %N`.
  */
 export function show_entry(file: string): void {
   console.log(read_text(file) || '(empty)');

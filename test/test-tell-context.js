@@ -496,7 +496,7 @@ async function test_context_list_shows_saved_entries() {
 }
 
 // ---------------------------------------------------------------------
-// `-l/--history`: combined listing, `@N`/`#N` cat, search
+// `-l/--history`: combined listing, `@N`/`%N` cat, search
 // ---------------------------------------------------------------------
 
 async function test_history_listing_shows_conversations() {
@@ -509,12 +509,12 @@ async function test_history_listing_shows_conversations() {
     const listed = await run_tell(['-l'], 'unused', { dir });
     assert.strictEqual(listed.tellCalls.length, 0);
     assert_includes(listed.stdout, 'Conversations:');
-    assert_includes(listed.stdout, '#0');
-    assert_includes(listed.stdout, '#1');
+    assert_includes(listed.stdout, '%0');
+    assert_includes(listed.stdout, '%1');
     assert_includes(listed.stdout, 'second prompt here');
     assert_includes(listed.stdout, 'first prompt here');
     // date + model columns
-    assert.match(listed.stdout, /#\d+\s+\d{4}-\d{2}-\d{2} \d{2}:\d{2}/);
+    assert.match(listed.stdout, /%\d+\s+\d{4}-\d{2}-\d{2} \d{2}:\d{2}/);
     assert_includes(listed.stdout, 'deepseek');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -540,7 +540,7 @@ async function test_history_hash_ref_reprints_session() {
   try {
     await run_tell(['d', 'session prompt here'], 'session answer here', { dir });
 
-    const shown = await run_tell(['--history', '#0'], 'unused', { dir });
+    const shown = await run_tell(['--history', '%0'], 'unused', { dir });
     assert.strictEqual(shown.tellCalls.length, 0);
     assert_includes(shown.stdout, 'session prompt here');
     assert_includes(shown.stdout, 'session answer here');
@@ -557,10 +557,10 @@ async function test_history_search_finds_context_and_conversation() {
     const found = await run_tell(['--history', 'needle answer'], 'unused', { dir });
     assert.strictEqual(found.tellCalls.length, 0);
     assert.match(found.stdout, /@0\s+context\s+/);
-    assert.match(found.stdout, /#\d+\s+conversation\s+/);
+    assert.match(found.stdout, /%\d+\s+conversation\s+/);
 
     // a hit is navigable: the same ref reopens the entry in full
-    const reopened = await run_tell(['--history', '#0'], 'unused', { dir });
+    const reopened = await run_tell(['--history', '%0'], 'unused', { dir });
     assert_includes(reopened.stdout, 'needle answer');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -576,7 +576,7 @@ async function test_history_invalid_refs_error_with_totals() {
     assert.strictEqual(bad_context.exitCode, 1);
     assert_includes(bad_context.stderr, 'No context at index 9 (have 1 saved context)');
 
-    const bad_session = await run_tell(['--history', '#5'], 'unused', { dir });
+    const bad_session = await run_tell(['--history', '%5'], 'unused', { dir });
     assert.strictEqual(bad_session.exitCode, 1);
     assert_includes(bad_session.stderr, 'No conversation at index 5 (have 1 conversation)');
   } finally {
@@ -643,7 +643,7 @@ async function test_history_echo_strips_ansi_and_control_chars() {
       'utf8',
     );
 
-    const shown = await run_tell(['--history', '#0'], 'unused', { dir });
+    const shown = await run_tell(['--history', '%0'], 'unused', { dir });
     assert.strictEqual(shown.exitCode, undefined);
     assert.ok(!shown.stdout.includes('\x1b'), 'echoed entry must not contain ESC bytes');
     assert.ok(!shown.stdout.includes('\x07'), 'echoed entry must not contain BEL bytes');
@@ -654,13 +654,13 @@ async function test_history_echo_strips_ansi_and_control_chars() {
 
     const found = await run_tell(['--history', 'cleared'], 'unused', { dir });
     assert.ok(!found.stdout.includes('\x1b'), 'search snippet must not contain ESC bytes');
-    assert.match(found.stdout, /#\d+\s+conversation\s+cleared/);
+    assert.match(found.stdout, /%\d+\s+conversation\s+cleared/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }
 
-// Equal mtimes must not make `#N`/`@N` flip between calls (stable tie-break).
+// Equal mtimes must not make `%N`/`@N` flip between calls (stable tie-break).
 async function test_history_order_stable_on_equal_mtime() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
   try {
@@ -675,10 +675,10 @@ async function test_history_order_stable_on_equal_mtime() {
 
     const first = await run_tell(['-l'], 'unused', { dir });
     const second = await run_tell(['-l'], 'unused', { dir });
-    const order = (text) => (text.match(/#\d+/g) || []).join(',');
+    const order = (text) => (text.match(/%\d+/g) || []).join(',');
     assert.ok(order(first.stdout).length > 0);
     assert.strictEqual(order(first.stdout), order(second.stdout), 'equal-mtime entries must keep a stable order');
-    assert.strictEqual(order(first.stdout), '#0,#1');
+    assert.strictEqual(order(first.stdout), '%0,%1');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -744,8 +744,11 @@ async function test_history_unit_print_search_results_empty_and_basic() {
   } finally {
     console.log = original_log;
   }
-  assert_includes(printed, '@0');
-  assert_includes(printed, 'hello world');
+  // Highlight injects ANSI on TTY stdout, splitting the snippet text.
+  // Strip SGR codes so the assertion holds with or without a TTY.
+  const stripped = printed.replace(/\x1b\[[0-9;]*m/g, '');
+  assert_includes(stripped, '@0');
+  assert_includes(stripped, 'hello world');
   assert.ok(!printed.includes('undefined'), 'no -Infinity/pad artifacts on empty results');
 }
 

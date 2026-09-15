@@ -67,7 +67,7 @@ Files:
 
 Builds: tsup emits ESM + CJS + dts (`dist/`) plus two self-contained browser bundles: `dist/browser.js` (ESM, exported as `@tell-ai/sdk/browser`) and `dist/browser-global.global.js` (IIFE, `@tell-ai/sdk/browser-global`, defines `globalThis.TellSDK`, listed in `sideEffects`; also the `unpkg`/`jsdelivr` targets).
 
-To keep the browser bundles self-contained, `tsup.config.ts` lists `ai` + all `@ai-sdk/*` providers in `noExternal` **explicitly** — a `'@ai-sdk/*'` glob does not match scoped packages and silently leaves bare imports. `@vercel/oidc` (a transitive dep of `ai`) requires `path`/`fs`/`os` and touches `process` at module scope, so those builtins are aliased to `src/shims/node.cjs` and a `var process = { version:'', env:{}, platform:'browser' }` banner is prepended. Full variant comparison: `docs/sdk/imports.md`.
+To keep the browser bundles self-contained, `tsup.config.ts` lists `ai` + the eight `@ai-sdk/*` providers (`openai`, `anthropic`, `google`, `xai`, `deepseek`, `cerebras`, `moonshotai`, `openai-compatible`) in `noExternal` **explicitly** — a `'@ai-sdk/*'` glob does not match scoped packages and silently leaves bare imports. `@vercel/oidc` (a transitive dep of `ai`) requires `path`/`fs`/`os` and touches `process` at module scope, so those builtins are aliased to `src/shims/node.cjs` and a `var process = { version:'', env:{}, platform:'browser' }` banner is prepended. Full variant comparison: `docs/sdk/imports.md`.
 
 ### CLI: `packages/cli` (`tell-ai` — ~930 lines + `mentions.ts`)
 
@@ -81,7 +81,7 @@ Single-file Node entry point for the `tell` binary (CJS bundle, `#!/usr/bin/env 
 - `-c` persists the default per-directory+model context (SHA-256 hash, `~/.ai/tell_context/`)
 - `--ctx [ref]` use-or-create context: bare = default context (`-c` synonym); `@N` (recency) or `#hash` prefix (must exist); name (created if missing); multi-word value = prompt text for the default context (unnamed contexts are never saved). A lone single token is a NAME, never a prompt — one-word prompts go on `-c` or as multi-word `--ctx` values
 - `-n` reset modifier: `--ctx <name> -n` starts empty, even if the name exists
-- `-l` lists saved contexts (`@N`, id, age, preview)
+- `-l` lists saved contexts (`@N`, id, age, preview) and conversations (`%N`, date, model, preview) via `--history`; `--history @N`/`%N` reprints an entry, any other value searches both stores (`src/history.ts`)
 - `-y` auto-executes commands (high-risk commands still require confirmation)
 - `--no-exec` disables all command execution
 
@@ -90,6 +90,7 @@ Single-file Node entry point for the `tell` binary (CJS bundle, `#!/usr/bin/env 
 Files:
 - `src/Tell.ts` — CLI: commander, stdin, exec, confirm/high-risk, context/logs, loop chain, main
 - `src/mentions.ts` — `expand_mentions()` + `is_outside_cwd()` read gate, called in `run_tell()` before context/log assembly
+- `src/history.ts` — read-only history module: `list_sessions()`, `search_contexts()`/`search_sessions()`, `print_history_list()`, `show_entry()` (backs `-l/--history`)
 - `src/systemPrompt.ts` — the `<RUN>`/injection-policy execution system prompt (`get_system_prompt()`), with `PromptOptions`
 - `src/env.ts` — Node-only: reads `process.env` + `~/.config/<vendor>.token` files, assembles the `SDKConfig` passed to `create_ask_ai()`
 
@@ -127,14 +128,14 @@ Canonical format: `vendor:official_model_name:thinking_budget` (e.g., `openai:gp
 ## Dependencies
 
 - **[ai](https://sdk.vercel.ai)** — AI SDK core (`generateText` + `streamText`)
-- **[@ai-sdk/openai](https://www.npmjs.com/package/@ai-sdk/openai)** — OpenAI provider
-- **[@ai-sdk/anthropic](https://www.npmjs.com/package/@ai-sdk/anthropic)** — Anthropic provider
-- **[@ai-sdk/google](https://www.npmjs.com/package/@ai-sdk/google)** — Google provider
-- **[@ai-sdk/xai](https://www.npmjs.com/package/@ai-sdk/xai)** — xAI Grok provider
-- **[@ai-sdk/deepseek](https://www.npmjs.com/package/@ai-sdk/deepseek)** — DeepSeek provider
-- **[@ai-sdk/fireworks](https://www.npmjs.com/package/@ai-sdk/fireworks)** — Fireworks provider
-- **[@ai-sdk/cerebras](https://www.npmjs.com/package/@ai-sdk/cerebras)** — Cerebras provider
-- **[@ai-sdk/openai-compatible](https://www.npmjs.com/package/@ai-sdk/openai-compatible)** — OpenAI-compatible provider (Z.ai GLM via `zai:` vendor)
+- **[@ai-sdk/openai](https://www.npmjs.com/package/@ai-sdk/openai)** — OpenAI provider (native; also serves `vast`/`local`/`openrouter` via `baseURL`)
+- **[@ai-sdk/anthropic](https://www.npmjs.com/package/@ai-sdk/anthropic)** — Anthropic provider (native)
+- **[@ai-sdk/google](https://www.npmjs.com/package/@ai-sdk/google)** — Google provider (native)
+- **[@ai-sdk/xai](https://www.npmjs.com/package/@ai-sdk/xai)** — xAI Grok provider (native)
+- **[@ai-sdk/deepseek](https://www.npmjs.com/package/@ai-sdk/deepseek)** — DeepSeek provider (native)
+- **[@ai-sdk/cerebras](https://www.npmjs.com/package/@ai-sdk/cerebras)** — Cerebras provider (native)
+- **[@ai-sdk/moonshotai](https://www.npmjs.com/package/@ai-sdk/moonshotai)** — MoonshotAI provider (native)
+- **[@ai-sdk/openai-compatible](https://www.npmjs.com/package/@ai-sdk/openai-compatible)** — OpenAI-compatible provider (`alibaba`/`zai` vendors + fallback for vendors without a dedicated handler)
 - **[commander](https://www.npmjs.com/package/commander)** — CLI argument parsing
 
 The provider packages above are dependencies of `@tell-ai/sdk`; `commander` lives in `tell-ai`. The web package adds `express`, `ws`, `node-pty` (native), `vite` + `react`/`@xterm/*` for the frontend.
@@ -145,9 +146,9 @@ API keys are resolved in the CLI (`packages/cli/src/env.ts`): env vars (`OPENAI_
 
 ## Related docs
 
-- `docs/sdk/` — SDK reference: `README.md` (index), `api.md` (API surface), `models.md` (aliases/specs), `streaming.md` (AskStream events), `config.md` (SDKConfig injection/browser safety), `imports.md` (build variants)
+- `docs/sdk/` — SDK reference: `README.md` (index + examples), `api.md` (API surface), `models.md` (aliases/specs/reasoning matrix/custom endpoints), `streaming.md` (AskStream events), `config.md` (SDKConfig injection/browser safety), `imports.md` (build variants)
 - `docs/cli/` — CLI reference pages (flags, context, execution, chain mode, env config, security, development, mentions)
 - `docs/usage.md`, `docs/integrations.md` — CLI usage and integrations
 - `docs/web-sandbox.md`, `packages/web/README.md` — web sandbox guide (`tell --web`) and package reference (flags, `/api/*` routes, `.tell/` layout); backend harness `test/test-web-backend.js`, sandbox suite `test/test-web-sandbox.js` (`bun run --filter @tell-ai/web test`)
-- `examples/web/` — browser demo: `proxy.ts` (API proxy + static serving) + `index.html` (uses the IIFE `TellSDK` build) + `demo.ts` (end-to-end walkthrough)
+- `examples/sdk/` — `proxy.ts` (API proxy + static serving) + `index.html` (uses the IIFE `TellSDK` build) + `demo.ts` (proxy walkthrough) + `custom-endpoint.ts` (custom URLs/Ollama/new-vendor walkthrough, runs offline)
 - `packages/sdk/CHANGELOG_AI.md`, `packages/cli/CHANGELOG_AI.md`, `packages/web/CHANGELOG_AI.md` — Version history per package

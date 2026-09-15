@@ -6,16 +6,16 @@
 
 | Invocation | Behavior |
 |------------|----------|
-| `tell -l` / `tell --history` | Combined listing: `Contexts:` table (`@N \| id \| age \| preview`) followed by `Conversations:` table (`#N \| date \| model \| preview`), both newest first. |
+| `tell -l` / `tell --history` | Combined listing: `Contexts:` table (`@N \| id \| age \| preview`) followed by `Conversations:` table (`%N \| date \| model \| preview`), both newest first. |
 | `tell --history @N` | Reprints context N in full — the same file `--ctx @N` would resume. |
-| `tell --history #N` | Reprints conversation N in full (its `conversation_<timestamp>.txt` log). |
-| `tell --history "term"` | Case-insensitive search over both directories; hits printed as `@N context …` / `#N conversation …` rows with the matched line (highlighted on TTY, clipped to ~120 chars). |
+| `tell --history %N` | Reprints conversation N in full (its `conversation_<timestamp>.txt` log). |
+| `tell --history "term"` | Case-insensitive search over both directories; hits printed as `@N context …` / `%N conversation …` rows with the matched line (highlighted on TTY, clipped to ~120 chars). |
 
-`#N` inside `--history` is always a conversation. `#hash`-prefix refs stay exclusive to `--ctx` — namespaces per flag, documented in [context.md](context.md).
+`%N` inside `--history` is always a conversation (`%` needs no shell quoting — `#` starts a shell comment, so the old `#N` form required quotes). `#hash`-prefix refs stay exclusive to `--ctx` — namespaces per flag, documented in [context.md](context.md).
 
 ## Invariant
 
-`--history @N` opens the same file `--ctx @N` addresses: both index `list_context_entries()` newest-first (`@0` = most recent, mirroring `git stash@{0}`). `#N` indexes conversation logs newest-first (mtime), matching the recency order of the listing.
+`--history @N` opens the same file `--ctx @N` addresses: both index `list_context_entries()` newest-first (`@0` = most recent, mirroring `git stash@{0}`). `%N` indexes conversation logs newest-first (mtime), matching the recency order of the listing.
 
 ## Previews and columns
 
@@ -27,25 +27,25 @@
 
 | Case | Exit |
 |------|------|
-| Listing, valid `@N`/`#N`, empty term (prints a hint) | 0 |
+| Listing, valid `@N`/`%N`, empty term (prints a hint) | 0 |
 | Invalid `@N` | 1 — `No context at index N (have M saved contexts)` |
-| Invalid `#N` | 1 — `No conversation at index N (have M conversations)` |
+| Invalid `%N` | 1 — `No conversation at index N (have M conversations)` |
 | Search without matches | 1 — `No matches for "term" in contexts or conversations.` |
 
 ## Security
 
 * Echoed content is sanitized: `show_entry`, listings and search snippets strip ANSI escape sequences (CSI/OSC) and control characters before printing — conversation logs replay raw command stdout/stderr, so a poisoned log cannot spoof the terminal or touch the clipboard (OSC 52) via `--history`.
 * Stores stay private: `~/.ai/tell_history` and `~/.ai/tell_context` directories are created `0700`, files `0600` (existing files keep their mode; modes apply at creation).
-* Files that vanish between `readdir` and `stat` (dangling symlinks, concurrent removal) are skipped instead of crashing; listing order is stable on equal mtimes (name tie-break), so `@N`/`#N` refs don't flip between calls.
+* Files that vanish between `readdir` and `stat` (dangling symlinks, concurrent removal) are skipped instead of crashing; listing order is stable on equal mtimes (name tie-break), so `@N`/`%N` refs don't flip between calls.
 
 ## Examples
 
 ```bash
 tell -l                          # both tables
 tell --history @0                # cat the most recent context
-tell --history '#0'              # cat the most recent conversation
+tell -l %0                       # cat the most recent conversation
 tell --history "kafka consumer"  # search contexts + conversations
-tell --history '#0'              # re-read a search hit in full
+tell -l %0                       # re-read a search hit in full
 ```
 
 ## Implementation

@@ -1,6 +1,6 @@
 # Context (`-c`, `--ctx`, `-n`)
 
-Contexts no longer have their own lister: `-l` is inherited by `--history` (see [history.md](history.md)), which lists contexts and conversations together and reopens entries by `@N`/`#N`.
+Contexts no longer have their own lister: `-l` is inherited by `--history` (see [history.md](history.md)), which lists contexts and conversations together and reopens entries by `@N`/`%N`.
 
 Explicit design: no value guessing. A single token after `--ctx` is always a ref/name, never a prompt. Multi-word values are prompt text for the default context. Unnamed contexts are never saved.
 

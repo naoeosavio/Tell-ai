@@ -7,7 +7,7 @@ Complete reference for the `tell-ai` package (`packages/cli/`): the `tell` binar
 | [overview.md](overview.md) | What the CLI is, architecture, invocation lifecycle |
 | [cli-reference.md](cli-reference.md) | Flags, positional model, exit codes, examples |
 | [context.md](context.md) | `-c` / `--ctx` / `-n`, `ContextPlan` state machine, files |
-| [history.md](history.md) | `-l` / `--history`: listing, `@N`/`#N` cat, search over contexts + conversations |
+| [history.md](history.md) | `-l` / `--history`: listing, `@N`/`%N` cat, search over contexts + conversations |
 | [execution.md](execution.md) | `<RUN>` flow, confirmation, `-y` / `--no-exec`, timeouts |
 | [chain-mode.md](chain-mode.md) | `--chain` loop, feedback, 8-round limit |
 | [input-logging.md](input-logging.md) | stdin / `-i`, history logs |

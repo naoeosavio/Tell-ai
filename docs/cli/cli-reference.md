@@ -35,7 +35,7 @@ Full spec format: `vendor:model[:thinking]` with thinking in `none|low|medium|hi
 | `-c, --context` | boolean | Use default per-directory+model context. |
 | `--ctx [ref]` | optional string | Use-or-create: bare = default; `@N` recency; `#hash` prefix; `name`; multi-word = prompt text for default. Cannot combine with `-c`. |
 | `-n, --name` | boolean | Reset modifier: `--ctx <name> -n` always starts empty. Requires a valid name. |
-| `-l, --history [ref]` | optional string | List contexts + conversations; `@N`/`#N` reprints an entry; any other value searches both. No model call. See [history.md](history.md). |
+| `-l, --history [ref]` | optional string | List contexts + conversations; `@N`/`%N` reprints an entry; any other value searches both. No model call. See [history.md](history.md). |
 | `-y, --yes` | boolean | Auto-approve commands. High-risk **and** any reference to paths outside the working directory still require confirmation. No-op without TTY for those (auto-reject). |
 | `--require-approval` | boolean | Explicit Require Approval mode: with `-y`, safe commands run directly and high-risk ones still ask; without `-y`, every command asks (same as default). Never weakens the high-risk gate. Forwarded by `-w`/`--web` to seed the web sandbox toggle. |
 | `--chain` | boolean | Loop up to 8 command rounds, feeding output back to the model. |
@@ -109,7 +109,7 @@ tell --ctx myproj "continue the project"
 tell --ctx myproj -n "start over"
 tell -l                          # combined contexts + conversations listing
 tell --history @0                # cat the most recent context
-tell --history '#0'              # cat the most recent conversation
+tell -l %0                       # cat the most recent conversation
 tell --history "kafka consumer"  # search both stores
 tell --ctx @0 "resume the most recent"
 tell --ctx '#a1b2c3' "resume by hash prefix"
