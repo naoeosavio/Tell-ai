@@ -7,6 +7,7 @@ const SNIPPET_CONTEXT_CHARS = 20;
 const HASH_ID_LENGTH = 16;
 const SHORT_ID_LENGTH = 8;
 const SESSION_NAME_PATTERN = /^conversation_(.+)\.txt$/;
+const SESSION_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}/;
 
 /** A saved context file on disk, addressable by recency index `@N`. */
 export type ContextEntry = { file: string; id: string; mtimeMs: number };
@@ -23,9 +24,24 @@ export type HistoryEntry = {
 /** One search hit: the ref that reopens the entry plus the matched line. */
 export type SearchResult = { ref: string; kind: 'context' | 'conversation'; snippet: string };
 
+/**
+ * Strips ANSI escape sequences (CSI/OSC/2-char ESC) and other control
+ * characters from stored text before it is echoed. Log files contain raw
+ * command stdout/stderr and model output, so a poisoned log could otherwise
+ * spoof the terminal or write to the clipboard (OSC 52) via `--history`.
+ */
+function sanitize_text(text: string): string {
+  return text
+    .replace(/\x1b\[[0-9;?<=>!]*[ -/]*[@-~]/g, '')
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+    .replace(/\x1b[@-Z\\-_]/g, '')
+    .replace(/\x1b/g, '')
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
+}
+
 function read_text(file: string): string {
   try {
-    return fs.readFileSync(file, 'utf8').trim();
+    return sanitize_text(fs.readFileSync(file, 'utf8').trim());
   } catch {
     return '';
   }
@@ -50,6 +66,10 @@ function format_age(mtimeMs: number): string {
 
 /** `conversation_<ISO>.txt` timestamps become a `YYYY-MM-DD HH:MM` label. */
 function format_session_date(timestamp: string): string {
+  if (!SESSION_TIMESTAMP_PATTERN.test(timestamp)) {
+    // Non-ISO suffix (renamed/copied file) — no trustworthy date to show.
+    return '(unknown date)';
+  }
   const date = timestamp.slice(0, 10);
   const time = timestamp.slice(11, 16).replace(/-/g, ':');
   return `${date} ${time}`;
@@ -77,7 +97,7 @@ function preview_from_text(text: string): string {
   return clip(inline || next);
 }
 
-/** Conversation log files of `dir`, newest first. */
+/** Conversation log files of `dir`, newest first (mtime, then name). */
 function session_files(dir: string): { file: string; mtimeMs: number }[] {
   let names: string[] = [];
   try {
@@ -85,11 +105,16 @@ function session_files(dir: string): { file: string; mtimeMs: number }[] {
   } catch {
     return [];
   }
-  const files = names.map((name) => {
+  const files: { file: string; mtimeMs: number }[] = [];
+  for (const name of names) {
     const file = path.join(dir, name);
-    return { file, mtimeMs: fs.statSync(file).mtimeMs };
-  });
-  files.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    try {
+      files.push({ file, mtimeMs: fs.statSync(file).mtimeMs });
+    } catch {
+      // Entry vanished between readdir and stat (or is unreadable) — skip it.
+    }
+  }
+  files.sort((a, b) => b.mtimeMs - a.mtimeMs || b.file.localeCompare(a.file));
   return files;
 }
 
@@ -185,8 +210,8 @@ function highlight(snippet: string, term: string): string {
  * entry via `--history @N` / `--history #N`.
  */
 export function print_search_results(results: SearchResult[], term: string): void {
-  const ref_width = Math.max(...results.map((result) => result.ref.length));
-  const kind_width = Math.max(...results.map((result) => result.kind.length));
+  const ref_width = Math.max(0, ...results.map((result) => result.ref.length));
+  const kind_width = Math.max(0, ...results.map((result) => result.kind.length));
   for (const result of results) {
     const columns = `${result.ref.padEnd(ref_width)}  ${result.kind.padEnd(kind_width)}`;
     console.log(`${columns}  ${highlight(result.snippet, term)}`);
@@ -209,9 +234,9 @@ export function print_history_list(sessions: HistoryEntry[], contexts: ContextEn
       age: format_age(entry.mtimeMs),
       preview: preview_from_text(read_text(entry.file)),
     }));
-    const ref_width = Math.max(...rows.map((row) => row.ref.length));
-    const id_width = Math.max(...rows.map((row) => row.id.length));
-    const age_width = Math.max(...rows.map((row) => row.age.length));
+    const ref_width = Math.max(0, ...rows.map((row) => row.ref.length));
+    const id_width = Math.max(0, ...rows.map((row) => row.id.length));
+    const age_width = Math.max(0, ...rows.map((row) => row.age.length));
     for (const row of rows) {
       const columns = `${row.ref.padEnd(ref_width)}  ${row.id.padEnd(id_width)}  ${row.age.padEnd(age_width)}`;
       console.log(`${columns}  ${row.preview}`);
@@ -229,9 +254,9 @@ export function print_history_list(sessions: HistoryEntry[], contexts: ContextEn
       model: session.model,
       preview: session.preview,
     }));
-    const ref_width = Math.max(...rows.map((row) => row.ref.length));
-    const date_width = Math.max(...rows.map((row) => row.date.length));
-    const model_width = Math.max(...rows.map((row) => row.model.length));
+    const ref_width = Math.max(0, ...rows.map((row) => row.ref.length));
+    const date_width = Math.max(0, ...rows.map((row) => row.date.length));
+    const model_width = Math.max(0, ...rows.map((row) => row.model.length));
     for (const row of rows) {
       const columns = `${row.ref.padEnd(ref_width)}  ${row.date.padEnd(date_width)}  ${row.model.padEnd(model_width)}`;
       console.log(`${columns}  ${row.preview}`);

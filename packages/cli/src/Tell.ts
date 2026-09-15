@@ -97,7 +97,7 @@ const CREATED_DIRS = new Set<string>();
 
 function ensure_dir(dir: string): void {
   if (CREATED_DIRS.has(dir)) return;
-  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   CREATED_DIRS.add(dir);
 }
 
@@ -213,12 +213,16 @@ function list_context_entries(): ContextEntry[] {
   } catch {
     return [];
   }
-  const entries = names.map((name) => {
+  const entries: ContextEntry[] = [];
+  for (const name of names) {
     const file = path.join(context_dir(), name);
-    const mtimeMs = fs.statSync(file).mtimeMs;
-    return { file, id: name.slice(0, -'.txt'.length), mtimeMs };
-  });
-  entries.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    try {
+      entries.push({ file, id: name.slice(0, -'.txt'.length), mtimeMs: fs.statSync(file).mtimeMs });
+    } catch {
+      // Entry vanished between readdir and stat (or is unreadable) — skip it.
+    }
+  }
+  entries.sort((a, b) => b.mtimeMs - a.mtimeMs || b.file.localeCompare(a.file));
   return entries;
 }
 
@@ -355,7 +359,7 @@ function build_context_plan(opts: CliOptions, model: string, entries: ContextEnt
 
 function append_log(file: string, text: string): void {
   ensure_dir(path.dirname(file));
-  fs.appendFileSync(file, `${text}\n`, 'utf8');
+  fs.appendFileSync(file, `${text}\n`, { encoding: 'utf8', mode: 0o600 });
 }
 
 function read_text(file: string): string {
@@ -373,7 +377,7 @@ function limit_context(text: string): string {
 
 function write_context(file: string, content: string): void {
   ensure_dir(path.dirname(file));
-  fs.writeFileSync(file, `${limit_context(content).trim()}\n`, 'utf8');
+  fs.writeFileSync(file, `${limit_context(content).trim()}\n`, { encoding: 'utf8', mode: 0o600 });
 }
 
 function save_incremental_context(contextPath: string, previousContext: string, state: ConversationState): void {
