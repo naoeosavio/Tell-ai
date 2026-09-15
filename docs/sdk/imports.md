@@ -53,7 +53,7 @@ The same bundle compiled as an IIFE and loaded with a classic `<script>` tag. It
 </script>
 ```
 
-It is declared in `sideEffects` in `package.json` so bundlers never tree-shake it away: its global assignment is the point of loading it. It is also what the demo in `examples/web/` uses and what `unpkg`/`jsdelivr` fields point to.
+It is declared in `sideEffects` in `package.json` so bundlers never tree-shake it away: its global assignment is the point of loading it. It is also what the demo in `examples/sdk/` uses and what `unpkg`/`jsdelivr` fields point to.
 
 The page demo (`examples/web/proxy.ts` + `index.html`) is served by the proxy and uses this IIFE build — a classic script has no module-resolution step, which makes it the most failure-proof choice for a standalone demo page.
 

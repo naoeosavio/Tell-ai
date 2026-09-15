@@ -72,7 +72,7 @@ This is exactly what `tell --stream` does (`packages/cli/src/Tell.ts`, `tell_str
 
 ## Consuming in the browser
 
-The same `ask_stream` runs in the browser bundles because the SDK never touches Node-only APIs. Pair it with a plain fetch to a CORS proxy that forwards `/vendor/*` calls and injects keys server-side (see [config.md](config.md) and `examples/web/proxy.ts`).
+The same `ask_stream` runs in the browser bundles because the SDK never touches Node-only APIs. Pair it with a plain fetch to a CORS proxy that forwards `/vendor/*` calls and injects keys server-side (see [config.md](config.md) and `examples/sdk/proxy.ts`).
 
 ## Who uses it
 

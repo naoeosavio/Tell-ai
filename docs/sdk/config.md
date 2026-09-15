@@ -48,7 +48,7 @@ Every other vendor has a built-in default (e.g. `zai` → `https://api.z.ai/api/
 Two properties make the SDK browser-loadable:
 
 1. **No ambient environment.** All environment concerns (keys, URLs, platform info) are parameters. The `tell()` options mirror this: `keys`, `urls`, `cwd`, `platform`, `system` are all optional and injected (`src/tell.ts:6-27`).
-2. **Self-contained bundles.** The tsup build bundles `ai` and every `@ai-sdk/*` provider via `noExternal` (`tsup.config.ts:25-35`) — a `'@ai-sdk/*'` glob would not match scoped packages and would leave bare imports. The transitive `@vercel/oidc` (a dependency of `ai`) pulls in `path`/`fs`/`os` and reads `process` at module scope, so those builtins are aliased to `src/shims/node.cjs` and a `var process = {…}` banner is prepended. The shims return inert values (empty files, `'/'` for `homedir`, etc.) because OIDC helpers are never exercised in the browser.
+2. **Self-contained bundles.** The tsup build bundles `ai` and every `@ai-sdk/*` provider via `noExternal` (`tsup.config.ts`) — a `'@ai-sdk/*'` glob would not match scoped packages and would leave bare imports. The transitive `@vercel/oidc` (a dependency of `ai`) pulls in `path`/`fs`/`os` and reads `process` at module scope, so those builtins are aliased to `src/shims/node.cjs` and a `var process = {…}` banner is prepended. The shims return inert values (empty files, `'/'` for `homedir`, etc.) because OIDC helpers are never exercised in the browser.
 
 Sanity check after a build:
 
@@ -58,7 +58,7 @@ grep -cE '^import ' packages/sdk/dist/browser*.js   # must print 0
 
 ## CORS proxies
 
-Because keys are optional, the browser pattern is to **not ship real keys** and instead point `urls.<vendor>` at a CORS proxy that forwards to the provider API and injects the key server-side. The repo ships a minimal example — `examples/web/proxy.ts` (Bun) plus `examples/web/index.html`:
+Because keys are optional, the browser pattern is to **not ship real keys** and instead point `urls.<vendor>` at a CORS proxy that forwards to the provider API and injects the key server-side. The repo ships a minimal example — `examples/sdk/proxy.ts` (Bun) plus `examples/sdk/index.html`:
 
 ```ts
 create_ask_ai('g', {

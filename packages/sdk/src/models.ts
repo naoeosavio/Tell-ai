@@ -6,7 +6,7 @@ import { createMoonshotAI } from '@ai-sdk/moonshotai';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createXai } from '@ai-sdk/xai';
-import type { SDKConfig, SDKKeys } from './config';
+import type { SDKConfig, SDKKeys, SDKUrls } from './config';
 
 export type ThinkingLevel = 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'auto';
 
@@ -241,28 +241,43 @@ function infer_vendor(model: string): string {
   throw new Error(`Unsupported vendor for model "${model}"`);
 }
 
-let OPENAI: any = null;
-let ANTHROPIC: any = null;
-let GOOGLE: any = null;
-let XAI: any = null;
-let DEEPSEEK: any = null;
-let CEREBRAS: any = null;
-let MOONSHOTAI: any = null;
-let OPENROUTER: any = null;
-let ALIBABA: any = null;
-let ZHIPU: any = null;
+// Provider caches are keyed by effective base URL ('' = provider default),
+// so different endpoints in one process never share a stale provider.
+const OPENAI_PROVIDERS: Record<string, any> = {};
+const ANTHROPIC_PROVIDERS: Record<string, any> = {};
+const GOOGLE_PROVIDERS: Record<string, any> = {};
+const XAI_PROVIDERS: Record<string, any> = {};
+const DEEPSEEK_PROVIDERS: Record<string, any> = {};
+const CEREBRAS_PROVIDERS: Record<string, any> = {};
+const MOONSHOTAI_PROVIDERS: Record<string, any> = {};
+const OPENROUTER_PROVIDERS: Record<string, any> = {};
+const COMPAT_PROVIDERS: Record<string, any> = {};
 const VAST_PROVIDERS: Record<string, any> = {};
 const LOCAL_PROVIDERS: Record<string, any> = {};
 
+// Default OpenAI-compatible base URLs for vendors served through the generic
+// provider (`alibaba`, `zai`) and any future vendor without a dedicated handler.
+const COMPAT_DEFAULT_URLS: Record<CompatVendor, string> = {
+  alibaba: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+  zai: 'https://api.z.ai/api/paas/v4',
+};
+
+// SDKUrls slot per compat vendor (`zai` reads the `zhipu` slot).
+const COMPAT_URL_KEYS: Record<CompatVendor, keyof SDKUrls> = {
+  alibaba: 'alibaba',
+  zai: 'zhipu',
+};
+
 async function get_openrouter_provider(config: SDKConfig): Promise<any> {
-  if (OPENROUTER) return OPENROUTER;
+  const base_url = config.urls.openrouter ?? 'https://openrouter.ai/api/v1';
+  if (OPENROUTER_PROVIDERS[base_url]) return OPENROUTER_PROVIDERS[base_url];
   const api_key = get_api_key('openrouter', config);
-  OPENROUTER = createOpenAI({
+  OPENROUTER_PROVIDERS[base_url] = createOpenAI({
     ...(api_key ? { apiKey: api_key } : {}),
-    baseURL: config.urls.openrouter ?? 'https://openrouter.ai/api/v1',
+    baseURL: base_url,
     name: 'openrouter',
   });
-  return OPENROUTER;
+  return OPENROUTER_PROVIDERS[base_url];
 }
 
 const VALID_THINKING = new Set(['none', 'low', 'medium', 'high', 'xhigh', 'max', 'auto']);
@@ -379,21 +394,46 @@ async function get_local_provider(baseUrl: string): Promise<any> {
   return LOCAL_PROVIDERS[baseUrl];
 }
 
+/** Vendors served through a generic OpenAI-compatible provider. */
+type CompatVendor = 'alibaba' | 'zai';
+
+/**
+ * Builds an OpenAI-compatible provider for vendors without a native AI SDK
+ * provider — and as a fallback for any vendor without a dedicated handler,
+ * so future vendors only need a URL to work. Cached per vendor + base URL
+ * so different endpoints in one process never share a stale provider.
+ */
+async function get_compat_provider(vendor: string, config: SDKConfig): Promise<any> {
+  const url_key = (COMPAT_URL_KEYS as Record<string, keyof SDKUrls>)[vendor];
+  const default_url = (COMPAT_DEFAULT_URLS as Record<string, string>)[vendor] ?? '';
+  const base_url = (url_key ? config.urls[url_key] : undefined) ?? default_url;
+  const cache_key = `${vendor}::${base_url}`;
+  if (COMPAT_PROVIDERS[cache_key]) return COMPAT_PROVIDERS[cache_key];
+  const api_key = get_api_key(vendor, config);
+  COMPAT_PROVIDERS[cache_key] = createOpenAICompatible({
+    name: vendor,
+    ...(api_key ? { apiKey: api_key } : {}),
+    baseURL: base_url,
+  });
+  return COMPAT_PROVIDERS[cache_key];
+}
+
 async function handle_cerebras(
   model: string,
   reasoning: string,
   fast: boolean,
   config: SDKConfig,
 ): Promise<ModelHandle> {
-  if (!CEREBRAS) {
+  const cache_key = config.urls.cerebras ?? '';
+  if (!CEREBRAS_PROVIDERS[cache_key]) {
     const api_key = get_api_key('cerebras', config);
     const base_url = config.urls.cerebras;
-    CEREBRAS = createCerebras({
+    CEREBRAS_PROVIDERS[cache_key] = createCerebras({
       ...(api_key ? { apiKey: api_key } : {}),
       ...(base_url ? { baseURL: base_url } : {}),
     });
   }
-  return { model: CEREBRAS(model), reasoning, fast };
+  return { model: CEREBRAS_PROVIDERS[cache_key](model), reasoning, fast };
 }
 
 async function handle_open_ai(
@@ -402,15 +442,16 @@ async function handle_open_ai(
   fast: boolean,
   config: SDKConfig,
 ): Promise<ModelHandle> {
-  if (!OPENAI) {
+  const cache_key = config.urls.openai ?? '';
+  if (!OPENAI_PROVIDERS[cache_key]) {
     const api_key = get_api_key('openai', config);
     const base_url = config.urls.openai;
-    OPENAI = createOpenAI({
+    OPENAI_PROVIDERS[cache_key] = createOpenAI({
       ...(api_key ? { apiKey: api_key } : {}),
       ...(base_url ? { baseURL: base_url } : {}),
     });
   }
-  return { model: OPENAI(model), reasoning, fast };
+  return { model: OPENAI_PROVIDERS[cache_key](model), reasoning, fast };
 }
 
 async function handle_anthropic(
@@ -419,38 +460,41 @@ async function handle_anthropic(
   fast: boolean,
   config: SDKConfig,
 ): Promise<ModelHandle> {
-  if (!ANTHROPIC) {
+  const cache_key = config.urls.anthropic ?? '';
+  if (!ANTHROPIC_PROVIDERS[cache_key]) {
     const api_key = get_api_key('anthropic', config);
     const base_url = config.urls.anthropic;
-    ANTHROPIC = createAnthropic({
+    ANTHROPIC_PROVIDERS[cache_key] = createAnthropic({
       ...(api_key ? { apiKey: api_key } : {}),
       ...(base_url ? { baseURL: base_url } : {}),
     });
   }
-  return { model: ANTHROPIC(model), reasoning, fast };
+  return { model: ANTHROPIC_PROVIDERS[cache_key](model), reasoning, fast };
 }
 
 async function handle_google(model: string, reasoning: string, fast: boolean, config: SDKConfig): Promise<ModelHandle> {
-  if (!GOOGLE) {
+  const cache_key = config.urls.google ?? '';
+  if (!GOOGLE_PROVIDERS[cache_key]) {
     const api_key = get_api_key('google', config);
     const base_url = config.urls.google;
-    GOOGLE = api_key
+    GOOGLE_PROVIDERS[cache_key] = api_key
       ? createGoogleGenerativeAI({ apiKey: api_key, ...(base_url ? { baseURL: base_url } : {}) })
       : createGoogleGenerativeAI({ ...(base_url ? { baseURL: base_url } : {}) });
   }
-  return { model: GOOGLE(model), reasoning, fast };
+  return { model: GOOGLE_PROVIDERS[cache_key](model), reasoning, fast };
 }
 
 async function handle_xai(model: string, reasoning: string, fast: boolean, config: SDKConfig): Promise<ModelHandle> {
-  if (!XAI) {
+  const cache_key = config.urls.xai ?? '';
+  if (!XAI_PROVIDERS[cache_key]) {
     const api_key = get_api_key('xai', config);
     const base_url = config.urls.xai;
-    XAI = createXai({
+    XAI_PROVIDERS[cache_key] = createXai({
       ...(api_key ? { apiKey: api_key } : {}),
       ...(base_url ? { baseURL: base_url } : {}),
     });
   }
-  return { model: XAI(model), reasoning, fast };
+  return { model: XAI_PROVIDERS[cache_key](model), reasoning, fast };
 }
 
 async function handle_deepseek(
@@ -459,15 +503,16 @@ async function handle_deepseek(
   fast: boolean,
   config: SDKConfig,
 ): Promise<ModelHandle> {
-  if (!DEEPSEEK) {
+  const cache_key = config.urls.deepseek ?? '';
+  if (!DEEPSEEK_PROVIDERS[cache_key]) {
     const api_key = get_api_key('deepseek', config);
     const base_url = config.urls.deepseek;
-    DEEPSEEK = createDeepSeek({
+    DEEPSEEK_PROVIDERS[cache_key] = createDeepSeek({
       ...(api_key ? { apiKey: api_key } : {}),
       ...(base_url ? { baseURL: base_url } : {}),
     });
   }
-  return { model: DEEPSEEK(model), reasoning, fast };
+  return { model: DEEPSEEK_PROVIDERS[cache_key](model), reasoning, fast };
 }
 
 async function handle_moonshot_ai(
@@ -476,15 +521,16 @@ async function handle_moonshot_ai(
   fast: boolean,
   config: SDKConfig,
 ): Promise<ModelHandle> {
-  if (!MOONSHOTAI) {
+  const cache_key = config.urls.moonshotai ?? '';
+  if (!MOONSHOTAI_PROVIDERS[cache_key]) {
     const api_key = get_api_key('moonshotai', config);
     const base_url = config.urls.moonshotai;
-    MOONSHOTAI = createMoonshotAI({
+    MOONSHOTAI_PROVIDERS[cache_key] = createMoonshotAI({
       ...(api_key ? { apiKey: api_key } : {}),
       ...(base_url ? { baseURL: base_url } : {}),
     });
   }
-  return { model: MOONSHOTAI(model), reasoning, fast };
+  return { model: MOONSHOTAI_PROVIDERS[cache_key](model), reasoning, fast };
 }
 
 async function handle_openrouter(
@@ -502,29 +548,14 @@ async function handle_alibaba(
   fast: boolean,
   config: SDKConfig,
 ): Promise<ModelHandle> {
-  if (!ALIBABA) {
-    const api_key = get_api_key('alibaba', config);
-    const base_url = config.urls.alibaba;
-    ALIBABA = createOpenAI({
-      ...(api_key ? { apiKey: api_key } : {}),
-      ...(base_url ? { baseURL: base_url } : {}),
-      name: 'alibaba',
-    });
-  }
-  return { model: ALIBABA(model.replace(/^alibaba\//i, '')), reasoning, fast };
+  const provider = await get_compat_provider('alibaba', config);
+  // DashScope model ids may carry the `alibaba/` prefix — strip it.
+  return { model: provider(model.replace(/^alibaba\//i, '')), reasoning, fast };
 }
 
 async function handle_zhipu(model: string, reasoning: string, fast: boolean, config: SDKConfig): Promise<ModelHandle> {
-  if (!ZHIPU) {
-    const api_key = get_api_key('zai', config);
-    const base_url = config.urls.zhipu;
-    ZHIPU = createOpenAICompatible({
-      name: 'zhipu',
-      ...(api_key ? { apiKey: api_key } : {}),
-      baseURL: base_url ?? 'https://api.z.ai/api/paas/v4',
-    });
-  }
-  return { model: ZHIPU(model), reasoning, fast };
+  const provider = await get_compat_provider('zai', config);
+  return { model: provider(model), reasoning, fast };
 }
 
 async function handle_vast(model: string, reasoning: string, fast: boolean, config: SDKConfig): Promise<ModelHandle> {
@@ -608,6 +639,17 @@ export async function get_model(spec: string, config: SDKConfig): Promise<ModelH
   }
 
   const handler = VENDOR_HANDLERS[resolved.vendor];
-  if (!handler) throw new Error(`Unsupported vendor: ${resolved.vendor}`);
-  return handler(resolved.model, reasoning, resolved.fast, config);
+  if (!handler) {
+    // No dedicated handler: try a generic OpenAI-compatible endpoint so
+    // future vendors only need a URL to work.
+    const provider = await get_compat_provider(resolved.vendor, config);
+    return {
+      model: provider(resolved.model),
+      reasoning,
+      fast: resolved.fast,
+      ...(providerOptions ? { providerOptions } : {}),
+    };
+  }
+  const handle = await handler(resolved.model, reasoning, resolved.fast, config);
+  return providerOptions ? { ...handle, providerOptions } : handle;
 }

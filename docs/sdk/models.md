@@ -32,7 +32,7 @@ Parsing rules (`parse_model_spec_raw`, `models.ts:325-354`):
 5. In `resolve_multi_part` the model slot may itself be an alias (e.g. `openai:p`), but it must belong to the same vendor or it throws.
 6. If the third part is not a valid thinking level, it is appended to the model name instead (covers model names containing `:`).
 
-`thinking: 'auto'` is the default for vendor:model forms and single-part specs; mapped to AI SDK `medium` (`AI_SDK_THINKING`, `models.ts:183-191`). `max` maps to `xhigh`.
+`thinking: 'auto'` is the default for vendor:model forms and single-part specs; mapped to AI SDK `medium` (`AI_SDK_THINKING`). The map is passthrough (`max` → `max`, `xhigh` → `xhigh`); `openai-compatible` forwards `reasoning_effort` verbatim, so both survive.
 
 ## Alias conventions
 
@@ -47,7 +47,7 @@ A suffix encodes the thinking budget; the uppercase letter is the "high" tier:
 | `++` | `max` | `g++` |
 | Uppercase | `high` | `G` |
 
-Fast mode (`.g` or `:fast`) zeroes reasoning regardless of the tier: `get_model` forces `reasoning: 'none'` for `fast` handles (`ask.ts:59`, and the SDK maps it via `handle.fast ? 'none' : handle.reasoning` in callers).
+Fast mode (`.g` or `:fast`) zeroes reasoning regardless of the tier: callers map it via `handle.fast ? 'none' : handle.reasoning` (`ask.ts`, `server.ts`).
 
 ## Vendors in the alias table
 
@@ -82,9 +82,10 @@ Used for single-part specs and unknown-vendor cases: `alibaba/` prefix → aliba
 
 ## Dispatch (`get_model`, `models.ts:558-569`)
 
-1. `resolve_model_spec` + thinking mapping.
+1. `resolve_model_spec` + thinking mapping (`resolve_reasoning` below).
 2. OpenAI models that live on Cerebras are redirected to the Cerebras handler.
-3. `VENDOR_HANDLERS` (`models.ts:543-556`) builds the provider (memoized per process) using the injected key/URL for that vendor. Keys are looked up through `VENDOR_KEY` (`models.ts:208-219`) — note `zai` uses the **`zhipu`** key slot; `vast`/`local` never need a key but require `urls.vast`/`urls.local`.
+3. `VENDOR_HANDLERS` builds the native provider (memoized per process per effective base URL) using the injected key/URL for that vendor; `alibaba`/`zai` and any vendor without a dedicated handler go through `@ai-sdk/openai-compatible` (`get_compat_provider`, `zai` reading the `zhipu` URL slot), so future vendors only need a URL to work. Keys are looked up through `VENDOR_KEY` — note `zai` uses the **`zhipu`** key slot; `vast`/`local` never need a key but require `urls.vast`/`urls.local`. DashScope model ids may carry an `alibaba/` prefix, stripped in `handle_alibaba`.
+4. Reasoning matrix (`resolve_reasoning`): the table is passthrough, except `max`, which the generic reasoning→effort map lacks — `anthropic`/`deepseek`/`moonshotai` send it explicitly (`effort`/`reasoningEffort: 'max'`, explicit options take precedence, no warning), `xai` sends `xhigh` (its enum top), `google` sends `high` (its enum top). Fast mode always resolves to `none` with no explicit options.
 
 Base URLs all honor `SDKConfig.urls.<vendor>` via `baseURL` (`config.ts:14-27`); the `zai` default is `https://api.z.ai/api/paas/v4` (`models.ts:522`). Self-hosted `vast`/`local` have no default and throw without their URL.
 

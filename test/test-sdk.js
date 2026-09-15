@@ -164,6 +164,140 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
   }
   assert.deepStrictEqual(logged_errors, [], 'streamText must not log raw provider errors by default');
 
+  // Compat cache is per vendor+URL: two configs for one vendor hit their own
+  // endpoint (guards against a stale cached provider across configs).
+  const chat_server = (text) =>
+    http.createServer((req, res) => {
+      req.resume();
+      req.on('end', () => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            id: 'mock',
+            object: 'chat.completion',
+            created: 0,
+            model: 'mock',
+            choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          }),
+        );
+      });
+    });
+  const server_a = chat_server('answer-a');
+  const server_b = chat_server('answer-b');
+  await new Promise((resolve) => server_a.listen(0, '127.0.0.1', resolve));
+  await new Promise((resolve) => server_b.listen(0, '127.0.0.1', resolve));
+  try {
+    const ai_a = await sdk.create_ask_ai('deepseek:mock-a:high', {
+      keys: {},
+      urls: { deepseek: `http://127.0.0.1:${server_a.address().port}/v1` },
+    });
+    const ai_b = await sdk.create_ask_ai('deepseek:mock-b:high', {
+      keys: {},
+      urls: { deepseek: `http://127.0.0.1:${server_b.address().port}/v1` },
+    });
+    assert.strictEqual(await ai_a.ask('hi', { system: 'test', stream: false }), 'answer-a');
+    assert.strictEqual(await ai_b.ask('hi', { system: 'test', stream: false }), 'answer-b');
+  } finally {
+    server_a.close();
+    server_b.close();
+  }
+
+  // Anthropic `max` reaches the wire as output_config.effort=max with
+  // adaptive thinking, and emits no reasoning warning (AI SDK logs warnings
+  // via process.emitWarning in Node).
+  let anthropic_body = null;
+  const anthropic_warnings = [];
+  const on_warning = (warning) => anthropic_warnings.push(String((warning && warning.message) || warning));
+  const anthropic_mock = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => {
+      anthropic_body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          id: 'msg_mock',
+          type: 'message',
+          role: 'assistant',
+          model: 'claude-sonnet-5',
+          content: [{ type: 'text', text: 'hi-max' }],
+          stop_reason: 'end_turn',
+          stop_sequence: null,
+          usage: { input_tokens: 1, output_tokens: 1 },
+        }),
+      );
+    });
+  });
+  await new Promise((resolve) => anthropic_mock.listen(0, '127.0.0.1', resolve));
+  process.on('warning', on_warning);
+  try {
+    const claude = await sdk.create_ask_ai('anthropic:claude-sonnet-5:max', {
+      keys: {},
+      urls: { anthropic: `http://127.0.0.1:${anthropic_mock.address().port}/v1` },
+    });
+    assert.strictEqual(await claude.ask('hi', { system: 'test', stream: false }), 'hi-max');
+  } finally {
+    process.removeListener('warning', on_warning);
+    anthropic_mock.close();
+  }
+  assert.strictEqual(anthropic_body.output_config.effort, 'max');
+  assert.strictEqual(anthropic_body.thinking.type, 'adaptive');
+  assert.deepStrictEqual(
+    anthropic_warnings.filter((message) => message.includes('reasoning')),
+    [],
+    'anthropic max must not warn about reasoning',
+  );
+
+  // DeepSeek/MoonshotAI `max` reaches the wire as reasoning_effort=max with
+  // no reasoning warning (explicit option wins over the generic mapping).
+  for (const [spec, url_key, key_slot, answer] of [
+    ['deepseek:mock-ds:max', 'deepseek', 'deepseek', 'answer-ds'],
+    // MoonshotAI requires a key at construction — a dummy one never leaves
+    // the process since all requests hit the localhost mock.
+    ['moonshotai:mock-k:max', 'moonshotai', 'moonshotai', 'answer-k'],
+  ]) {
+    let wire_body = null;
+    const wire_warnings = [];
+    const wire_mock = http.createServer((req, res) => {
+      const chunks = [];
+      req.on('data', (chunk) => chunks.push(chunk));
+      req.on('end', () => {
+        wire_body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            id: 'mock',
+            object: 'chat.completion',
+            created: 0,
+            model: 'mock',
+            choices: [{ index: 0, message: { role: 'assistant', content: answer }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          }),
+        );
+      });
+    });
+    await new Promise((resolve) => wire_mock.listen(0, '127.0.0.1', resolve));
+    const wire_listener = (warning) => wire_warnings.push(String((warning && warning.message) || warning));
+    process.on('warning', wire_listener);
+    try {
+      const wire_ai = await sdk.create_ask_ai(spec, {
+        keys: { [key_slot]: 'test-key' },
+        urls: { [url_key]: `http://127.0.0.1:${wire_mock.address().port}/v1` },
+      });
+      assert.strictEqual(await wire_ai.ask('hi', { system: 'test', stream: false }), answer);
+    } finally {
+      process.removeListener('warning', wire_listener);
+      wire_mock.close();
+    }
+    assert.strictEqual(wire_body.reasoning_effort, 'max', spec);
+    assert.deepStrictEqual(
+      wire_warnings.filter((message) => message.includes('reasoning')),
+      [],
+      `${spec} must not warn about reasoning`,
+    );
+  }
+
   // get_system_prompt: exec vs no-exec variants.
   const exec_prompt = sdk.get_system_prompt({ chain: true });
   assert.match(exec_prompt, /terminal assistant/);
