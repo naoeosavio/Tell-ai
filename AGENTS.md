@@ -21,7 +21,7 @@ npm test               # sdk + security + context + stream + mentions + web suit
 npm run test:security  # build the SDK, then node test/test-tell-security.js
 npm run test:stream    # build the SDK, then node test/test-tell-stream.js (--stream/--think CLI behavior)
 npm run test:mentions  # build the SDK, then node test/test-tell-mentions.js (@path mention expansion + read gate)
-npm run test:web       # node test/test-web-backend.js (backend harness) + node --test test/test-web-sandbox.js (sandbox suite)
+npm run test:web       # backend harness + web build, then sandbox suite (live servers boot dist/server.js)
 npm run ci             # build + lint + format check + test (runs in order)
 ```
 

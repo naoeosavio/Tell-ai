@@ -23,7 +23,7 @@ npm run format         # biome check --write packages/
 npm run check          # biome check packages/
 npm run test:security  # build SDK, then node test/test-tell-security.js
 npm run test:mentions  # build SDK, then node test/test-tell-mentions.js
-npm run test:web       # web backend harness + packages/web suite
+npm run test:web       # web backend harness + web build, then packages/web suite (live servers boot dist/server.js)
 npm run test           # test:sdk + test:security + test:context + test:stream + test:mentions + test:web
 npm run ci             # build + lint + format check + test
 ```
