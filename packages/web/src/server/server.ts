@@ -682,6 +682,7 @@ app.post('/api/tell', async (req, res) => {
       system: effectiveSystem,
       messages: formattedMessages,
       reasoning: reasoning as any,
+      ...(handle.providerOptions ? { providerOptions: handle.providerOptions } : {}),
     });
 
     return res.json({
