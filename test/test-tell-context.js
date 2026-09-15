@@ -602,6 +602,154 @@ async function test_history_empty_term_exit_zero_and_no_match_exit_one() {
 }
 
 // ---------------------------------------------------------------------
+// Phase 6 — hardening: fs race, ANSI sanitization, stable order,
+// permissions, malformed filenames
+// ---------------------------------------------------------------------
+
+// A dangling symlink (file vanished between readdir and stat) must be
+// skipped, not crash `--history` with an unhandled ENOENT.
+async function test_history_dangling_symlink_is_skipped_not_crash() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
+  try {
+    await run_tell(['d', '--ctx', 'keep', '-n', 'seed prompt'], 'seed answer', { dir });
+    await run_tell(['d', 'another prompt'], 'another answer', { dir });
+
+    fs.symlinkSync(path.join(dir, 'nowhere.txt'), path.join(dir, 'home', '.ai', 'tell_context', 'gone.txt'));
+    const history_dir_path = path.join(dir, 'home', '.ai', 'tell_history');
+    fs.symlinkSync(path.join(dir, 'nowhere.txt'), path.join(history_dir_path, 'conversation_gone.txt'));
+
+    const listed = await run_tell(['-l'], 'unused', { dir });
+    assert.strictEqual(listed.exitCode, undefined);
+    assert_includes(listed.stdout, '@0');
+    assert_includes(listed.stdout, 'keep');
+    assert_includes(listed.stdout, 'Conversations:');
+    assert_includes(listed.stdout, 'another prompt');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// Log files replay raw command stdout/stderr and model output; every
+// `--history` echo (cat, listing, search) must strip ANSI/control bytes.
+async function test_history_echo_strips_ansi_and_control_chars() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
+  try {
+    await run_tell(['d', 'poison probe'], 'plain answer', { dir });
+    const history_dir_path = path.join(dir, 'home', '.ai', 'tell_history');
+    const log = path.join(history_dir_path, fs.readdirSync(history_dir_path)[0]);
+    fs.appendFileSync(
+      log,
+      ['Executed command:', 'cat payload', 'Output:', '\x1b]0;pwned-title\x07\x1b[2Jcleared\x1b[31mred\x1b[0m\x7f\x08\x1bA', ''].join('\n'),
+      'utf8',
+    );
+
+    const shown = await run_tell(['--history', '#0'], 'unused', { dir });
+    assert.strictEqual(shown.exitCode, undefined);
+    assert.ok(!shown.stdout.includes('\x1b'), 'echoed entry must not contain ESC bytes');
+    assert.ok(!shown.stdout.includes('\x07'), 'echoed entry must not contain BEL bytes');
+    assert.ok(!shown.stdout.includes('\x7f'), 'echoed entry must not contain DEL bytes');
+    assert.ok(!shown.stdout.includes('\x08'), 'echoed entry must not contain BS bytes');
+    assert_includes(shown.stdout, 'cleared');
+    assert_includes(shown.stdout, 'poison probe');
+
+    const found = await run_tell(['--history', 'cleared'], 'unused', { dir });
+    assert.ok(!found.stdout.includes('\x1b'), 'search snippet must not contain ESC bytes');
+    assert.match(found.stdout, /#\d+\s+conversation\s+cleared/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// Equal mtimes must not make `#N`/`@N` flip between calls (stable tie-break).
+async function test_history_order_stable_on_equal_mtime() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
+  try {
+    const history_dir_path = path.join(dir, 'home', '.ai', 'tell_history');
+    fs.mkdirSync(history_dir_path, { recursive: true });
+    for (const name of ['conversation_zz.txt', 'conversation_aa.txt']) {
+      fs.writeFileSync(path.join(history_dir_path, name), 'Model: m\nUser:\nprobe\nAssistant:\nok\n', 'utf8');
+    }
+    const stamp = new Date('2026-01-01T00:00:00Z');
+    fs.utimesSync(path.join(history_dir_path, 'conversation_zz.txt'), stamp, stamp);
+    fs.utimesSync(path.join(history_dir_path, 'conversation_aa.txt'), stamp, stamp);
+
+    const first = await run_tell(['-l'], 'unused', { dir });
+    const second = await run_tell(['-l'], 'unused', { dir });
+    const order = (text) => (text.match(/#\d+/g) || []).join(',');
+    assert.ok(order(first.stdout).length > 0);
+    assert.strictEqual(order(first.stdout), order(second.stdout), 'equal-mtime entries must keep a stable order');
+    assert.strictEqual(order(first.stdout), '#0,#1');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// Stores live under the user's home and contain command output/prompts;
+// they must be private (0700 dirs, 0600 files), not world-readable.
+async function test_history_and_context_stores_are_private() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
+  try {
+    const result = await run_tell(['d', '-c', 'private prompt'], 'private answer', { dir });
+    const context_dir_path_checked = path.join(result.home, '.ai', 'tell_context');
+    const history_dir_path = path.join(result.home, '.ai', 'tell_history');
+
+    const context_dir_mode = fs.statSync(context_dir_path_checked).mode & 0o077;
+    const history_dir_mode = fs.statSync(history_dir_path).mode & 0o077;
+    assert.strictEqual(context_dir_mode, 0, 'context dir must not be group/other accessible');
+    assert.strictEqual(history_dir_mode, 0, 'history dir must not be group/other accessible');
+
+    const context_file = path.join(context_dir_path_checked, fs.readdirSync(context_dir_path_checked)[0]);
+    const log_file_path = path.join(history_dir_path, fs.readdirSync(history_dir_path)[0]);
+    assert.strictEqual(fs.statSync(context_file).mode & 0o077, 0, 'context file must be 0600-ish');
+    assert.strictEqual(fs.statSync(log_file_path).mode & 0o077, 0, 'log file must be 0600-ish');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// A non-ISO session filename must degrade to `(unknown date)`, not garbage.
+async function test_history_malformed_session_name_falls_back() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
+  try {
+    const history_dir_path = path.join(dir, 'home', '.ai', 'tell_history');
+    fs.mkdirSync(history_dir_path, { recursive: true });
+    fs.writeFileSync(path.join(history_dir_path, 'conversation_not-a-date.txt'), 'Model: m\nUser:\nodd name probe\nAssistant:\nok\n', 'utf8');
+
+    const listed = await run_tell(['-l'], 'unused', { dir });
+    assert.strictEqual(listed.exitCode, undefined);
+    assert_includes(listed.stdout, '(unknown date)');
+    assert_includes(listed.stdout, 'odd name probe');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// Standalone unit layer for the history module's printers (pure functions).
+function load_history_standalone() {
+  const module_obj = { exports: {} };
+  new Function('require', 'module', 'exports', history_source)(require, module_obj, module_obj.exports);
+  return module_obj.exports;
+}
+
+async function test_history_unit_print_search_results_empty_and_basic() {
+  const history = load_history_standalone();
+  let printed = '';
+  const original_log = console.log;
+  console.log = (...items) => {
+    printed += `${items.join(' ')}\n`;
+  };
+  try {
+    history.print_search_results([], 'x');
+    history.print_search_results([{ ref: '@0', kind: 'context', snippet: 'hello world' }], 'world');
+  } finally {
+    console.log = original_log;
+  }
+  assert_includes(printed, '@0');
+  assert_includes(printed, 'hello world');
+  assert.ok(!printed.includes('undefined'), 'no -Infinity/pad artifacts on empty results');
+}
+
+// ---------------------------------------------------------------------
 // Prompt handling without context flags (no reconciliation, no guessing)
 // ---------------------------------------------------------------------
 
@@ -714,6 +862,12 @@ const TESTS = [
   test_history_search_finds_context_and_conversation,
   test_history_invalid_refs_error_with_totals,
   test_history_empty_term_exit_zero_and_no_match_exit_one,
+  test_history_dangling_symlink_is_skipped_not_crash,
+  test_history_echo_strips_ansi_and_control_chars,
+  test_history_order_stable_on_equal_mtime,
+  test_history_and_context_stores_are_private,
+  test_history_malformed_session_name_falls_back,
+  test_history_unit_print_search_results_empty_and_basic,
   test_multiword_prompt_with_default_context_flag,
   test_short_numeric_prompt_reaches_the_model,
   test_no_exec_overrides_yes_flag,
