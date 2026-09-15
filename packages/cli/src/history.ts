@@ -29,6 +29,10 @@ export type SearchResult = { ref: string; kind: 'context' | 'conversation'; snip
  * characters from stored text before it is echoed. Log files contain raw
  * command stdout/stderr and model output, so a poisoned log could otherwise
  * spoof the terminal or write to the clipboard (OSC 52) via `--history`.
+ *
+ * Both the 7-bit (ESC-prefixed) and 8-bit C1 forms are removed: some
+ * terminals interpret U+009B as CSI and U+009D as OSC, so leaving the C1
+ * range (`\x7f`–`\x9f`) in place would reopen the same injection.
  */
 function sanitize_text(text: string): string {
   return text
@@ -36,7 +40,7 @@ function sanitize_text(text: string): string {
     .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
     .replace(/\x1b[@-Z\\-_]/g, '')
     .replace(/\x1b/g, '')
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, '');
 }
 
 function read_text(file: string): string {

@@ -724,6 +724,69 @@ async function test_history_malformed_session_name_falls_back() {
   }
 }
 
+// Terminals may honor 8-bit C1 controls (U+009B = CSI, U+009D = OSC, …), not
+// just the ESC-prefixed C0 forms. A poisoned log must not be able to spoof the
+// terminal through `--history` via C1 bytes either.
+async function test_history_echo_strips_c1_control_chars() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
+  try {
+    await run_tell(['d', 'c1 probe'], 'plain answer', { dir });
+    const history_dir_path = path.join(dir, 'home', '.ai', 'tell_history');
+    const log = path.join(history_dir_path, fs.readdirSync(history_dir_path)[0]);
+    fs.appendFileSync(log, 'Output:\nC1VISIBLE\u009b2Jwiped\u009d52;c;QQ==\u009c\u0085\u0080end\n', 'utf8');
+
+    const shown = await run_tell(['--history', '%0'], 'unused', { dir });
+    assert.strictEqual(shown.exitCode, undefined);
+    for (const code of [0x80, 0x85, 0x9b, 0x9c, 0x9d]) {
+      assert.ok(
+        !shown.stdout.includes(String.fromCharCode(code)),
+        `echoed entry must not contain C1 control U+00${code.toString(16).toUpperCase()}`,
+      );
+    }
+    assert_includes(shown.stdout, 'C1VISIBLE');
+    assert_includes(shown.stdout, 'end');
+
+    const found = await run_tell(['--history', 'C1VISIBLE'], 'unused', { dir });
+    for (const code of [0x9b, 0x9c, 0x9d]) {
+      assert.ok(
+        !found.stdout.includes(String.fromCharCode(code)),
+        'search snippet must not contain C1 controls',
+      );
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// The store mode is applied only when mkdir/open creates the entry. A
+// pre-existing (legacy) world-readable store must be tightened on the next
+// write, or prompts/command output stay group/other readable forever.
+async function test_history_repairs_legacy_world_readable_store() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
+  try {
+    const home = path.join(dir, 'home');
+    const context_store = path.join(home, '.ai', 'tell_context');
+    const history_store = path.join(home, '.ai', 'tell_history');
+    fs.mkdirSync(context_store, { recursive: true });
+    fs.mkdirSync(history_store, { recursive: true });
+    fs.chmodSync(context_store, 0o755);
+    fs.chmodSync(history_store, 0o755);
+    const legacy = path.join(context_store, 'legacy.txt');
+    fs.writeFileSync(legacy, 'User:\nold\nAssistant:\nold answer\n', { mode: 0o644 });
+    fs.chmodSync(legacy, 0o644);
+
+    const result = await run_tell(['d', '--ctx', 'legacy', 'continue'], 'new answer', { dir });
+    assert.strictEqual(result.exitCode, undefined);
+
+    assert.strictEqual(fs.statSync(context_store).mode & 0o077, 0, 'legacy context dir must be tightened');
+    assert.strictEqual(fs.statSync(history_store).mode & 0o077, 0, 'legacy history dir must be tightened');
+    assert.strictEqual(fs.statSync(legacy).mode & 0o077, 0, 'legacy context file must be tightened');
+    const new_log = path.join(history_store, fs.readdirSync(history_store)[0]);
+    assert.strictEqual(fs.statSync(new_log).mode & 0o077, 0, 'new log file must be private');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
 // Standalone unit layer for the history module's printers (pure functions).
 function load_history_standalone() {
   const module_obj = { exports: {} };
@@ -870,6 +933,8 @@ const TESTS = [
   test_history_order_stable_on_equal_mtime,
   test_history_and_context_stores_are_private,
   test_history_malformed_session_name_falls_back,
+  test_history_echo_strips_c1_control_chars,
+  test_history_repairs_legacy_world_readable_store,
   test_history_unit_print_search_results_empty_and_basic,
   test_multiword_prompt_with_default_context_flag,
   test_short_numeric_prompt_reaches_the_model,

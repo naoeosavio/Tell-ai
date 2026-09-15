@@ -34,8 +34,8 @@
 
 ## Security
 
-* Echoed content is sanitized: `show_entry`, listings and search snippets strip ANSI escape sequences (CSI/OSC) and control characters before printing — conversation logs replay raw command stdout/stderr, so a poisoned log cannot spoof the terminal or touch the clipboard (OSC 52) via `--history`.
-* Stores stay private: `~/.ai/tell_history` and `~/.ai/tell_context` directories are created `0700`, files `0600` (existing files keep their mode; modes apply at creation).
+* Echoed content is sanitized: `show_entry`, listings and search snippets strip ANSI escape sequences (CSI/OSC), C0 and 8-bit C1 control characters before printing — conversation logs replay raw command stdout/stderr, so a poisoned log cannot spoof the terminal or touch the clipboard (OSC 52) via `--history`. The C1 range (`U+0080`–`U+009F`) matters because some terminals read `U+009B`/`U+009D` as CSI/OSC.
+* Stores stay private: `~/.ai/tell_history` and `~/.ai/tell_context` are tightened to `0700` dirs / `0600` files on every write, not just at creation — a store left world-readable by an older version (or a lax umask) is repaired the next time `tell` writes to it.
 * Files that vanish between `readdir` and `stat` (dangling symlinks, concurrent removal) are skipped instead of crashing; listing order is stable on equal mtimes (name tie-break), so `@N`/`%N` refs don't flip between calls.
 
 ## Examples

@@ -95,9 +95,22 @@ type ScriptsResult = { text: string; failed: boolean };
 
 const CREATED_DIRS = new Set<string>();
 
+// Best-effort tightening of a store's permissions. `mkdir`/`open` only apply
+// `mode` at creation, so a store written by an older version (or with a lax
+// umask) would otherwise stay group/other readable forever.
+function tighten_permissions(target: string, mode: number): void {
+  try {
+    fs.chmodSync(target, mode);
+  } catch {
+    // Exotic filesystems (and some Windows setups) reject chmod — never let
+    // the permission repair fail the actual write.
+  }
+}
+
 function ensure_dir(dir: string): void {
   if (CREATED_DIRS.has(dir)) return;
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  tighten_permissions(dir, 0o700);
   CREATED_DIRS.add(dir);
 }
 
@@ -360,6 +373,7 @@ function build_context_plan(opts: CliOptions, model: string, entries: ContextEnt
 function append_log(file: string, text: string): void {
   ensure_dir(path.dirname(file));
   fs.appendFileSync(file, `${text}\n`, { encoding: 'utf8', mode: 0o600 });
+  tighten_permissions(file, 0o600);
 }
 
 function read_text(file: string): string {
@@ -378,6 +392,7 @@ function limit_context(text: string): string {
 function write_context(file: string, content: string): void {
   ensure_dir(path.dirname(file));
   fs.writeFileSync(file, `${limit_context(content).trim()}\n`, { encoding: 'utf8', mode: 0o600 });
+  tighten_permissions(file, 0o600);
 }
 
 function save_incremental_context(contextPath: string, previousContext: string, state: ConversationState): void {
