@@ -76,6 +76,16 @@ Auto-Run off. With `--chain`, each held command still pauses for approval
 with the feedback. The risk gate is fail-closed: if classification fails, the
 command goes to manual approval.
 
+## Sidebar panes
+
+The sidebar stacks the file explorer (top) and the settings panel (bottom).
+Each pane folds to its own title bar through the chevron in its header, and the
+collapsed/expanded state persists in `localStorage` (`theme-config-v3`) next to
+`sidebarCollapsed`/`threadsCollapsed`. Collapsing the explorer hands its height
+to settings (and vice versa), and the settings resize handle only exists while
+the settings pane is open. The navbar's global toggle still hides the whole
+sidebar at once.
+
 ## Envs (see `.env.example`)
 
 `PORT`, `TELL_MODEL`, `TELL_TOKEN` (`Bearer` auth on `/api/*` except the public

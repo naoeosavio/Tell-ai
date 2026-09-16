@@ -542,6 +542,80 @@ describe('web sandbox: terminal layout', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Sidebar pane layout: collapsing one of the two panes hands the free height to
+// the other, and the settings resizer only exists while settings is open.
+// ---------------------------------------------------------------------------
+describe('web sandbox: sidebar pane layout', () => {
+  const { clampSettingsHeightPx, resolveSidebarPaneLayout } = loadModule('src/shared/sidebar-layout.ts');
+
+  const state = (isExplorerCollapsed, isSettingsCollapsed) => ({
+    isExplorerCollapsed,
+    isSettingsCollapsed,
+  });
+
+  describe('clampSettingsHeightPx', () => {
+    it('clamps into [140, 900] and rounds', () => {
+      assert.strictEqual(clampSettingsHeightPx(320), 320);
+      assert.strictEqual(clampSettingsHeightPx(10), 140);
+      assert.strictEqual(clampSettingsHeightPx(5000), 900);
+      assert.strictEqual(clampSettingsHeightPx(320.6), 321);
+    });
+
+    it('falls back to the default height for junk', () => {
+      assert.strictEqual(clampSettingsHeightPx(undefined), 320);
+      assert.strictEqual(clampSettingsHeightPx('320'), 320);
+      assert.strictEqual(clampSettingsHeightPx(Number.NaN), 320);
+      assert.strictEqual(clampSettingsHeightPx(null), 320);
+    });
+  });
+
+  describe('resolveSidebarPaneLayout', () => {
+    it('both open: explorer grows, settings keeps its fixed height', () => {
+      const panes = resolveSidebarPaneLayout(state(false, false), 320);
+      assert.strictEqual(panes.shouldGrowExplorer, true);
+      assert.strictEqual(panes.shouldGrowSettings, false);
+      assert.strictEqual(panes.shouldShowResizer, true);
+      assert.strictEqual(panes.settingsHeightPx, 320);
+    });
+
+    it('explorer collapsed: settings absorbs the freed height', () => {
+      const panes = resolveSidebarPaneLayout(state(true, false), 320);
+      assert.strictEqual(panes.shouldGrowExplorer, false);
+      assert.strictEqual(panes.shouldGrowSettings, true);
+      assert.strictEqual(panes.shouldShowResizer, true);
+      assert.strictEqual(panes.settingsHeightPx, null);
+    });
+
+    it('settings collapsed: explorer keeps growing, no resizer', () => {
+      const panes = resolveSidebarPaneLayout(state(false, true), 320);
+      assert.strictEqual(panes.shouldGrowExplorer, true);
+      assert.strictEqual(panes.shouldGrowSettings, false);
+      assert.strictEqual(panes.shouldShowResizer, false);
+      assert.strictEqual(panes.settingsHeightPx, null);
+    });
+
+    it('both collapsed: neither pane grows and the resizer is gone', () => {
+      const panes = resolveSidebarPaneLayout(state(true, true), 320);
+      assert.strictEqual(panes.shouldGrowExplorer, false);
+      assert.strictEqual(panes.shouldGrowSettings, false);
+      assert.strictEqual(panes.shouldShowResizer, false);
+      assert.strictEqual(panes.settingsHeightPx, null);
+    });
+
+    it('never grows both panes and clamps the persisted height', () => {
+      for (const isExplorerCollapsed of [false, true]) {
+        for (const isSettingsCollapsed of [false, true]) {
+          const panes = resolveSidebarPaneLayout(state(isExplorerCollapsed, isSettingsCollapsed), 12000);
+          assert.ok(!(panes.shouldGrowExplorer && panes.shouldGrowSettings));
+          assert.strictEqual(panes.shouldShowResizer, !isSettingsCollapsed);
+          assert.ok(panes.settingsHeightPx === null || panes.settingsHeightPx <= 900);
+        }
+      }
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Execution toggles: Auto-Run / Require Approval / No-Exec persist through
 // page reloads (localStorage), and garbage/shape errors fall back to null so
 // the server /api/config default seeds on the first visit only.

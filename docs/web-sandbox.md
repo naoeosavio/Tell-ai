@@ -34,7 +34,7 @@ browser tab, no SSH client or local terminal needed.
 |---------|--------------|
 | **Console Interface (real PTY)** | Each pane is a persistent interactive bash session with a real TTY. `tmux`, `vim`, `htop`, `codex`, `opencode`, `claude-code`, `tell-ai` all work as in your local shell. Up to 4 tabs / 4 panes each. |
 | **AI Chat & Workspace** | General chat that manages the session: ask questions, request changes, and let the AI run commands through the `<RUN>` bridge (`/api/execute`). |
-| **File Explorer & Editor** | Browse the project tree and open/edit files directly in the browser. |
+| **File Explorer & Editor** | Browse the project tree and open/edit files directly in the browser. The explorer and the settings panes each collapse to their own title bar (chevron), so you can fold one without losing the other; the choice persists. |
 | **Auto-generated system prompt** | The sandbox builds a persistent system prompt from the project: directory tree (up to 4 levels), `README.md`, and `AGENTS.md`/`agent.md` if present. |
 | **Session persistence** | Auto-saved to `.tell/` (chat, model, prompt, tabs/panes, scrollback, keys used, files changed, stats) and restored on your next visit. |
 
