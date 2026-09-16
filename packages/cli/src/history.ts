@@ -43,6 +43,16 @@ function sanitize_text(text: string): string {
     .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, '');
 }
 
+/**
+ * Single-line echo of an untrusted label (context id/file name): applies
+ * {@link sanitize_text} and also drops tab/newline, so a stored file name
+ * cannot forge extra stderr lines. Used by `--ctx` when it announces
+ * `Using context:`/`Created context:` or lists ambiguous id matches.
+ */
+export function sanitize_label(text: string): string {
+  return sanitize_text(text).replace(/[\t\n]/g, '');
+}
+
 function read_text(file: string): string {
   try {
     return sanitize_text(fs.readFileSync(file, 'utf8').trim());

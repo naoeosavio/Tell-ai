@@ -23,6 +23,7 @@ import {
   list_sessions,
   print_history_list,
   print_search_results,
+  sanitize_label,
   search_contexts,
   search_sessions,
   short_id,
@@ -62,14 +63,18 @@ type ParsedInput = { model: string; parts: string[]; readStdin: boolean };
 
 // The resolved plan for how the current invocation should read/write context:
 // - 'none': no context flag was given (legacy one-shot behavior, default context is cleared).
-// - 'default': `-c` or bare `--ctx` — the per-directory + model context.
-// - 'existing': `--ctx <ref>` resolved to an already-saved context (by index, hash prefix, or name).
-// - 'create': `--ctx <name> -n` (explicit reset) or `--ctx` on a missing name.
+// - 'default': `-c`, bare `--ctx`, or prompt text supplied through `--ctx` — the
+//   per-directory + model context (its file name is the sha256 hash, so `%<hash>` addresses it too).
+// - 'existing': `--ctx @N` or `--ctx %id` resolved to an already-saved context.
+// - 'create': `--ctx %id -n` (explicit reset) or a `%id` with no saved match.
+// `promptFromRef` carries the text after a ref (or the whole bare value) so it
+// is prepended to the positional prompt without ever reaching `expand_mentions`
+// as a mention token.
 type ContextPlan =
   | { $: 'none' }
   | { $: 'default'; file: string; promptFromRef?: string }
-  | { $: 'existing'; file: string; label: string }
-  | { $: 'create'; file: string; label: string };
+  | { $: 'existing'; file: string; label: string; promptFromRef?: string }
+  | { $: 'create'; file: string; label: string; promptFromRef?: string };
 
 // Effective execution mode, resolved once from the flags (fail-closed):
 // - 'no-exec': never execute — `--no-exec` wins over everything.
@@ -290,8 +295,9 @@ function run_history_dispatch(ref: boolean | string): void {
   print_search_results(results, value);
 }
 
-// Validates a token as a human-readable context name: no whitespace, a safe
-// filename charset. Ref syntax (`@N`, `#hash`) is excluded by the charset.
+// Validates a token as a context id: no whitespace, a safe filename charset.
+// `%id` is use-or-create over this single namespace (ids ARE the context
+// filenames, so a saved id and its file name are the same thing).
 function sanitize_context_name(raw: string): string | null {
   const NAME_MAX_LENGTH = 100;
   const value = raw.trim();
@@ -300,73 +306,129 @@ function sanitize_context_name(raw: string): string | null {
   return value;
 }
 
-// A multi-word `--ctx` value cannot be a name or ref (both are single
-// tokens), so it is prompt text for the default context (`-c` behavior).
-function ctx_value_is_prompt_text(value: string): boolean {
-  return /\s/.test(value.trim());
+// Splits a `--ctx` value into its first word and the remaining text. The
+// first word is the ref only when it is `@N` or starts with `%`; the rest is
+// prompt text for that context.
+function split_ctx_value(value: string): { first: string; rest: string } {
+  const trimmed = value.trim();
+  const separator = trimmed.search(/\s/);
+  if (separator === -1) return { first: trimmed, rest: '' };
+  return { first: trimmed.slice(0, separator), rest: trimmed.slice(separator + 1).trim() };
 }
 
-// Resolves a `--ctx <ref>` value into a context plan. Syntax is explicit, one
-// namespace per prefix: `@N` = recency index, `#hex` = hash prefix — both must
-// match an existing context. A single-token name is use-or-create (resumed
-// when it exists, created when it doesn't). A multi-word value is prompt text
-// for the default context — unnamed contexts are never saved.
-function resolve_or_create_context_ref(raw: string, entries: ContextEntry[], model: string): ContextPlan {
-  const value = raw.trim();
+// True when a token opens a context ref: `@N` (recency index) or `%id`
+// (use-or-create). A bare `@path` token is NOT a ref — it stays prompt text
+// and is expanded by `expand_mentions` afterwards.
+function is_context_ref_token(token: string): boolean {
+  return /^@\d+$/i.test(token) || token.startsWith('%');
+}
 
-  const index_match = /^@(\d+)$/i.exec(value);
-  if (index_match?.[1] !== undefined) {
-    const index = Number(index_match[1]);
+// True when the `--ctx` value itself carries prompt text: any text after a
+// ref, or a value whose first word is not a ref at all. `main()` uses this to
+// decide whether `--ctx` alone satisfies the missing-prompt check.
+function ctx_value_has_prompt(value: string): boolean {
+  const { first, rest } = split_ctx_value(value);
+  if (!first) return false;
+  return rest.length > 0 || !is_context_ref_token(first);
+}
+
+// Resolves a `%id` use-or-create ref over the unique id namespace: an exact
+// id or a unique hex prefix resumes the saved context, anything else creates
+// `<id>.txt`. The id charset is validated by the caller.
+function resolve_percent_context_ref(
+  id: string,
+  entries: ContextEntry[],
+): { $: 'existing' | 'create'; file: string; label: string } {
+  const exact = entries.find((entry) => entry.id === id);
+  if (exact) return { $: 'existing', file: exact.file, label: id };
+
+  if (/^[0-9a-f]+$/i.test(id)) {
+    const matches = entries.filter((entry) => entry.id.toLowerCase().startsWith(id.toLowerCase()));
+    if (matches.length === 1 && matches[0]) {
+      return { $: 'existing', file: matches[0].file, label: short_id(matches[0].id) };
+    }
+    if (matches.length > 1) {
+      const ids = matches.map((entry) => sanitize_label(short_id(entry.id))).join(', ');
+      throw new Error(`Ambiguous context id "%${id}" — matches: ${ids}`);
+    }
+  }
+  return { $: 'create', file: named_context_file(id), label: id };
+}
+
+// Resolves a `--ctx <ref>` value into a context plan. The first word is the
+// ref when it is `@N` or `%id`; the rest is prompt text carried into the
+// prompt (never into `expand_mentions`). `@N` must exist; `%id` is
+// use-or-create. Without a ref, a single token followed by a positional
+// prompt is a hard error (naming requires `%`); multi-word text and a lone
+// token with no positional prompt are prompt text for the default context.
+function resolve_context_ref(
+  raw: string,
+  entries: ContextEntry[],
+  model: string,
+  has_positional_prompt: boolean,
+): ContextPlan {
+  const value = raw.trim();
+  const { first, rest } = split_ctx_value(value);
+
+  if (/^@\d+$/i.test(first)) {
+    const index = Number(first.slice(1));
     const entry = entries[index];
     if (!entry) {
       throw new Error(
         `No context at index ${index} (have ${entries.length} saved context${entries.length === 1 ? '' : 's'})`,
       );
     }
-    return { $: 'existing', file: entry.file, label: `@${index} (${short_id(entry.id)})` };
+    const label = `@${index} (${short_id(entry.id)})`;
+    return rest
+      ? { $: 'existing', file: entry.file, label, promptFromRef: rest }
+      : { $: 'existing', file: entry.file, label };
   }
 
-  if (value.startsWith('#')) {
-    const hash_prefix = value.slice(1);
-    if (!/^[0-9a-f]+$/i.test(hash_prefix)) {
-      throw new Error(`Invalid hash reference "${value}" — use # followed by hex digits`);
+  if (first.startsWith('%')) {
+    const id = sanitize_context_name(first.slice(1));
+    if (!id) {
+      throw new Error(`Invalid context reference "${sanitize_label(first)}" — use % followed by a context id`);
     }
-    const matches = entries.filter((entry) => entry.id.toLowerCase().startsWith(hash_prefix.toLowerCase()));
-    if (matches.length === 1 && matches[0]) {
-      return { $: 'existing', file: matches[0].file, label: short_id(matches[0].id) };
-    }
-    if (matches.length > 1) {
-      const ids = matches.map((entry) => short_id(entry.id)).join(', ');
-      throw new Error(`Ambiguous context hash "${value}" — matches: ${ids}`);
-    }
-    throw new Error(`No context matches hash "${value}"`);
+    const resolved = resolve_percent_context_ref(id, entries);
+    return rest ? { $: resolved.$, file: resolved.file, label: resolved.label, promptFromRef: rest } : resolved;
   }
 
-  const name = sanitize_context_name(value);
-  if (name) {
-    const match = entries.find((entry) => entry.id === name);
-    if (match) return { $: 'existing', file: match.file, label: name };
-    return { $: 'create', file: named_context_file(name), label: name };
+  if (has_positional_prompt && !/\s/.test(value)) {
+    throw new Error(
+      `Invalid context reference "${sanitize_label(value)}" — naming a context requires %: use --ctx %<id>`,
+    );
   }
+  return { $: 'default', file: context_file(model), promptFromRef: value };
+}
 
-  if (ctx_value_is_prompt_text(value)) {
-    return { $: 'default', file: context_file(model), promptFromRef: value };
-  }
-
-  throw new Error(`Invalid context reference "${value}" — use @N (recency), #hash-prefix, or a name`);
+// Whether a resolved plan carries prompt text to prepend to the positional
+// prompt (the text after a ref, or the whole bare `--ctx` value).
+function plan_prompt_from_ref(plan: ContextPlan): string {
+  return plan.$ !== 'none' && plan.promptFromRef ? plan.promptFromRef : '';
 }
 
 // Builds the effective context plan for this invocation from the parsed
-// `-c`/`--ctx`/`-n` options. `--ctx <name> -n` is an explicit reset: always
-// starts empty, even when the name already exists.
-function build_context_plan(opts: CliOptions, model: string, entries: ContextEntry[]): ContextPlan {
+// `-c`/`--ctx`/`-n` options. `--ctx %id -n` is an explicit reset: starts
+// empty even when the id exists. `-n` requires `%id` — bare tokens are prompt
+// text for the default context, never a name.
+function build_context_plan(
+  opts: CliOptions,
+  model: string,
+  entries: ContextEntry[],
+  has_positional_prompt: boolean,
+): ContextPlan {
   if (opts.name) {
-    const name = typeof opts.ctx === 'string' ? sanitize_context_name(opts.ctx) : null;
-    if (!name) throw new Error('-n/--name requires a context name: --ctx <name> -n');
-    return { $: 'create', file: named_context_file(name), label: name };
+    const { first, rest } = split_ctx_value(typeof opts.ctx === 'string' ? opts.ctx : '');
+    const id = first.startsWith('%') ? sanitize_context_name(first.slice(1)) : null;
+    if (!id) throw new Error('-n/--name requires a context id: --ctx %<id> -n');
+    return rest
+      ? { $: 'create', file: named_context_file(id), label: id, promptFromRef: rest }
+      : { $: 'create', file: named_context_file(id), label: id };
   }
   if (opts.ctx === true || opts.context) return { $: 'default', file: context_file(model) };
-  if (typeof opts.ctx === 'string') return resolve_or_create_context_ref(opts.ctx, entries, model);
+  if (typeof opts.ctx === 'string') {
+    return resolve_context_ref(opts.ctx, entries, model, has_positional_prompt);
+  }
   return { $: 'none' };
 }
 
@@ -698,8 +760,11 @@ function build_program(argv: string[]): Command {
     .argument('[input...]', 'optional model followed by the prompt, or just the prompt')
     .option('-m, --model <model>', 'model shortcode or full model spec (use -m --help to list)')
     .option('-c, --context', 'use the default context for this directory and model')
-    .option('--ctx [ref]', 'use-or-create: @N, #hash-prefix, name, or prompt text for the default context')
-    .option('-n, --name', 'reset a named context (--ctx <name> -n; starts empty, even if it exists)')
+    .option(
+      '--ctx [ref]',
+      'context ref (@N recency, %id use-or-create) + prompt, or prompt text alone (default context)',
+    )
+    .option('-n, --name', 'reset a context (--ctx %id -n; starts empty, even if it exists)')
     .option('-l, --history [ref]', 'list contexts + conversations; @N/%N show an entry; any other value searches both')
     .option('-y, --yes', 'execute requested commands without confirmation')
     .option('--require-approval', 'with -y: safe commands run directly, high-risk ones still ask for confirmation')
@@ -891,13 +956,18 @@ async function launch_web(opts: {
   });
 }
 
-async function run_tell(model: string, prompt: string, opts: CliOptions): Promise<void> {
+async function run_tell(
+  model: string,
+  prompt: string,
+  opts: CliOptions,
+  has_positional_prompt: boolean,
+): Promise<void> {
   let label = '';
   let plan: ContextPlan;
   try {
     label = model_label(model);
     const entries = typeof opts.ctx === 'string' ? list_context_entries() : [];
-    plan = build_context_plan(opts, model, entries);
+    plan = build_context_plan(opts, model, entries, has_positional_prompt);
   } catch (error) {
     console.error('\x1b[31m%s\x1b[0m', error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
@@ -905,15 +975,18 @@ async function run_tell(model: string, prompt: string, opts: CliOptions): Promis
   }
 
   if (plan.$ === 'create') {
-    process.stderr.write(`\x1b[2mCreated context: ${plan.label}\x1b[0m\n`);
+    process.stderr.write(`\x1b[2mCreated context: ${sanitize_label(plan.label)}\x1b[0m\n`);
   } else if (plan.$ === 'existing') {
-    process.stderr.write(`\x1b[2mUsing context: ${plan.label}\x1b[0m\n`);
+    process.stderr.write(`\x1b[2mUsing context: ${sanitize_label(plan.label)}\x1b[0m\n`);
   } else {
     // 'none' and 'default' reuse the legacy per-directory/model context silently — nothing to announce.
   }
 
-  // A multi-word `--ctx` value is prompt text for the fresh context it created.
-  const raw_prompt = [plan.$ === 'default' ? (plan.promptFromRef ?? '') : '', prompt].filter(Boolean).join(' ');
+  // Prompt text carried by the `--ctx` value (after a ref, or a bare value
+  // with no positional prompt) is prepended to the positional prompt. Refs
+  // themselves never reach `expand_mentions`.
+  const ctx_prompt = plan_prompt_from_ref(plan);
+  const raw_prompt = [ctx_prompt, prompt].filter(Boolean).join(' ').trim();
   // `@path` mentions resolve against the working directory; the expanded
   // text is what reaches the log, the timeline, and the saved context.
   const full_prompt = await expand_mentions(raw_prompt, process.cwd(), { yes: Boolean(opts.yes) });
@@ -998,13 +1071,17 @@ async function main() {
     });
     return;
   }
-  const ctx_is_prompt = typeof opts.ctx === 'string' && ctx_value_is_prompt_text(opts.ctx);
-  if (!prompt && !ctx_is_prompt) {
+  const ctx_has_prompt = typeof opts.ctx === 'string' && ctx_value_has_prompt(opts.ctx);
+  if (!prompt && !ctx_has_prompt) {
     console.error(format_missing_prompt_error(program));
     process.exitCode = 1;
     return;
   }
-  await run_tell(input.model, prompt, opts);
+  // `input.parts` is the positional prompt with any leading model spec already
+  // stripped, so a positional model (`tell g --ctx ola`) does not count as a
+  // prompt. A bare `--ctx` token (no `%`/`@`) is prompt text only when there
+  // is no positional prompt; naming a context requires `%`.
+  await run_tell(input.model, prompt, opts, input.parts.length > 0);
 }
 
 main().catch((error: unknown) => {
