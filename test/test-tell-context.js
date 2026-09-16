@@ -8,10 +8,13 @@
 // resulting stdout/stderr/exec calls/context files on disk.
 //
 // Context flags are fully explicit: `-c` = default per-dir/model context,
-// `--ctx [ref]` = bare = default context; `@N` recency / `#hash` prefix
-// resume (must exist); a name is use-or-create; multi-word value = prompt
-// text for the default context. `-n` = reset modifier (`--ctx <name> -n`).
-// Unnamed contexts are never saved.
+// bare `--ctx` = default context. `--ctx @N [prompt]` = recency index (must
+// exist); `--ctx %id [prompt]` = use-or-create over the id namespace
+// (exact id or unique hex prefix resumes, otherwise `<id>.txt` is created);
+// the first word is the ref and the rest is prompt text. A bare single token
+// with no positional prompt is prompt text for the default context; a bare
+// single token WITH a positional prompt is an error (naming requires `%`).
+// `-n` = reset modifier, requires `%id` (`--ctx %id -n`).
 
 const assert = require('node:assert');
 const { EventEmitter } = require('node:events');
@@ -158,13 +161,21 @@ async function run_tell(args, response, opts = {}) {
       return history_module.exports;
     }
     if (name === '@tell-ai/sdk') {
+      // Records the prompt and returns the next canned answer. Shared by the
+      // one-shot and streaming paths so both see the same messages/calls.
+      const record = (message, options = {}) => {
+        tell_messages.push(message);
+        tell_calls.push({ message, options });
+        return responses.length > 1 ? responses.shift() : responses[0];
+      };
       return {
         ...sdk,
         create_ask_ai: async () => ({
-          ask: async (message, options = {}) => {
-            tell_messages.push(message);
-            tell_calls.push({ message, options });
-            return responses.length > 1 ? responses.shift() : responses[0];
+          ask: async (message, options = {}) => record(message, options),
+          // Minimal streaming shim so `--stream` flags parse/behave in this
+          // suite; one text delta keeps stdout identical to the non-stream path.
+          ask_stream: async function* (message, options = {}) {
+            yield { type: 'text', text: await record(message, options) };
           },
         }),
       };
@@ -293,7 +304,7 @@ async function test_ctx_bare_is_default_context() {
 
 // A multi-word `--ctx` value is prompt text for the DEFAULT context —
 // nothing is saved under a random id, it behaves exactly like `-c`.
-async function test_ctx_multivord_value_is_default_context_with_prompt() {
+async function test_ctx_multiword_value_is_default_context_with_prompt() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
   try {
     await run_tell(['d', '-c', 'remember X'], 'ack X', { dir });
@@ -305,6 +316,13 @@ async function test_ctx_multivord_value_is_default_context_with_prompt() {
     // only the default per-cwd/model context exists — no random-id file.
     assert.strictEqual(list_context_files(result.home).length, 1);
     assert.match(list_context_files(result.home)[0], /^[a-f0-9]{64}\.txt$/);
+
+    // Multi-word bare text stays prompt text even with a positional prompt —
+    // only a SINGLE bare token is rejected in that position.
+    const combined = await run_tell(['d', '--ctx', 'what did I say?', 'and what next?'], 'both', { dir });
+    assert_includes(combined.tellMessages[0], 'what did I say?');
+    assert_includes(combined.tellMessages[0], 'and what next?');
+    assert.strictEqual(list_context_files(combined.home).length, 1);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -313,13 +331,13 @@ async function test_ctx_multivord_value_is_default_context_with_prompt() {
 async function test_name_reset_starts_fresh_even_if_name_exists() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
   try {
-    const created = await run_tell(['d', '--ctx', 'myproj', '-n', 'seed the project'], 'seeded', { dir });
+    const created = await run_tell(['d', '--ctx', '%myproj', '-n', 'seed the project'], 'seeded', { dir });
     assert_includes(created.stderr, 'Created context: myproj');
     assert.strictEqual(list_context_files(created.home).length, 1);
 
-    // `--ctx <name> -n` is an explicit reset: same name, but the fresh
+    // `--ctx %<id> -n` is an explicit reset: same id, but the fresh
     // context must NOT feed the previous content back to the model.
-    const recreated = await run_tell(['d', '--ctx', 'myproj', '-n', 'start over'], 'fresh', { dir });
+    const recreated = await run_tell(['d', '--ctx', '%myproj', '-n', 'start over'], 'fresh', { dir });
     assert_includes(recreated.stderr, 'Created context: myproj');
     assert_not_includes(recreated.tellMessages[0], 'seeded');
     assert_not_includes(recreated.tellMessages[0], 'Previous context:');
@@ -330,18 +348,18 @@ async function test_name_reset_starts_fresh_even_if_name_exists() {
 }
 
 async function test_name_reset_invalid_name_is_hard_error() {
-  const result = await run_tell(['d', '--ctx', 'bad/name', '-n', 'prompt text'], 'ok');
+  const result = await run_tell(['d', '--ctx', '%bad/name', '-n', 'prompt text'], 'ok');
   assert.strictEqual(result.exitCode, 1);
-  assert_includes(result.stderr, '-n/--name requires a context name: --ctx <name> -n');
+  assert_includes(result.stderr, '-n/--name requires a context id: --ctx %<id> -n');
   assert.deepStrictEqual(result.tellCalls, []);
 }
 
 async function test_name_reset_path_traversal_name_rejected() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
   try {
-    const result = await run_tell(['d', '--ctx', '../../evil', '-n', 'attempt escape'], 'ok', { dir });
+    const result = await run_tell(['d', '--ctx', '%../../evil', '-n', 'attempt escape'], 'ok', { dir });
     assert.strictEqual(result.exitCode, 1);
-    assert_includes(result.stderr, '-n/--name requires a context name: --ctx <name> -n');
+    assert_includes(result.stderr, '-n/--name requires a context id: --ctx %<id> -n');
     assert.deepStrictEqual(result.tellCalls, []);
     assert.strictEqual(list_context_files(result.home).length, 0);
     assert.ok(!fs.existsSync(path.join(result.home, '.ai', 'evil.txt')));
@@ -356,7 +374,7 @@ async function test_name_reset_path_traversal_name_rejected() {
 // ---------------------------------------------------------------------
 
 async function test_ctx_flag_does_not_combine_with_others() {
-  const result = await run_tell(['d', '--ctx', 'myproj', '-c', 'hello world'], 'unused');
+  const result = await run_tell(['d', '--ctx', '%myproj', '-c', 'hello world'], 'unused');
   assert.strictEqual(result.exitCode, 1);
   assert_includes(result.stderr, '--ctx cannot be combined with -c');
   assert.deepStrictEqual(result.tellCalls, []);
@@ -369,10 +387,10 @@ async function test_ctx_flag_does_not_combine_with_others() {
 async function test_context_hash_prefix_resolves_unique_match() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
   try {
-    await run_tell(['d', '--ctx', 'abc123', '-n', 'seed one'], 'seed one answer', { dir });
-    await run_tell(['d', '--ctx', 'abc999', '-n', 'seed two'], 'seed two answer', { dir });
+    await run_tell(['d', '--ctx', '%abc123', '-n', 'seed one'], 'seed one answer', { dir });
+    await run_tell(['d', '--ctx', '%abc999', '-n', 'seed two'], 'seed two answer', { dir });
 
-    const resumed = await run_tell(['d', '--ctx', '#abc12', 'continue'], 'continued answer', { dir });
+    const resumed = await run_tell(['d', '--ctx', '%abc12', 'continue'], 'continued answer', { dir });
     assert_includes(resumed.stderr, 'Using context: ');
     assert_includes(resumed.tellMessages[0], 'seed one answer');
     assert_not_includes(resumed.tellMessages[0], 'seed two answer');
@@ -384,12 +402,12 @@ async function test_context_hash_prefix_resolves_unique_match() {
 async function test_context_hash_prefix_ambiguous_errors() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
   try {
-    await run_tell(['d', '--ctx', 'abc123', '-n', 'seed one'], 'seed one answer', { dir });
-    await run_tell(['d', '--ctx', 'abc124', '-n', 'seed two'], 'seed two answer', { dir });
+    await run_tell(['d', '--ctx', '%abc123', '-n', 'seed one'], 'seed one answer', { dir });
+    await run_tell(['d', '--ctx', '%abc124', '-n', 'seed two'], 'seed two answer', { dir });
 
-    const ambiguous = await run_tell(['d', '--ctx', '#abc12', 'continue'], 'unused', { dir });
+    const ambiguous = await run_tell(['d', '--ctx', '%abc12', 'continue'], 'unused', { dir });
     assert.strictEqual(ambiguous.exitCode, 1);
-    assert_includes(ambiguous.stderr, 'Ambiguous context hash "#abc12"');
+    assert_includes(ambiguous.stderr, 'Ambiguous context id "%abc12"');
     assert.deepStrictEqual(ambiguous.tellCalls, []);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -399,9 +417,9 @@ async function test_context_hash_prefix_ambiguous_errors() {
 async function test_context_index_recency_resolution() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
   try {
-    await run_tell(['d', '--ctx', 'older', '-n', 'first'], 'first answer', { dir });
+    await run_tell(['d', '--ctx', '%older', '-n', 'first'], 'first answer', { dir });
     await sleep(20);
-    await run_tell(['d', '--ctx', 'newer', '-n', 'second'], 'second answer', { dir });
+    await run_tell(['d', '--ctx', '%newer', '-n', 'second'], 'second answer', { dir });
 
     const zero = await run_tell(['d', '--ctx', '@0', 'check'], 'zero answer', { dir });
     assert_includes(zero.stderr, 'Using context: @0 (newer)');
@@ -418,7 +436,7 @@ async function test_context_index_recency_resolution() {
 async function test_context_index_out_of_range_is_hard_error() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
   try {
-    await run_tell(['d', '--ctx', 'only', '-n', 'seed'], 'seed answer', { dir });
+    await run_tell(['d', '--ctx', '%only', '-n', 'seed'], 'seed answer', { dir });
 
     const out_of_range = await run_tell(['d', '--ctx', '@5', 'check'], 'unused', { dir });
     assert.strictEqual(out_of_range.exitCode, 1);
@@ -432,9 +450,9 @@ async function test_context_index_out_of_range_is_hard_error() {
 async function test_named_context_resumable_via_ctx() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
   try {
-    await run_tell(['d', '--ctx', 'myproject', '-n', 'remember this'], 'remembered', { dir });
+    await run_tell(['d', '--ctx', '%myproject', '-n', 'remember this'], 'remembered', { dir });
 
-    const resumed = await run_tell(['d', '--ctx', 'myproject', 'continue'], 'continued answer', { dir });
+    const resumed = await run_tell(['d', '--ctx', '%myproject', 'continue'], 'continued answer', { dir });
     assert_includes(resumed.stderr, 'Using context: myproject');
     assert_includes(resumed.tellMessages[0], 'Previous context:');
     assert_includes(resumed.tellMessages[0], 'remembered');
@@ -445,17 +463,17 @@ async function test_named_context_resumable_via_ctx() {
   }
 }
 
-// `--ctx <name>` is use-or-create: an unknown name creates the context on
+// `--ctx %id` is use-or-create: an unknown id creates the context on
 // first touch and resumes it (with full previous context) on the next.
 async function test_ctx_name_creates_when_missing_then_resumes() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
   try {
-    const created = await run_tell(['d', '--ctx', 'newproj', 'seed it'], 'seeded answer', { dir });
+    const created = await run_tell(['d', '--ctx', '%newproj', 'seed it'], 'seeded answer', { dir });
     assert_includes(created.stderr, 'Created context: newproj');
     assert_not_includes(created.tellMessages[0], 'Previous context:');
     assert.strictEqual(list_context_files(created.home).length, 1);
 
-    const resumed = await run_tell(['d', '--ctx', 'newproj', 'continue it'], 'continued answer', { dir });
+    const resumed = await run_tell(['d', '--ctx', '%newproj', 'continue it'], 'continued answer', { dir });
     assert_includes(resumed.stderr, 'Using context: newproj');
     assert_includes(resumed.tellMessages[0], 'Previous context:');
     assert_includes(resumed.tellMessages[0], 'seeded answer');
@@ -465,21 +483,172 @@ async function test_ctx_name_creates_when_missing_then_resumes() {
   }
 }
 
-// A single token that is neither @N, #hash, nor a valid name is a hard
-// error — it is NOT silently reinterpreted as prompt text.
+// A bare token (no `%`) with a positional prompt is a hard error — naming
+// a context requires the `%` prefix. It is NOT reinterpreted as prompt text.
 async function test_ctx_invalid_single_token_is_hard_error() {
   const result = await run_tell(['d', '--ctx', 'bad/name', 'prompt'], 'unused');
   assert.strictEqual(result.exitCode, 1);
-  assert_includes(result.stderr, 'Invalid context reference "bad/name"');
+  assert_includes(result.stderr, 'naming a context requires %');
   assert.deepStrictEqual(result.tellCalls, []);
+}
+
+// `--ctx @N <words>` / `--ctx %id <words>`: the first word addresses the
+// context, the rest is prompt text. The ref is consumed before mentions, so
+// `@N` never triggers a `mention "@N" not found` warning.
+async function test_ctx_ref_with_prompt_text_uses_addressed_context() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
+  try {
+    await run_tell(['d', '--ctx', '%older', '-n', 'first'], 'first answer', { dir });
+    await sleep(20);
+    await run_tell(['d', '--ctx', '%newer', '-n', 'second'], 'second answer', { dir });
+
+    const at_ref = await run_tell(['d', '--ctx', '@0 fix the bug'], 'fixed', { dir });
+    assert_includes(at_ref.stderr, 'Using context: @0 (newer)');
+    assert_includes(at_ref.tellMessages[0], 'second answer');
+    assert_includes(at_ref.tellMessages[0], 'fix the bug');
+    assert_not_includes(at_ref.stderr, 'not found');
+
+    const pct_ref = await run_tell(['d', '--ctx', '%fresh seed it'], 'seeded', { dir });
+    assert_includes(pct_ref.stderr, 'Created context: fresh');
+    assert_includes(pct_ref.tellMessages[0], 'seed it');
+    assert_not_includes(pct_ref.tellMessages[0], '%fresh');
+
+    // addressee files only — the default per-dir/model hash context is untouched.
+    const files = list_context_files(pct_ref.home);
+    assert.deepStrictEqual(files, ['fresh.txt', 'newer.txt', 'older.txt']);
+    assert.strictEqual(files.filter((name) => /^[a-f0-9]{64}\.txt$/.test(name)).length, 0);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// `%<hex>` is use-or-create over the file-name namespace too: a unique hex
+// prefix resumes the saved context, no match creates `<id>.txt`.
+async function test_ctx_percent_hex_prefix_resumes_unique_or_creates() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
+  try {
+    await run_tell(['d', '--ctx', '%abc111', '-n', 'seed one'], 'one answer', { dir });
+
+    const resumed = await run_tell(['d', '--ctx', '%abc11', 'continue'], 'continued', { dir });
+    assert_includes(resumed.stderr, 'Using context: ');
+    assert_includes(resumed.tellMessages[0], 'one answer');
+
+    const created = await run_tell(['d', '--ctx', '%fff999 fresh prompt'], 'fresh answer', { dir });
+    assert_includes(created.stderr, 'Created context: fff999');
+    assert_includes(created.tellMessages[0], 'fresh prompt');
+    assert.ok(list_context_files(created.home).includes('fff999.txt'));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// A lone bare token is prompt text for the default context when there is no
+// positional prompt — including when a flag follows `--ctx`.
+async function test_ctx_bare_single_token_is_default_prompt() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
+  try {
+    const lone = await run_tell(['d', '--ctx', 'ola'], 'hi', { dir });
+    assert_includes(lone.tellMessages[0], 'ola');
+    const files = list_context_files(lone.home);
+    assert.strictEqual(files.length, 1);
+    assert.match(files[0], /^[a-f0-9]{64}\.txt$/);
+    assert.ok(!files.includes('ola.txt'));
+
+    const flag_after = await run_tell(['d', '--ctx', 'ola', '--stream'], 'hi', { dir });
+    assert_includes(flag_after.tellMessages[0], 'ola');
+    assert.ok(!list_context_files(flag_after.home).includes('ola.txt'));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// A single bare token WITH a positional prompt cannot name a context — the
+// `%` prefix is required. `-n` requires `%id` for the same reason.
+async function test_ctx_bare_token_with_positional_is_hard_error() {
+  const bare = await run_tell(['d', '--ctx', 'ola', 'real prompt'], 'unused');
+  assert.strictEqual(bare.exitCode, 1);
+  assert_includes(bare.stderr, 'naming a context requires %');
+  assert.deepStrictEqual(bare.tellCalls, []);
+
+  const work = await run_tell(['d', '--ctx', 'work', 'do things'], 'unused');
+  assert.strictEqual(work.exitCode, 1);
+  assert_includes(work.stderr, 'naming a context requires %');
+  assert.deepStrictEqual(work.tellCalls, []);
+
+  const reset = await run_tell(['d', '--ctx', 'ola', '-n', 'seed'], 'unused');
+  assert.strictEqual(reset.exitCode, 1);
+  assert_includes(reset.stderr, '-n/--name requires a context id');
+  assert.deepStrictEqual(reset.tellCalls, []);
+}
+
+// `--ctx %id` plus a positional prompt is valid: the ref addresses the
+// context, the positional text is the prompt.
+async function test_ctx_percent_ref_with_positional_prompt_is_valid() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
+  try {
+    const created = await run_tell(['d', '--ctx', '%ola', 'real prompt'], 'answer', { dir });
+    assert_includes(created.stderr, 'Created context: ola');
+    assert_includes(created.tellMessages[0], 'real prompt');
+    assert_not_includes(created.tellMessages[0], '%ola');
+    assert.ok(list_context_files(created.home).includes('ola.txt'));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// A context file NAME is untrusted data: any local process can drop a file in
+// `~/.ai/tell_context/`, and `--ctx` echoes the id in `Using context:` and in
+// the ambiguous-`%<hex>` error. Those echoes must strip ANSI/OSC/C1 controls
+// and newlines (a name could otherwise spoof the terminal or forge stderr
+// lines), mirroring the `--history` echo hardening.
+async function test_ctx_echo_strips_control_chars_from_file_names() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
+  try {
+    const store = context_dir_path(path.join(dir, 'home'));
+    fs.mkdirSync(store, { recursive: true });
+
+    // @0 label: OSC (title/clipboard), CSI (screen clear), 8-bit C1 and a
+    // forged LF line injected through the file name.
+    const poisoned = `abcd12\x1b]0;pwned\x07\x1b[2J\x9b2J\x9d\nFORGED`;
+    fs.writeFileSync(path.join(store, `${poisoned}.txt`), 'User:\nseed\nAssistant:\nseed answer\n', 'utf8');
+
+    const shown = await run_tell(['d', '--ctx', '@0', 'continue'], 'answer', { dir });
+    assert.strictEqual(shown.exitCode, undefined);
+    assert_includes(shown.stderr, 'Using context: @0');
+    assert_not_includes(shown.stderr, 'pwned');
+    assert_not_includes(shown.stderr, '\x07');
+    assert_not_includes(shown.stderr, '\x9b');
+    assert_not_includes(shown.stderr, '\x9d');
+    assert_not_includes(shown.stderr, '\nFORGED');
+
+    // Ambiguous `%<hex>` prefix: the error lists on-disk ids — same rule.
+    fs.writeFileSync(path.join(store, 'fff111\x1b]0;one\x07.txt'), 'User:\na\n', 'utf8');
+    fs.writeFileSync(path.join(store, 'fff12\x9b2J\x9d\nFORGED.txt'), 'User:\nb\n', 'utf8');
+
+    const ambiguous = await run_tell(['d', '--ctx', '%fff1', 'continue'], 'unused', { dir });
+    assert.strictEqual(ambiguous.exitCode, 1);
+    assert_includes(ambiguous.stderr, 'Ambiguous context id "%fff1"');
+    assert_not_includes(ambiguous.stderr, '\x07');
+    assert_not_includes(ambiguous.stderr, '\x9b');
+    assert_not_includes(ambiguous.stderr, '\nFORGED');
+
+    // User-supplied ref text in the invalid-charset error is sanitized too.
+    const invalid = await run_tell(['d', '--ctx', '%\x1b]0;x\x07/bad', 'prompt'], 'unused', { dir });
+    assert.strictEqual(invalid.exitCode, 1);
+    assert_includes(invalid.stderr, 'Invalid context reference');
+    assert_not_includes(invalid.stderr, 'x\x07');
+    assert_not_includes(invalid.stderr, '\x07');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 async function test_context_list_shows_saved_entries() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
   try {
-    await run_tell(['d', '--ctx', 'alpha', '-n', 'a'], 'alpha answer', { dir });
+    await run_tell(['d', '--ctx', '%alpha', '-n', 'a'], 'alpha answer', { dir });
     await sleep(15);
-    await run_tell(['d', '--ctx', 'beta', '-n', 'b'], 'beta answer', { dir });
+    await run_tell(['d', '--ctx', '%beta', '-n', 'b'], 'beta answer', { dir });
 
     const listed = await run_tell(['-l'], 'unused', { dir });
     assert.strictEqual(listed.tellCalls.length, 0);
@@ -524,7 +693,7 @@ async function test_history_listing_shows_conversations() {
 async function test_history_at_ref_reprints_context() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
   try {
-    await run_tell(['d', '--ctx', 'ctxshow', '-n', 'ctxshow prompt'], 'ctxshow answer', { dir });
+    await run_tell(['d', '--ctx', '%ctxshow', '-n', 'ctxshow prompt'], 'ctxshow answer', { dir });
 
     const shown = await run_tell(['--history', '@0'], 'unused', { dir });
     assert.strictEqual(shown.tellCalls.length, 0);
@@ -552,7 +721,7 @@ async function test_history_hash_ref_reprints_session() {
 async function test_history_search_finds_context_and_conversation() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
   try {
-    await run_tell(['d', '--ctx', 'needle', '-n', 'needle prompt'], 'needle answer', { dir });
+    await run_tell(['d', '--ctx', '%needle', '-n', 'needle prompt'], 'needle answer', { dir });
 
     const found = await run_tell(['--history', 'needle answer'], 'unused', { dir });
     assert.strictEqual(found.tellCalls.length, 0);
@@ -570,7 +739,7 @@ async function test_history_search_finds_context_and_conversation() {
 async function test_history_invalid_refs_error_with_totals() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
   try {
-    await run_tell(['d', '--ctx', 'only', '-n', 'seed'], 'seed answer', { dir });
+    await run_tell(['d', '--ctx', '%only', '-n', 'seed'], 'seed answer', { dir });
 
     const bad_context = await run_tell(['--history', '@9'], 'unused', { dir });
     assert.strictEqual(bad_context.exitCode, 1);
@@ -611,7 +780,7 @@ async function test_history_empty_term_exit_zero_and_no_match_exit_one() {
 async function test_history_dangling_symlink_is_skipped_not_crash() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
   try {
-    await run_tell(['d', '--ctx', 'keep', '-n', 'seed prompt'], 'seed answer', { dir });
+    await run_tell(['d', '--ctx', '%keep', '-n', 'seed prompt'], 'seed answer', { dir });
     await run_tell(['d', 'another prompt'], 'another answer', { dir });
 
     fs.symlinkSync(path.join(dir, 'nowhere.txt'), path.join(dir, 'home', '.ai', 'tell_context', 'gone.txt'));
@@ -775,7 +944,7 @@ async function test_history_repairs_legacy_world_readable_store() {
     fs.writeFileSync(legacy, 'User:\nold\nAssistant:\nold answer\n', { mode: 0o644 });
     fs.chmodSync(legacy, 0o644);
 
-    const result = await run_tell(['d', '--ctx', 'legacy', 'continue'], 'new answer', { dir });
+    const result = await run_tell(['d', '--ctx', '%legacy', 'continue'], 'new answer', { dir });
     assert.strictEqual(result.exitCode, undefined);
 
     assert.strictEqual(fs.statSync(context_store).mode & 0o077, 0, 'legacy context dir must be tightened');
@@ -856,7 +1025,7 @@ async function test_no_exec_overrides_yes_flag() {
 async function test_poisoned_named_context_does_not_autoexecute() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-'));
   try {
-    const seed = await run_tell(['d', '--ctx', 'shared', '-n', 'seed'], 'seed answer', { dir });
+    const seed = await run_tell(['d', '--ctx', '%shared', '-n', 'seed'], 'seed answer', { dir });
     const context_path = path.join(context_dir_path(seed.home), 'shared.txt');
     fs.writeFileSync(
       context_path,
@@ -864,7 +1033,7 @@ async function test_poisoned_named_context_does_not_autoexecute() {
       'utf8',
     );
 
-    const resumed = await run_tell(['--yes', 'd', '--ctx', 'shared', 'continue safely'], 'safe answer', { dir });
+    const resumed = await run_tell(['--yes', 'd', '--ctx', '%shared', 'continue safely'], 'safe answer', { dir });
     assert.deepStrictEqual(resumed.execCalls, []);
     assert.strictEqual(resumed.stdout, 'safe answer\n');
     assert_includes(resumed.tellMessages[0], 'Previous context:');
@@ -909,7 +1078,7 @@ const TESTS = [
   test_bare_context_isolated_across_models_same_dir,
   test_no_flag_invocation_clears_default_context,
   test_ctx_bare_is_default_context,
-  test_ctx_multivord_value_is_default_context_with_prompt,
+  test_ctx_multiword_value_is_default_context_with_prompt,
   test_name_reset_starts_fresh_even_if_name_exists,
   test_name_reset_invalid_name_is_hard_error,
   test_name_reset_path_traversal_name_rejected,
@@ -921,6 +1090,12 @@ const TESTS = [
   test_named_context_resumable_via_ctx,
   test_ctx_name_creates_when_missing_then_resumes,
   test_ctx_invalid_single_token_is_hard_error,
+  test_ctx_ref_with_prompt_text_uses_addressed_context,
+  test_ctx_percent_hex_prefix_resumes_unique_or_creates,
+  test_ctx_bare_single_token_is_default_prompt,
+  test_ctx_bare_token_with_positional_is_hard_error,
+  test_ctx_percent_ref_with_positional_prompt_is_valid,
+  test_ctx_echo_strips_control_chars_from_file_names,
   test_context_list_shows_saved_entries,
   test_history_listing_shows_conversations,
   test_history_at_ref_reprints_context,

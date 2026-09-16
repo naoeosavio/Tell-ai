@@ -11,7 +11,7 @@
 | `tell --history %N` | Reprints conversation N in full (its `conversation_<timestamp>.txt` log). |
 | `tell --history "term"` | Case-insensitive search over both directories; hits printed as `@N context …` / `%N conversation …` rows with the matched line (highlighted on TTY, clipped to ~120 chars). |
 
-`%N` inside `--history` is always a conversation (`%` needs no shell quoting — `#` starts a shell comment, so the old `#N` form required quotes). `#hash`-prefix refs stay exclusive to `--ctx` — namespaces per flag, documented in [context.md](context.md).
+`%N` inside `--history` is always a conversation (`%` needs no shell quoting — `#` starts a shell comment, so the old `#N` form required quotes). Context refs are `@N`/`%id` inside `--ctx` — namespaces per flag, documented in [context.md](context.md); the `#hash` prefix was removed with the `--ctx` re-grammar.
 
 ## Invariant
 

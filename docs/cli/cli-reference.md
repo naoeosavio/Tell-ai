@@ -33,8 +33,8 @@ Full spec format: `vendor:model[:thinking]` with thinking in `none|low|medium|hi
 |------|------|---------|
 | `-m, --model <model>` | string | Model alias or full spec. `-m --help` lists aliases. |
 | `-c, --context` | boolean | Use default per-directory+model context. |
-| `--ctx [ref]` | optional string | Use-or-create: bare = default; `@N` recency; `#hash` prefix; `name`; multi-word = prompt text for default. Cannot combine with `-c`. |
-| `-n, --name` | boolean | Reset modifier: `--ctx <name> -n` always starts empty. Requires a valid name. |
+| `--ctx [ref]` | optional string | Context ref + prompt: `@N` recency, `%id` use-or-create; text after the ref is the prompt. No ref = prompt text for the default context. A single bare token with a positional prompt is an error (naming requires `%`). Cannot combine with `-c`. |
+| `-n, --name` | boolean | Reset modifier: `--ctx %id -n` always starts empty. Requires `%id`. |
 | `-l, --history [ref]` | optional string | List contexts + conversations; `@N`/`%N` reprints an entry; any other value searches both. No model call. See [history.md](history.md). |
 | `-y, --yes` | boolean | Auto-approve commands. High-risk **and** any reference to paths outside the working directory still require confirmation. No-op without TTY for those (auto-reject). |
 | `--require-approval` | boolean | Explicit Require Approval mode: with `-y`, safe commands run directly and high-risk ones still ask; without `-y`, every command asks (same as default). Never weakens the high-risk gate. Forwarded by `-w`/`--web` to seed the web sandbox toggle. |
@@ -52,7 +52,7 @@ Full spec format: `vendor:model[:thinking]` with thinking in `none|low|medium|hi
 | `-c` / bare `--ctx` | yes (default file) | no | yes (final + incremental) | no |
 | `--chain` | no | yes | no | yes, 8 rounds |
 | `-c --chain` / `--ctx … --chain` | yes | no | yes (incremental each round) | yes, 8 rounds |
-| `--ctx @N\|#hash\|name` | yes (that file) | no | yes | only with `--chain` |
+| `--ctx @N\|%id` | yes (that file) | no | yes | only with `--chain` |
 
 Without flags the default context file for this cwd+model is removed (`Tell.ts:695`) — deliberate one-shot hygiene, covered by `test_no_flag_invocation_clears_default_context`.
 
@@ -65,13 +65,15 @@ Without flags the default context file for this cwd+model is removed (`Tell.ts:6
 * Without `-i/--input`: `[userText, stdinText].filter(Boolean).join('\n')`.
 * With `-i/--input`: `User request:\n<user>\n\nInput:\n<stdin>` (either half may stand alone).
 
-Missing prompt is exit 1 with commander help (`format_missing_prompt_error`, `Tell.ts:542-544`). Exception: a multi-word `--ctx` value counts as prompt text for the default context (`ctx_is_prompt`, `Tell.ts:740-744`):
+Missing prompt is exit 1 with commander help (`format_missing_prompt_error`). Exception: a `--ctx` value that carries prompt text counts — text after a ref, or a bare value with no positional prompt (`ctx_value_has_prompt`):
 
 ```bash
-tell d --ctx ola                 # "ola" is a NAME, no prompt → error: missing prompt
-tell d --ctx ola "say hello"     # named context "ola" + prompt "say hello"
-tell d -c ola                    # one-word prompt on default context
+tell d --ctx %ola "say hello"    # context "ola" + prompt "say hello"
+tell d --ctx %ola                # ref only, no prompt → error: missing prompt
+tell d --ctx ola                 # "ola" is PROMPT text on the default context
+tell d --ctx ola "say hello"     # one bare token + positional → error: naming requires %
 tell d --ctx "say hello"         # multi-word → prompt on default context
+tell d -c ola                    # one-word prompt on default context
 ```
 
 ## File mentions (`@path`)
@@ -105,14 +107,14 @@ tell --chain "find why the build fails and fix it"
 npm run build 2>&1 | tell --chain -i "what should I fix first?"
 git diff --staged | tell --input "review this change"
 tell -c "remember this project uses PostgreSQL"
-tell --ctx myproj "continue the project"
-tell --ctx myproj -n "start over"
+tell --ctx %myproj "continue the project"
+tell --ctx %myproj -n "start over"
 tell -l                          # combined contexts + conversations listing
 tell --history @0                # cat the most recent context
 tell -l %0                       # cat the most recent conversation
 tell --history "kafka consumer"  # search both stores
 tell --ctx @0 "resume the most recent"
-tell --ctx '#a1b2c3' "resume by hash prefix"
+tell --ctx %a1b2c3 "resume by hash prefix"
 ```
 
 Sources: `Tell.ts:83-107`, `Tell.ts:484-544`, `Tell.ts:655-752`.

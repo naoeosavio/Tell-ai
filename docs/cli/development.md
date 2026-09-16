@@ -59,7 +59,7 @@ All CLI suites avoid network/LLM by transpiling the real `Tell.ts` (`typescript.
 * `child_process.exec[promisify.custom]`: records scripts, returns canned stdout/stderr.
 * `os.homedir`: redirected into a temp dir; `process.cwd`: temp work dir; `argv/stdin/stdout/stderr/exitCode`: faked.
 
-`test/test-tell-security.js` (426 lines): risky-script skips, injection policy, stdin shapes, `<RUN>`/`<think>` extraction, chain, context hygiene. `test/test-tell-context.js` (28 tests): addressing (`@N`, `#hash`, names), `-n` reset + traversal rejection, `--history` (combined listing, `@N`/`#N` cat, search, exit codes), multi-word semantics, incremental-save non-duplication, poisoned-context safety. `test/test-tell-mentions.js` (22 tests): unit layer (file/dir/missing/binary/truncation/escape/punctuation/tree limits/`is_outside_cwd`/symlink/FIFO) + integration layer (model/log/context receive the expansion, outside-cwd denial, poisoned-file inertness, stdin + `--ctx` combo).
+`test/test-tell-security.js` (426 lines): risky-script skips, injection policy, stdin shapes, `<RUN>`/`<think>` extraction, chain, context hygiene. `test/test-tell-context.js` (42 tests): `--ctx` grammar (`@N`, `%id`, ref + prompt text, bare-token error), use-or-create resume/create, `-n` reset + traversal rejection, `--history` (combined listing, `@N`/`%N` cat, search, exit codes), multi-word semantics, control-char-free context label echo, incremental-save non-duplication, poisoned-context safety. `test/test-tell-mentions.js` (22 tests): unit layer (file/dir/missing/binary/truncation/escape/punctuation/tree limits/`is_outside_cwd`/symlink/FIFO) + integration layer (model/log/context receive the expansion, outside-cwd denial, poisoned-file inertness, stdin + `--ctx` combo).
 
 ```bash
 bun run test:security   # via root; builds SDK first (tag fns exercised for real)
@@ -71,7 +71,7 @@ bun run test            # all suites
 
 * New flag: `CliOptions` + `build_program` + `build_context_plan`/`run_tell` wiring + `format_missing_prompt_error` if it affects required input; add cases to both suites.
 * New high-risk shape: one regex in `is_high_risk_script` + one entry in `docs/cli/security.md` table + one `riskyScripts` line in the security suite. Keep local-only one-liners allowed unless they gain a network/decode token.
-* Context semantics: `ContextPlan` is the contract — update `docs/cli/context.md` alongside `resolve_or_create_context_ref`/`build_context_plan`.
+* Context semantics: `ContextPlan` is the contract — update `docs/cli/context.md` alongside `resolve_context_ref`/`build_context_plan`.
 * Mention semantics: `expand_mentions` + `is_outside_cwd` are the contract — update `docs/cli/mentions.md` alongside `src/mentions.ts`, and add cases to `test/test-tell-mentions.js`.
 * Model/alias changes live in the SDK (`packages/sdk/src/models.ts`); the CLI only calls `resolve_model_spec`/`model_label`. Never read `process.env` from the SDK.
 
