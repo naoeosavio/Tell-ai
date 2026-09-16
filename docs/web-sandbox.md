@@ -294,6 +294,13 @@ The chat header controls how AI-requested commands run:
 Reasoning headers (🧠) are collapsed by default; `--think` starts them expanded
 and any manual expand/collapse persists for future messages.
 
+The reply transport has its own toggle in **Settings → Agent Runtime**
+(`Stream` / `No Stream`). The client sends `stream: <boolean>` on `/api/tell`
+and the server honors it per request; `--stream` only seeds the toggle on the
+first visit and stays the fallback when the field is absent. Both modes produce
+the same accumulated text — the toggle changes the transport (NDJSON vs one
+JSON body), so logs, context and `<RUN>` extraction stay identical.
+
 Precedence: `No-Exec` > per-command risk gate. These are client-side toggles
 whose last choice is remembered in `localStorage` (survives page reloads;
 `localStorage` → first-visit only, server flags like `-y`/`--no-exec` seed the

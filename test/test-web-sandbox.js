@@ -100,6 +100,44 @@ function loadModule(name) {
 const DIST_SERVER = path.join(WEB_SRC, 'dist', 'server.js');
 assert.ok(fs.existsSync(DIST_SERVER), `bundle missing: ${DIST_SERVER} (run the web build first)`);
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Boots a live bundle and resolves its base URL once the readiness probe answers.
+// Shared by every live-server suite (routes, tell transport, initial prompt).
+async function waitForServer(proc, timeoutMs = 45000, probePath = '/api/config') {
+  let out = '';
+  const portPromise = new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`server did not start within ${timeoutMs}ms. Output: ${out.slice(-2000)}`)),
+      timeoutMs,
+    );
+    proc.stdout.on('data', (d) => {
+      out += d.toString();
+      const m = out.match(/running at http:\/\/\S+:(\d+)/);
+      if (m) {
+        clearTimeout(timer);
+        resolve(Number(m[1]));
+      }
+    });
+    proc.stderr.on('data', (d) => {
+      out += d.toString();
+    });
+    proc.on('exit', (code) => reject(new Error(`server exited with code ${code}. Output: ${out.slice(-2000)}`)));
+  });
+  const port = await portPromise;
+  const deadline = Date.now() + 15000;
+  for (;;) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}${probePath}`);
+      if (res.ok) return `http://127.0.0.1:${port}`;
+    } catch {
+      /* still booting */
+    }
+    if (Date.now() > deadline) throw new Error(`${probePath} did not respond`);
+    await sleep(250);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Server guards: isHighRiskScript + isSensitiveRelPath (task_build cases)
 // ---------------------------------------------------------------------------
@@ -565,6 +603,19 @@ describe('web sandbox: exec toggles', () => {
   it('round-trips reasoningExpanded alongside the execution toggles', () => {
     saveExecToggles({ autoExecute: false, reasoningExpanded: true });
     assert.deepStrictEqual(loadExecToggles(), { autoExecute: false, reasoningExpanded: true });
+  });
+
+  it('round-trips streamMode (Stream / No Stream) alongside the execution toggles', () => {
+    saveExecToggles({ chainMode: true, streamMode: true });
+    assert.deepStrictEqual(loadExecToggles(), { chainMode: true, streamMode: true });
+    // Explicit No Stream survives a reload too (false is not "unset").
+    saveExecToggles({ streamMode: false });
+    assert.deepStrictEqual(loadExecToggles(), { streamMode: false });
+  });
+
+  it('ignores a non-boolean streamMode', () => {
+    store.set(EXEC_TOGGLES_KEY, JSON.stringify({ streamMode: 'yes', chainMode: true }));
+    assert.deepStrictEqual(loadExecToggles(), { chainMode: true });
   });
 
   it('treats garbage/corrupted storage as no saved state', () => {
@@ -1387,45 +1438,9 @@ describe('web sandbox: auth', () => {
 // /snapshot returns name. Spins the production bundle (dist/server.js).
 // ---------------------------------------------------------------------------
 describe('web sandbox: api routes', () => {
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
   let dir;
   let child;
   let base;
-
-  async function waitForServer(proc, timeoutMs = 45000) {
-    let out = '';
-    const portPromise = new Promise((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error(`server did not start within ${timeoutMs}ms. Output: ${out.slice(-2000)}`)),
-        timeoutMs,
-      );
-      proc.stdout.on('data', (d) => {
-        out += d.toString();
-        const m = out.match(/running at http:\/\/\S+:(\d+)/);
-        if (m) {
-          clearTimeout(timer);
-          resolve(Number(m[1]));
-        }
-      });
-      proc.stderr.on('data', (d) => {
-        out += d.toString();
-      });
-      proc.on('exit', (code) => reject(new Error(`server exited with code ${code}. Output: ${out.slice(-2000)}`)));
-    });
-    const port = await portPromise;
-    const deadline = Date.now() + 15000;
-    for (;;) {
-      try {
-        const res = await fetch(`http://127.0.0.1:${port}/api/config`);
-        if (res.ok) return `http://127.0.0.1:${port}`;
-      } catch {
-        /* still booting */
-      }
-      if (Date.now() > deadline) throw new Error('api/config did not respond');
-      await sleep(250);
-    }
-  }
 
   before(async () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-web-routes-'));
@@ -1546,49 +1561,191 @@ describe('web sandbox: api routes', () => {
 });
 
 // ---------------------------------------------------------------------------
+// /api/tell transport: the body's `stream` overrides the boot `--stream` in
+// both directions. A local OpenAI-compatible stub answers both transports, so
+// the suite never touches the network and never needs a provider key.
+// ---------------------------------------------------------------------------
+describe('web sandbox: tell transport', () => {
+  const http = require('node:http');
+
+  const REPLY = 'Hello world';
+
+  let stub;
+  let stubPort;
+  let dir;
+
+  function startStub() {
+    const server = http.createServer((req, res) => {
+      let body = '';
+      req.on('data', (chunk) => {
+        body += chunk;
+      });
+      req.on('end', () => {
+        let payload = {};
+        try {
+          payload = JSON.parse(body || '{}');
+        } catch {
+          /* ignore */
+        }
+        const frame = (delta, finish) =>
+          `data: ${JSON.stringify({
+            id: 'stub',
+            object: 'chat.completion.chunk',
+            created: 1,
+            model: payload.model,
+            choices: [{ index: 0, delta, finish_reason: finish }],
+          })}\n\n`;
+        if (payload.stream) {
+          res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
+          res.write(frame({ content: 'Hello ' }, null));
+          res.write(frame({ content: 'world' }, null));
+          res.write(frame({}, 'stop'));
+          res.write('data: [DONE]\n\n');
+          res.end();
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            id: 'stub',
+            object: 'chat.completion',
+            created: 1,
+            model: payload.model,
+            choices: [{ index: 0, message: { role: 'assistant', content: REPLY }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 },
+          }),
+        );
+      });
+    });
+    return new Promise((resolve) => {
+      server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port }));
+    });
+  }
+
+  function bootWeb(extraArgs = []) {
+    const env = {
+      ...process.env,
+      PORT: '0',
+      NODE_ENV: 'production',
+      LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stubPort}/v1`,
+    };
+    delete env.TELL_TOKEN;
+    return spawn(process.execPath, [DIST_SERVER, '--cwd', dir, '-m', 'q', ...extraArgs], {
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  }
+
+  async function ask(base, stream) {
+    const res = await fetch(`${base}/api/tell`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: 'hi' }],
+        ...(stream === undefined ? {} : { stream }),
+      }),
+    });
+    return { contentType: res.headers.get('content-type') || '', text: await res.text() };
+  }
+
+  before(async () => {
+    stub = await startStub();
+    stubPort = stub.port;
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-web-transport-'));
+  });
+
+  after(() => {
+    if (stub) {
+      stub.server.closeAllConnections?.();
+      stub.server.close();
+    }
+    if (dir) fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  describe('server booted without --stream', () => {
+    let child;
+    let base;
+
+    before(async () => {
+      child = bootWeb();
+      base = await waitForServer(child);
+    });
+
+    after(() => {
+      if (child && !child.killed) child.kill('SIGTERM');
+    });
+
+    it('omits stream -> boot default (JSON, single body)', async () => {
+      const { contentType, text } = await ask(base, undefined);
+      assert.match(contentType, /application\/json/);
+      assert.strictEqual(JSON.parse(text).text, REPLY);
+    });
+
+    it('stream:false -> JSON', async () => {
+      const { contentType } = await ask(base, false);
+      assert.match(contentType, /application\/json/);
+    });
+
+    it('stream:true -> NDJSON events with the streamed reply', async () => {
+      const { contentType, text } = await ask(base, true);
+      assert.match(contentType, /application\/x-ndjson/);
+      const events = text
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+      assert.ok(
+        events.some((e) => e.type === 'text' && e.text.includes('Hello')),
+        'expected a text event carrying the streamed reply',
+      );
+      assert.strictEqual(events.at(-1).type, 'done');
+      // The streamed text must equal what the non-streaming JSON mode returns.
+      const streamed = events
+        .filter((e) => e.type === 'text')
+        .map((e) => e.text)
+        .join('');
+      assert.strictEqual(streamed, REPLY);
+    });
+
+    it('non-boolean stream -> boot default (JSON)', async () => {
+      const { contentType } = await ask(base, 'yes');
+      assert.match(contentType, /application\/json/);
+    });
+  });
+
+  describe('server booted with --stream', () => {
+    let child;
+    let base;
+
+    before(async () => {
+      child = bootWeb(['--stream']);
+      base = await waitForServer(child);
+    });
+
+    after(() => {
+      if (child && !child.killed) child.kill('SIGTERM');
+    });
+
+    it('omits stream -> boot default (NDJSON)', async () => {
+      const { contentType } = await ask(base, undefined);
+      assert.match(contentType, /application\/x-ndjson/);
+    });
+
+    it('stream:false overrides --stream -> JSON', async () => {
+      const { contentType, text } = await ask(base, false);
+      assert.match(contentType, /application\/json/);
+      assert.strictEqual(JSON.parse(text).text, REPLY);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Initial prompt: `--prompt` fills the chat inbox via /api/config instead of
 // being injected as a chat message. Spins the production bundle (dist/server.js).
 // ---------------------------------------------------------------------------
 describe('web sandbox: initial prompt', () => {
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
   let dir;
   let child;
   let base;
-
-  async function waitForServer(proc, timeoutMs = 45000) {
-    let out = '';
-    const portPromise = new Promise((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error(`server did not start within ${timeoutMs}ms. Output: ${out.slice(-2000)}`)),
-        timeoutMs,
-      );
-      proc.stdout.on('data', (d) => {
-        out += d.toString();
-        const m = out.match(/running at http:\/\/\S+:(\d+)/);
-        if (m) {
-          clearTimeout(timer);
-          resolve(Number(m[1]));
-        }
-      });
-      proc.stderr.on('data', (d) => {
-        out += d.toString();
-      });
-      proc.on('exit', (code) => reject(new Error(`server exited with code ${code}. Output: ${out.slice(-2000)}`)));
-    });
-    const port = await portPromise;
-    const deadline = Date.now() + 15000;
-    for (;;) {
-      try {
-        const res = await fetch(`http://127.0.0.1:${port}/api/auth/status`);
-        if (res.ok) return `http://127.0.0.1:${port}`;
-      } catch {
-        /* still booting */
-      }
-      if (Date.now() > deadline) throw new Error('/api/auth/status did not respond');
-      await sleep(250);
-    }
-  }
 
   before(async () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-web-prompt-'));
@@ -1598,7 +1755,7 @@ describe('web sandbox: initial prompt', () => {
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    base = await waitForServer(child);
+    base = await waitForServer(child, 45000, '/api/auth/status');
   });
 
   after(() => {

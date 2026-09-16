@@ -36,6 +36,7 @@ const {
   createRateLimiter,
   isValidPaneId,
   clampTerminalSize,
+  resolveStreamMode,
   validateTellPayload,
 } = loadModule('src/server/guards.ts');
 const {
@@ -301,6 +302,24 @@ test('guards: tell payload validation', () => {
     'systemPrompt limited to 30720 chars',
   );
   assert.strictEqual(validateTellPayload({ messages: [], systemPrompt: 'ok' }), null);
+});
+
+// ---------------------------------------------------------------------------
+// /api/tell transport override (Stream / No Stream)
+// ---------------------------------------------------------------------------
+test('guards: resolveStreamMode honors booleans and falls back to the boot default', () => {
+  // Explicit request choice wins in both directions...
+  assert.strictEqual(resolveStreamMode(true, false), true);
+  assert.strictEqual(resolveStreamMode(false, true), false);
+  // ...and the boot --stream decides when the body has no usable value.
+  assert.strictEqual(resolveStreamMode(undefined, true), true);
+  assert.strictEqual(resolveStreamMode(undefined, false), false);
+  assert.strictEqual(resolveStreamMode(null, true), true);
+  assert.strictEqual(resolveStreamMode('yes', true), true);
+  assert.strictEqual(resolveStreamMode('yes', false), false);
+  assert.strictEqual(resolveStreamMode(1, false), false);
+  assert.strictEqual(resolveStreamMode(0, true), true);
+  assert.strictEqual(resolveStreamMode({}, false), false);
 });
 
 // ---------------------------------------------------------------------------
