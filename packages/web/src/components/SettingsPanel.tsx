@@ -5,6 +5,7 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
+  Cpu,
   Download,
   EyeOff,
   FileText,
@@ -25,7 +26,9 @@ import {
   Sun,
   Trash2,
   Type,
+  Waves,
   Wrench,
+  Zap,
 } from 'lucide-react';
 import { useState } from 'react';
 import { apiFetch } from '../api.ts';
@@ -73,6 +76,10 @@ interface SettingsPanelProps {
   onRefreshHistory?: () => void;
   onRestoreSnapshot?: (name: string) => void;
   onDeleteSnapshot?: (name: string) => void;
+  /** Whether `/api/tell` replies are streamed token by token (Stream / No Stream). */
+  streamMode: boolean;
+  onStreamModeChange: (streamMode: boolean) => void;
+
 }
 
 // Vendor key → display label (drives the credentials grid from keysStatus)
@@ -133,11 +140,15 @@ export default function SettingsPanel({
   onRefreshHistory,
   onRestoreSnapshot,
   onDeleteSnapshot,
+  streamMode,
+  onStreamModeChange,
+
 }: SettingsPanelProps) {
   const [showPromptEditor, setShowPromptEditor] = useState(false);
   const [showModelsList, setShowModelsList] = useState(false);
   const [showSession, setShowSession] = useState(false);
   const [showAppearance, setShowAppearance] = useState(false);
+  const [showRuntime, setShowRuntime] = useState(false);
 
   const {
     config,
@@ -536,6 +547,70 @@ export default function SettingsPanel({
                 Reset Theme
               </button>
             </div>
+          </div>
+        )}
+      </div>
+
+      {/* Agent Runtime: response transport (Stream / No Stream) */}
+      <div className="bg-(--color-bg-secondary) rounded-none border border-(--color-border-subtle)">
+        <button
+          type="button"
+          onClick={() => setShowRuntime(!showRuntime)}
+          aria-expanded={showRuntime}
+          className="w-full flex items-center justify-between p-4 text-left font-display font-black text-[10px] tracking-widest text-(--color-text-primary) uppercase hover:bg-white/5 transition-colors cursor-pointer"
+        >
+          <div className="flex items-center gap-2">
+            <Cpu className="w-3.5 h-3.5 text-(--color-accent)" />
+            <span>Agent Runtime</span>
+          </div>
+          {showRuntime ? (
+            <ChevronUp className="w-4 h-4 text-(--color-text-muted)" />
+          ) : (
+            <ChevronDown className="w-4 h-4 text-(--color-text-muted)" />
+          )}
+        </button>
+
+        {showRuntime && (
+          <div className="p-4 border-t border-(--color-border-subtle) space-y-4">
+            <p className="text-[10px] text-(--color-text-muted) leading-relaxed font-sans">
+              How the agent reply travels back from the server. Streaming prints each token as it is generated (live
+              reasoning timer included); No Stream waits for the full answer and returns it in one response.
+            </p>
+
+            {/* Transport toggle — label above, buttons on their own row */}
+            <div>
+              <span className="block text-[9px] uppercase tracking-wider text-(--color-text-muted) font-bold mb-1">
+                Transport
+              </span>
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => onStreamModeChange(true)}
+                  className={`flex items-center justify-center gap-1.5 px-2 py-1.5 text-[9px] font-bold uppercase tracking-wider border cursor-pointer transition-colors ${
+                    streamMode
+                      ? 'bg-(--color-accent) border-(--color-accent) text-white'
+                      : 'bg-(--color-bg-secondary) border-(--color-border-medium) text-(--color-text-muted) hover:text-(--color-text-primary)'
+                  }`}
+                >
+                  <Waves className="w-3 h-3" /> Stream
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onStreamModeChange(false)}
+                  className={`flex items-center justify-center gap-1.5 px-2 py-1.5 text-[9px] font-bold uppercase tracking-wider border cursor-pointer transition-colors ${
+                    streamMode
+                      ? 'bg-(--color-bg-secondary) border-(--color-border-medium) text-(--color-text-muted) hover:text-(--color-text-primary)'
+                      : 'bg-(--color-accent) border-(--color-accent) text-white'
+                  }`}
+                >
+                  <Zap className="w-3 h-3" /> No Stream
+                </button>
+              </div>
+            </div>
+            <p className="text-[8.5px] text-(--color-text-muted) font-sans leading-snug">
+              Applies to the next message and is remembered in this browser. The server's --stream flag only seeds this
+              toggle on the first visit.
+            </p>
           </div>
         )}
       </div>

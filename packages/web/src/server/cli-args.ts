@@ -98,7 +98,9 @@ Options:
   --exec-timeout <ms>
                     Per-command timeout in ms (default: 120000, max: 600000)
   --chain           Continue after command output until the AI gives a final answer
-  --stream          Stream responses to the browser as they are generated
+  --stream          Seed the client's Stream toggle on the first visit, and keep
+                    streaming as the server fallback for requests that omit the
+                    "stream" field (Settings → Agent Runtime overrides per request)
   --think           Start reasoning headers expanded (collapsed by default)
   -y, --yes         Auto-confirm command execution
   --no-exec         Disable automatic execution of AI-generated commands

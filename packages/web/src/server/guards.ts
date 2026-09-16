@@ -164,6 +164,26 @@ export function validateTellPayload(body: { messages?: unknown; systemPrompt?: u
 }
 
 // ---------------------------------------------------------------------------
+// /api/tell transport override (Stream / No Stream)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolves the response transport for a `/api/tell` request.
+ *
+ * An explicit boolean `stream` in the body wins; anything else (absent,
+ * `'yes'`, `1`, `null`) falls back to the server's boot `--stream` default,
+ * so curl/API clients keep the old behavior. Both directions overridable:
+ * a stream-off server can stream a single request and vice versa.
+ *
+ * @param requestValue - Raw `body.stream` value, unvalidated.
+ * @param serverDefault - `--stream` as parsed at boot.
+ * @returns Whether this request replies as NDJSON instead of one JSON body.
+ */
+export function resolveStreamMode(requestValue: unknown, serverDefault: boolean): boolean {
+  return typeof requestValue === 'boolean' ? requestValue : serverDefault;
+}
+
+// ---------------------------------------------------------------------------
 // Command risk assessment (moved from server.ts, extended)
 // ---------------------------------------------------------------------------
 

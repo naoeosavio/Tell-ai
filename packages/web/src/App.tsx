@@ -147,6 +147,9 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
   const [reasoningExpanded, setReasoningExpanded] = useState<boolean>(
     savedExecTogglesRef.current?.reasoningExpanded ?? false,
   );
+  // Stream / No Stream transport for `/api/tell`; `--stream` seeds the first
+  // visit, then the user's choice in Settings → Agent Runtime persists.
+  const [streamMode, setStreamMode] = useState<boolean>(savedExecTogglesRef.current?.streamMode ?? false);
   // In-flight streaming state (never persisted): which assistant message is
   // still receiving events and the live reasoning timer for its header.
   const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
@@ -291,8 +294,8 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
 
   // Execution toggles persist to localStorage so a reload keeps the user's last choice.
   useEffect(() => {
-    saveExecToggles({ autoExecute, requireApproval, noExec, chainMode, reasoningExpanded });
-  }, [autoExecute, requireApproval, noExec, chainMode, reasoningExpanded]);
+    saveExecToggles({ autoExecute, requireApproval, noExec, chainMode, reasoningExpanded, streamMode });
+  }, [autoExecute, requireApproval, noExec, chainMode, reasoningExpanded, streamMode]);
 
   // Best-effort final save on page unload. Trim the payload until it fits the
   // keepalive body budget (drop old messages first, then all of them); skip if still oversized.
@@ -357,6 +360,9 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
         // Server `--think` only seeds the expanded-by-default choice on the first visit.
         if (typeof data.think === 'boolean' && savedExecTogglesRef.current?.reasoningExpanded === undefined)
           setReasoningExpanded(data.think);
+        // Server `--stream` only seeds the Stream/No Stream toggle on the first visit.
+        if (typeof data.stream === 'boolean' && savedExecTogglesRef.current?.streamMode === undefined)
+          setStreamMode(data.stream);
         // Server `--prompt`: fill the chat inbox (never auto-sent, never a message).
         if (typeof data.initialPrompt === 'string' && data.initialPrompt) setInputPrompt(data.initialPrompt);
       } catch (error) {
@@ -768,6 +774,9 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
           messages: currentMessages.map((m) => ({ role: m.role, content: m.content })),
           modelAlias,
           systemPrompt,
+          // Per-request override: the server falls back to its boot `--stream`
+          // when this field is missing (e.g. curl / API clients).
+          stream: streamMode,
         }),
       });
 

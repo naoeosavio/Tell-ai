@@ -11,7 +11,19 @@ export interface ExecToggles {
   chainMode?: boolean;
   /** Default open state for reasoning headers (seeded by `--think` on first visit). */
   reasoningExpanded?: boolean;
+  /** Stream / No Stream transport for `/api/tell` (seeded by `--stream` on first visit). */
+  streamMode?: boolean;
 }
+
+/** Boolean keys accepted by `loadExecToggles` (unknown/typed fields are dropped). */
+const BOOLEAN_KEYS = [
+  'autoExecute',
+  'requireApproval',
+  'noExec',
+  'chainMode',
+  'reasoningExpanded',
+  'streamMode',
+] as const;
 
 export function loadExecToggles(): ExecToggles | null {
   try {
@@ -20,7 +32,7 @@ export function loadExecToggles(): ExecToggles | null {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
     const toggles: ExecToggles = {};
-    for (const key of ['autoExecute', 'requireApproval', 'noExec', 'chainMode', 'reasoningExpanded'] as const) {
+    for (const key of BOOLEAN_KEYS) {
       const value = (parsed as Record<string, unknown>)[key];
       if (typeof value === 'boolean') toggles[key] = value;
     }

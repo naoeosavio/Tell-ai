@@ -18,6 +18,7 @@ import {
   isHighRiskScript,
   isSensitiveRelPath,
   isValidTokenInput,
+  resolveStreamMode,
   validateTellPayload,
 } from './guards';
 import { resolveWithin } from './paths';
@@ -666,8 +667,9 @@ app.post('/api/tell', async (req, res) => {
 
     const effectiveSystem = systemPrompt?.trim() ? systemPrompt : buildSystemPrompt(CWD);
 
-    // Streaming mode: NDJSON events; the model is resolved before headers are sent.
-    if (STREAM) {
+    // Streaming mode: per-request `stream` override wins over the boot `--stream`.
+    // Streaming replies are NDJSON events; the model is resolved before headers are sent.
+    if (resolveStreamMode(req.body?.stream, STREAM)) {
       await stream_tell(res, modelSpec, formattedMessages, effectiveSystem);
       return;
     }
