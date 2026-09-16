@@ -1,4 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { clampSettingsHeightPx } from './shared/sidebar-layout.ts';
 import { clampTerminalWidthCh } from './shared/terminal-layout.ts';
 
 export type ThemeMode = 'dark' | 'light';
@@ -32,6 +33,10 @@ export interface ThemeConfig {
   terminalWidthCh: number;
   sidebarCollapsed: boolean;
   threadsCollapsed: boolean;
+  /** File explorer pane collapsed to its title bar (independent of `sidebarCollapsed`). */
+  explorerCollapsed: boolean;
+  /** Settings pane collapsed to its title bar (independent of `sidebarCollapsed`). */
+  settingsCollapsed: boolean;
   customSidebarSide: SidebarSide;
   customTerminal: TerminalPlacement;
   customAgentFeed: AgentFeedPlacement;
@@ -62,6 +67,8 @@ const DEFAULT_THEME: ThemeConfig = {
   terminalWidthCh: 80,
   sidebarCollapsed: false,
   threadsCollapsed: false,
+  explorerCollapsed: false,
+  settingsCollapsed: false,
   customSidebarSide: 'right',
   customTerminal: 'bottom',
   customAgentFeed: 'bottom',
@@ -194,6 +201,8 @@ interface ThemeContextValue {
   setTerminalWidthCh: (w: number) => void;
   setSidebarCollapsed: (v: boolean) => void;
   setThreadsCollapsed: (v: boolean) => void;
+  setExplorerCollapsed: (v: boolean) => void;
+  setSettingsCollapsed: (v: boolean) => void;
   setCustomSidebarSide: (v: SidebarSide) => void;
   setCustomTerminal: (v: TerminalPlacement) => void;
   setCustomAgentFeed: (v: AgentFeedPlacement) => void;
@@ -218,6 +227,8 @@ const ThemeContext = createContext<ThemeContextValue>({
   setTerminalWidthCh: () => {},
   setSidebarCollapsed: () => {},
   setThreadsCollapsed: () => {},
+  setExplorerCollapsed: () => {},
+  setSettingsCollapsed: () => {},
   setCustomSidebarSide: () => {},
   setCustomTerminal: () => {},
   setCustomAgentFeed: () => {},
@@ -278,7 +289,7 @@ function normalizeConfig(raw: any): ThemeConfig {
     if ([0.85, 0.92, 1.0, 1.08, 1.15].includes(raw.scale)) c.scale = raw.scale;
     if (['default', 'focused', 'custom'].includes(raw.layout)) c.layout = raw.layout;
     if (typeof raw.settingsHeight === 'number' && !Number.isNaN(raw.settingsHeight)) {
-      c.settingsHeight = Math.min(Math.max(raw.settingsHeight, 140), 900);
+      c.settingsHeight = clampSettingsHeightPx(raw.settingsHeight);
     }
     if (typeof raw.terminalHeight === 'number' && !Number.isNaN(raw.terminalHeight)) {
       c.terminalHeight = Math.min(Math.max(raw.terminalHeight, 120), 1200);
@@ -298,6 +309,8 @@ function normalizeConfig(raw: any): ThemeConfig {
     }
     if (typeof raw.sidebarCollapsed === 'boolean') c.sidebarCollapsed = raw.sidebarCollapsed;
     if (typeof raw.threadsCollapsed === 'boolean') c.threadsCollapsed = raw.threadsCollapsed;
+    if (typeof raw.explorerCollapsed === 'boolean') c.explorerCollapsed = raw.explorerCollapsed;
+    if (typeof raw.settingsCollapsed === 'boolean') c.settingsCollapsed = raw.settingsCollapsed;
     if (raw.customSidebarSide === 'left' || raw.customSidebarSide === 'right')
       c.customSidebarSide = raw.customSidebarSide;
     if (['top', 'bottom', 'left', 'right', 'hidden'].includes(raw.customTerminal))
@@ -392,6 +405,8 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       setTerminalWidthCh: (terminalWidthCh) => update({ terminalWidthCh: clampTerminalWidthCh(terminalWidthCh) }),
       setSidebarCollapsed: (sidebarCollapsed) => update({ sidebarCollapsed }),
       setThreadsCollapsed: (threadsCollapsed) => update({ threadsCollapsed }),
+      setExplorerCollapsed: (explorerCollapsed) => update({ explorerCollapsed }),
+      setSettingsCollapsed: (settingsCollapsed) => update({ settingsCollapsed }),
       setCustomSidebarSide: (customSidebarSide) => update({ customSidebarSide }),
       setCustomTerminal: (customTerminal) => update({ customTerminal }),
       setCustomAgentFeed: (customAgentFeed) => update({ customAgentFeed }),

@@ -2,6 +2,7 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   File,
   FileArchive,
   FileCode,
@@ -29,6 +30,9 @@ interface FileExplorerProps {
   onFileSelect: (path: string) => void;
   selectedFilePath: string | null;
   refreshTrigger: number;
+  /** Pane folded to its title bar (persisted in theme-config-v3). */
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
 }
 
 // Extension → icon mapping (fallback: File)
@@ -62,7 +66,13 @@ function filterTree(nodes: FileNode[], query: string): FileNode[] {
   return walk(nodes);
 }
 
-export default function FileExplorer({ onFileSelect, selectedFilePath, refreshTrigger }: FileExplorerProps) {
+export default function FileExplorer({
+  onFileSelect,
+  selectedFilePath,
+  refreshTrigger,
+  collapsed,
+  onToggleCollapsed,
+}: FileExplorerProps) {
   const [files, setFiles] = useState<FileNode[]>([]);
   const [expandedDirs, setExpandedDirs] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
@@ -178,6 +188,31 @@ export default function FileExplorer({ onFileSelect, selectedFilePath, refreshTr
 
   const rows = useMemo(() => filteredTree.map((node) => renderNode(node)), [filteredTree, renderNode]);
 
+  // Collapsed: keep only the title bar so the settings pane below can take the
+  // freed height (reopen by clicking the chevron).
+  if (collapsed) {
+    return (
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-(--color-border-subtle) bg-(--color-bg-primary)">
+        <div className="flex items-center gap-2">
+          <Folder className="w-4 h-4 text-(--color-accent)" />
+          <span className="text-[10px] font-display font-black tracking-[0.25em] uppercase text-(--color-text-secondary)">
+            Files
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={onToggleCollapsed}
+          className="p-1 rounded-none text-(--color-text-muted) hover:text-(--color-text-primary) hover:bg-white/5 transition-colors cursor-pointer"
+          title="Expand files"
+          aria-label="Expand files"
+          aria-expanded={false}
+        >
+          <ChevronDown className="w-3.5 h-3.5" />
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-full bg-(--color-bg-primary) border-r border-(--color-border-subtle)">
       <div className="flex items-center justify-between p-4 pb-2 border-b border-(--color-border-subtle) bg-(--color-bg-primary)">
@@ -187,19 +222,31 @@ export default function FileExplorer({ onFileSelect, selectedFilePath, refreshTr
             Files
           </span>
         </div>
-        <button
-          type="button"
-          onClick={fetchFiles}
-          disabled={loading}
-          className="p-1 rounded-none text-(--color-text-muted) hover:text-(--color-text-primary) hover:bg-white/5 disabled:opacity-50 transition-colors cursor-pointer"
-          title="Sync files"
-        >
-          {loading ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin text-(--color-accent)" />
-          ) : (
-            <RefreshCw className="w-3.5 h-3.5" />
-          )}
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={fetchFiles}
+            disabled={loading}
+            className="p-1 rounded-none text-(--color-text-muted) hover:text-(--color-text-primary) hover:bg-white/5 disabled:opacity-50 transition-colors cursor-pointer"
+            title="Sync files"
+          >
+            {loading ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-(--color-accent)" />
+            ) : (
+              <RefreshCw className="w-3.5 h-3.5" />
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={onToggleCollapsed}
+            className="p-1 rounded-none text-(--color-text-muted) hover:text-(--color-text-primary) hover:bg-white/5 transition-colors cursor-pointer"
+            title="Collapse files"
+            aria-label="Collapse files"
+            aria-expanded={true}
+          >
+            <ChevronUp className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
 
       {/* Search filter */}

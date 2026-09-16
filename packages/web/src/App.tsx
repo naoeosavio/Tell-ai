@@ -28,6 +28,12 @@ import { useToast } from './components/Toast.tsx';
 import { consume_chat_stream } from './shared/chat-stream.ts';
 import { loadExecToggles, saveExecToggles } from './shared/exec-toggles.ts';
 import {
+  resolveSidebarPaneLayout,
+  SETTINGS_HEIGHT_DEFAULT_PX,
+  SETTINGS_HEIGHT_MAX_PX,
+  SETTINGS_HEIGHT_MIN_PX,
+} from './shared/sidebar-layout.ts';
+import {
   clampTerminalWidthCh,
   isVirginDefaultTab,
   mergeRestoredTerminalLayout,
@@ -96,8 +102,16 @@ interface HistoryEntry {
 }
 
 export default function App({ onLogout }: { onLogout?: (() => void) | undefined }) {
-  const { config, setSettingsHeight, setTerminalHeight, setTerminalWidthCh, setSidebarCollapsed, setThreadsCollapsed } =
-    useTheme();
+  const {
+    config,
+    setSettingsHeight,
+    setTerminalHeight,
+    setTerminalWidthCh,
+    setSidebarCollapsed,
+    setThreadsCollapsed,
+    setExplorerCollapsed,
+    setSettingsCollapsed,
+  } = useTheme();
   const { toast } = useToast();
   // Layout resolution: presets pin sidebar/terminal; 'custom' reads user-decided config
   const sidebarSide: 'left' | 'right' =
@@ -109,6 +123,18 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
   const threadsSide: 'left' | 'right' | 'top' | 'bottom' =
     config.layout === 'custom' ? config.customChatThreadsSide : 'left';
   const sidebarCollapsed = config.sidebarCollapsed;
+  // Per-pane collapse inside the sidebar (persisted in theme-config-v3):
+  // either pane folds to its title bar while the other keeps its space.
+  const explorerCollapsed = config.explorerCollapsed;
+  const settingsCollapsed = config.settingsCollapsed;
+  const toggleExplorerCollapsed = useCallback(
+    () => setExplorerCollapsed(!explorerCollapsed),
+    [explorerCollapsed, setExplorerCollapsed],
+  );
+  const toggleSettingsCollapsed = useCallback(
+    () => setSettingsCollapsed(!settingsCollapsed),
+    [settingsCollapsed, setSettingsCollapsed],
+  );
   // Chat threads (localStorage) — messages is the active thread's message list
   const [threadsState, setThreadsState] = useState<{ threads: ChatThread[]; activeId: string }>(() => loadThreads());
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
@@ -1157,7 +1183,7 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
       return;
     }
     const next = st.h + (st.y - pos.y);
-    setSettingsHeight(Math.min(Math.max(next, 140), window.innerHeight - 120));
+    setSettingsHeight(Math.min(Math.max(next, SETTINGS_HEIGHT_MIN_PX), window.innerHeight - 120));
   }, [setSettingsHeight, setTerminalHeight, setTerminalWidthCh, termChPx, terminalPlacement]);
 
   const onPointerMove = useCallback(
@@ -1219,10 +1245,10 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
       setSettingsHeight(Math.min(config.settingsHeight + step, window.innerHeight - 120));
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
-      setSettingsHeight(Math.max(config.settingsHeight - step, 140));
+      setSettingsHeight(Math.max(config.settingsHeight - step, SETTINGS_HEIGHT_MIN_PX));
     } else if (e.key === 'Home') {
       e.preventDefault();
-      setSettingsHeight(140);
+      setSettingsHeight(SETTINGS_HEIGHT_MIN_PX);
     } else if (e.key === 'End') {
       e.preventDefault();
       setSettingsHeight(window.innerHeight - 120);
@@ -1272,7 +1298,7 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
     }
   };
 
-  const resetSettingsSize = useCallback(() => setSettingsHeight(320), [setSettingsHeight]);
+  const resetSettingsSize = useCallback(() => setSettingsHeight(SETTINGS_HEIGHT_DEFAULT_PX), [setSettingsHeight]);
   const resetTerminalSize = useCallback(() => {
     setTerminalHeight(280);
     setTerminalWidthCh(80);
@@ -1302,38 +1328,51 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
         />
       );
     }
+    const panes = resolveSidebarPaneLayout(
+      { isExplorerCollapsed: explorerCollapsed, isSettingsCollapsed: settingsCollapsed },
+      config.settingsHeight,
+    );
     return (
       <div
         className={`${borderCls} border-(--color-border-subtle) w-full md:w-80 shrink-0 h-full min-h-0 flex flex-col bg-(--color-bg-primary) select-none`}
       >
-        <div className="flex-1 min-h-0 overflow-hidden">
+        <div className={panes.shouldGrowExplorer ? 'flex-1 min-h-0 overflow-hidden' : 'shrink-0 overflow-hidden'}>
           <FileExplorer
             onFileSelect={(path) => setSelectedFilePath(path)}
             selectedFilePath={selectedFilePath}
             refreshTrigger={refreshFileTreeTrigger}
+            collapsed={explorerCollapsed}
+            onToggleCollapsed={toggleExplorerCollapsed}
           />
         </div>
 
-        {/* biome-ignore lint/a11y/useSemanticElements: interactive resize handle with keyboard support, not a static thematic break */}
-        <div
-          role="separator"
-          aria-orientation="horizontal"
-          aria-label="Resize Settings panel"
-          aria-valuenow={Math.round(config.settingsHeight)}
-          aria-valuemin={140}
-          aria-valuemax={900}
-          tabIndex={0}
-          onKeyDown={onSettingsKeyDown}
-          onPointerDown={(e) => startDrag('settings', e)}
-          onMouseDown={(e) => startDrag('settings', e)}
-          onDoubleClick={resetSettingsSize}
-          className="relative shrink-0 h-1.5 cursor-row-resize border-t border-(--color-border-subtle) bg-(--color-bg-secondary) hover:bg-(--color-accent)/40 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-(--color-accent) touch-none"
-          title="Drag to resize the Settings panel (double-click resets)"
-        >
-          <div className="absolute -top-[5px] left-0 right-0 h-[12px] cursor-row-resize" />
-        </div>
+        {panes.shouldShowResizer && (
+          <>
+            {/* biome-ignore lint/a11y/useSemanticElements: interactive resize handle with keyboard support, not a static thematic break */}
+            <div
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label="Resize Settings panel"
+              aria-valuenow={Math.round(config.settingsHeight)}
+              aria-valuemin={SETTINGS_HEIGHT_MIN_PX}
+              aria-valuemax={SETTINGS_HEIGHT_MAX_PX}
+              tabIndex={0}
+              onKeyDown={onSettingsKeyDown}
+              onPointerDown={(e) => startDrag('settings', e)}
+              onMouseDown={(e) => startDrag('settings', e)}
+              onDoubleClick={resetSettingsSize}
+              className="relative shrink-0 h-1.5 cursor-row-resize border-t border-(--color-border-subtle) bg-(--color-bg-secondary) hover:bg-(--color-accent)/40 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-(--color-accent) touch-none"
+              title="Drag to resize the Settings panel (double-click resets)"
+            >
+              <div className="absolute -top-[5px] left-0 right-0 h-[12px] cursor-row-resize" />
+            </div>
+          </>
+        )}
 
-        <div className="shrink-0 overflow-hidden" style={{ height: config.settingsHeight }}>
+        <div
+          className={panes.shouldGrowSettings ? 'flex-1 min-h-0 overflow-hidden' : 'shrink-0 overflow-hidden'}
+          style={panes.settingsHeightPx === null ? undefined : { height: panes.settingsHeightPx }}
+        >
           <SettingsPanel
             keysStatus={keysStatus}
             models={models}
@@ -1347,6 +1386,10 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
             onRefreshHistory={refreshHistory}
             onRestoreSnapshot={handleRestoreSnapshot}
             onDeleteSnapshot={handleDeleteSnapshot}
+            streamMode={streamMode}
+            onStreamModeChange={setStreamMode}
+            collapsed={settingsCollapsed}
+            onToggleCollapsed={toggleSettingsCollapsed}
           />
         </div>
       </div>

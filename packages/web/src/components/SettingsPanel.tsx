@@ -79,7 +79,9 @@ interface SettingsPanelProps {
   /** Whether `/api/tell` replies are streamed token by token (Stream / No Stream). */
   streamMode: boolean;
   onStreamModeChange: (streamMode: boolean) => void;
-
+  /** Pane folded to its title bar (persisted in theme-config-v3). */
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
 }
 
 // Vendor key → display label (drives the credentials grid from keysStatus)
@@ -142,7 +144,8 @@ export default function SettingsPanel({
   onDeleteSnapshot,
   streamMode,
   onStreamModeChange,
-
+  collapsed,
+  onToggleCollapsed,
 }: SettingsPanelProps) {
   const [showPromptEditor, setShowPromptEditor] = useState(false);
   const [showModelsList, setShowModelsList] = useState(false);
@@ -186,14 +189,51 @@ export default function SettingsPanel({
     }
   };
 
+  // Collapsed: keep only the title bar (the sidebar gives the freed height to
+  // the explorer pane); reopen by clicking the chevron.
+  if (collapsed) {
+    return (
+      <div className="flex items-center justify-between px-5 py-3 bg-(--color-bg-primary) border-t border-(--color-border-subtle) select-none">
+        <div className="flex items-center gap-2">
+          <Settings className="w-4 h-4 text-(--color-accent)" />
+          <h2 className="text-[10px] font-display font-black uppercase tracking-[0.25em] text-(--color-text-primary)">
+            Settings & Directives
+          </h2>
+        </div>
+        <button
+          type="button"
+          onClick={onToggleCollapsed}
+          className="p-1 rounded-none text-(--color-text-muted) hover:text-(--color-text-primary) hover:bg-white/5 transition-colors cursor-pointer"
+          title="Expand settings"
+          aria-label="Expand settings"
+          aria-expanded={false}
+        >
+          <ChevronUp className="w-3.5 h-3.5" />
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-full bg-(--color-bg-primary) overflow-y-auto custom-scrollbar p-5 space-y-5 text-(--color-text-secondary) select-none">
       {/* Title */}
-      <div className="flex items-center gap-2 pb-3 border-b border-(--color-border-subtle)">
-        <Settings className="w-4 h-4 text-(--color-accent) animate-pulse" />
-        <h2 className="text-[10px] font-display font-black uppercase tracking-[0.25em] text-(--color-text-primary)">
-          Settings & Directives
-        </h2>
+      <div className="flex items-center justify-between pb-3 border-b border-(--color-border-subtle)">
+        <div className="flex items-center gap-2">
+          <Settings className="w-4 h-4 text-(--color-accent) animate-pulse" />
+          <h2 className="text-[10px] font-display font-black uppercase tracking-[0.25em] text-(--color-text-primary)">
+            Settings & Directives
+          </h2>
+        </div>
+        <button
+          type="button"
+          onClick={onToggleCollapsed}
+          className="p-1 rounded-none text-(--color-text-muted) hover:text-(--color-text-primary) hover:bg-white/5 transition-colors cursor-pointer"
+          title="Collapse settings"
+          aria-label="Collapse settings"
+          aria-expanded={true}
+        >
+          <ChevronDown className="w-3.5 h-3.5" />
+        </button>
       </div>
 
       {/* Appearance & Theme Customizer */}
