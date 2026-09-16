@@ -159,28 +159,31 @@ it, a live `Thinking...` indicator shows until the first answer token.
 
 ## Persistent context (`-c`, `--ctx`, `-n`)
 
-Context flags are explicit — no value guessing. Only named contexts are saved:
+Context flags are explicit — no value guessing. The first word of `--ctx` is a ref only when it is `@N` or `%id`; the rest is the prompt:
 
 ```bash
 tell -c "remember that this project uses PostgreSQL"   # default context for this dir+model
 tell --ctx "remember this too"                         # bare/multi-word --ctx = same as -c
 
-tell --ctx myproj "seed the project"                   # use-or-create named: resumes if it exists
-tell --ctx myproj "continue the project"               # ...otherwise creates it fresh
-tell --ctx myproj -n "start over"                      # explicit reset (always starts empty)
+tell --ctx %myproj "seed the project"                  # use-or-create id: resumes if it exists
+tell --ctx %myproj "continue the project"              # ...otherwise creates it fresh
+tell --ctx %myproj -n "start over"                     # explicit reset (always starts empty)
+tell --ctx %myproj "focus on tests" -y                 # prompt text works as the positional prompt too
 
-tell -l                                                # list saved contexts
+tell -l                                                # list saved contexts + conversations
 tell --ctx @0 "resume the most recent one"             # recency index (must exist)
-tell --ctx '#a1b2c3' "resume by hash prefix"           # explicit # = hash, must exist
+tell --ctx %a1b2c3 "resume by hash prefix"             # unique hex prefix of a saved id
 ```
 
-Context files live at `~/.ai/tell_context/`. Without any context flag, each invocation starts fresh and the default context is cleared. Context is automatically truncated at 200,000 characters.
+Context files live at `~/.ai/tell_context/`. Without any context flag, each invocation starts fresh and the default context is cleared. Context is automatically truncated at 64K characters (older turns summarized away).
 
-**One token vs multi-word:** a single token after `--ctx` is always a name (or `@N`/`#hash` ref), never a prompt:
+**Refs vs prompt text:** naming a context always requires the `%` prefix. A single bare token is prompt text, but only when there is no positional prompt:
 
 ```bash
-tell d --ctx ola                # "ola" = context NAME, no prompt → error: missing prompt
-tell d --ctx ola "say hello"    # resumes/creates named context "ola" with prompt "say hello"
+tell d --ctx ola                # "ola" = PROMPT text on the default context
+tell d --ctx ola "say hello"    # single bare token + positional prompt → error (use %ola)
+tell d --ctx %ola "say hello"   # context "ola" + prompt "say hello"
+tell d --ctx @0 "follow up"     # context @0 + prompt "follow up"
 tell d -c ola                   # one-word prompt on the default context
 tell d --ctx "say hello"        # multi-word value = prompt on the default context
 ```

@@ -79,8 +79,8 @@ Single-file Node entry point for the `tell` binary (CJS bundle, `#!/usr/bin/env 
 - `--think` prints the model reasoning dimmed on stderr, with or without `--stream` (without streaming, it appears once the response arrives); reasoning never reaches stdout or the saved context
 - `--chain` iterates up to 8 steps, feeding command outputs back to the model
 - `-c` persists the default per-directory+model context (SHA-256 hash, `~/.ai/tell_context/`)
-- `--ctx [ref]` use-or-create context: bare = default context (`-c` synonym); `@N` (recency) or `#hash` prefix (must exist); name (created if missing); multi-word value = prompt text for the default context (unnamed contexts are never saved). A lone single token is a NAME, never a prompt — one-word prompts go on `-c` or as multi-word `--ctx` values
-- `-n` reset modifier: `--ctx <name> -n` starts empty, even if the name exists
+- `--ctx [ref]` context ref + prompt: the first word is the ref when it is `@N` (recency, must exist) or `%id` (use-or-create over the id/file-name namespace — exact id or unique hex prefix resumes, else creates `<id>.txt`); the rest is prompt text for that context. No ref = prompt text for the default context (`-c` synonym, unnamed contexts never saved as `%id`). A bare single token is prompt text when no positional prompt follows, but a bare single token WITH a positional prompt is an error (naming requires `%`); multi-word text is always default-context prompt
+- `-n` reset modifier: `--ctx %id -n` starts empty, even if the id exists
 - `-l` lists saved contexts (`@N`, id, age, preview) and conversations (`%N`, date, model, preview) via `--history`; `--history @N`/`%N` reprints an entry, any other value searches both stores (`src/history.ts`)
 - `-y` auto-executes commands (high-risk commands still require confirmation)
 - `--no-exec` disables all command execution
