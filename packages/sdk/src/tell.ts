@@ -35,7 +35,7 @@ export async function tell(message: string, options: TellOptions = {}): Promise<
   const system =
     options.system ??
     get_system_prompt({
-      ...(options.exec !== undefined ? { exec: options.exec } : {}),
+      exec: options.exec ?? false,
       ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
       ...(options.platform !== undefined ? { platform: options.platform } : {}),
     });

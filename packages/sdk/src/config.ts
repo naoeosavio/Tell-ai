@@ -9,6 +9,8 @@ export type SDKKeys = {
   openrouter?: string | undefined;
   alibaba?: string | undefined;
   zhipu?: string | undefined;
+  meta?: string | undefined;
+  xiaomi?: string | undefined;
 };
 
 export type SDKUrls = {
@@ -24,6 +26,8 @@ export type SDKUrls = {
   local?: string | undefined;
   alibaba?: string | undefined;
   zhipu?: string | undefined;
+  meta?: string | undefined;
+  xiaomi?: string | undefined;
 };
 
 export interface SDKConfig {
