@@ -1,4 +1,4 @@
-const TARGETS: Record<string, { base: string; envKey: string }> = {
+const TARGETS: Record<string, { base: string; envKey: string; keyHeader?: string }> = {
   openai: { base: 'https://api.openai.com/v1', envKey: 'OPENAI_API_KEY' },
   anthropic: { base: 'https://api.anthropic.com/v1', envKey: 'ANTHROPIC_API_KEY' },
   deepseek: { base: 'https://api.deepseek.com', envKey: 'DEEPSEEK_API_KEY' },
@@ -7,6 +7,8 @@ const TARGETS: Record<string, { base: string; envKey: string }> = {
   cerebras: { base: 'https://api.cerebras.ai/v1', envKey: 'CEREBRAS_API_KEY' },
   moonshotai: { base: 'https://api.moonshot.ai/v1', envKey: 'MOONSHOTAI_API_KEY' },
   openrouter: { base: 'https://openrouter.ai/api/v1', envKey: 'OPENROUTER_API_KEY' },
+  meta: { base: 'https://api.meta.ai/v1', envKey: 'META_API_KEY' },
+  xiaomi: { base: 'https://api.xiaomimimo.com/v1', envKey: 'MIMO_API_KEY', keyHeader: 'api-key' },
 };
 
 const HOP_BY_HOP = new Set([
@@ -67,6 +69,15 @@ const server = Bun.serve({
       ) {
         headers.set('x-goog-api-key', server_key);
       }
+    } else if (target.keyHeader) {
+      const client_key = headers.get(target.keyHeader);
+      if (
+        server_key &&
+        (!client_key || client_key === 'undefined' || client_key === 'null' || client_key === 'proxy')
+      ) {
+        headers.set(target.keyHeader, server_key);
+      }
+      headers.delete('authorization');
     } else {
       const authorization = headers.get('authorization');
       if (server_key && (!authorization || authorization === 'Bearer undefined' || authorization === 'Bearer null')) {

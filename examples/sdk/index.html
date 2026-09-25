@@ -65,7 +65,7 @@
     import { tell, MODELS, get_system_prompt } from './browser.js';
 
     const $ = (id) => document.getElementById(id);
-    const VENDORS = ['openai', 'anthropic', 'google', 'xai', 'deepseek', 'cerebras', 'moonshotai', 'openrouter'];
+    const VENDORS = ['openai', 'anthropic', 'google', 'xai', 'deepseek', 'cerebras', 'moonshotai', 'openrouter', 'meta', 'xiaomi'];
 
     const select = $('model');
     for (const [alias, spec] of Object.entries(MODELS)) {

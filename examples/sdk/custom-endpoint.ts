@@ -98,7 +98,7 @@ function scenario_new_vendor() {
   console.log('  Vendors without a dedicated handler fall back to the generic');
   console.log('  OpenAI-compatible provider, so adding one is two lines:');
   console.log('    1. add the name to SUPPORTED_VENDORS (packages/sdk/src/models.ts)');
-  console.log('    2. point config.urls.<name> (or a default in COMPAT_DEFAULT_URLS)');
+  console.log('    2. point config.urls.<name> (or a default in OPENAI_WIRE_VENDORS)');
   console.log('  at the endpoint. No handler, no new dependency.\n');
 }
 
