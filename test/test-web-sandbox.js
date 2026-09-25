@@ -7,8 +7,9 @@
 // Run from the repo root: node --test test/test-web-sandbox.js
 // (also via `bun run test:web` and `bun run --filter @tell-ai/web test`).
 const assert = require('node:assert');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
+const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const { after, afterEach, before, beforeEach, describe, it } = require('node:test');
@@ -963,7 +964,15 @@ describe('web sandbox: pty scrollback and GC', () => {
   // configureScrollbackMax below drives pushScrollback's budget.
   const { DEFAULT_MAX_SCROLLBACK_CHARS, configureScrollbackMax, getMaxScrollbackChars } =
     loadModule('src/server/pty-policy.ts');
-  const { pushScrollback, scheduleGcTimer, cancelGcTimer, GC_AFTER_MS } = loadModule('src/server/pty.ts');
+  const {
+    pushScrollback,
+    getReplayData,
+    scheduleGcTimer,
+    cancelGcTimer,
+    GC_AFTER_MS,
+    MAX_PANE_CLIENTS,
+    MAX_WS_PAYLOAD_BYTES,
+  } = loadModule('src/server/pty.ts');
 
   function blankTimer() {
     return { timer: null, lastDisconnect: null };
@@ -986,6 +995,29 @@ describe('web sandbox: pty scrollback and GC', () => {
       assert.ok(buf.scrollbackChars <= getMaxScrollbackChars());
       assert.ok(buf.scrollback.join('').endsWith('b'.repeat(10)));
       assert.ok(!buf.scrollback.join('').startsWith('a'));
+    });
+
+    it('keeps the tail when one chunk exceeds the budget', () => {
+      configureScrollbackMax(1024);
+      const buf = { scrollback: [], scrollbackChars: 0 };
+      pushScrollback(buf, `head${'a'.repeat(4096)}tail`);
+      assert.strictEqual(buf.scrollbackChars, 1024);
+      assert.ok(buf.scrollback.join('').endsWith('tail'));
+    });
+
+    it('bounds replay data independently of client buffering', () => {
+      configureScrollbackMax(1024);
+      const buf = { scrollback: [], scrollbackChars: 0 };
+      pushScrollback(buf, 'a'.repeat(768));
+      pushScrollback(buf, `b${'c'.repeat(767)}`);
+      const replay = getReplayData(buf);
+      assert.ok(replay.length <= 1024);
+      assert.ok(replay.endsWith('c'.repeat(32)));
+    });
+
+    it('bounds pane clients and WebSocket payloads', () => {
+      assert.strictEqual(MAX_PANE_CLIENTS, 8);
+      assert.strictEqual(MAX_WS_PAYLOAD_BYTES, 16 * 1024);
     });
 
     it('accumulates below the limit without truncating', () => {
@@ -1382,7 +1414,13 @@ describe('web sandbox: auth', () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-web-auth-'));
     fs.writeFileSync(path.join(dir, 'hello.txt'), 'hi\n');
     child = spawn(process.execPath, [DIST_SERVER, '--cwd', dir], {
-      env: { ...process.env, PORT: '0', NODE_ENV: 'production', TELL_TOKEN: TOKEN },
+      env: {
+        ...process.env,
+        PORT: '0',
+        NODE_ENV: 'production',
+        TELL_TOKEN: TOKEN,
+        OPENAI_API_KEY: 'openai-child-canary',
+      },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     base = await waitForServer(child);
@@ -1409,6 +1447,23 @@ describe('web sandbox: auth', () => {
       assert.strictEqual(body.authRequired, true);
       assert.ok(!('cwd' in body), 'status must not leak cwd');
       assert.strictEqual(res.headers.get('cache-control'), 'no-store');
+    });
+
+    it('rejects DNS-rebinding Host headers before routing', async () => {
+      const target = new URL('/api/config', base);
+      const status = await new Promise((resolve, reject) => {
+        const req = http.request(
+          target,
+          { headers: { Host: 'rebind.attacker.test' } },
+          (res) => {
+            res.resume();
+            res.once('end', () => resolve(res.statusCode));
+          },
+        );
+        req.once('error', reject);
+        req.end();
+      });
+      assert.strictEqual(status, 403);
     });
 
     it('correct token verifies (200)', async () => {
@@ -1445,13 +1500,30 @@ describe('web sandbox: auth', () => {
       assert.strictEqual(authed.status, 200);
     });
 
-    it('brute force is throttled: 429 + Retry-After after 5 attempts', async () => {
-      // Quota (5/15min/IP) is already spent by the verifies above → next fails 429.
-      const res = await verify('wrong-again');
+    it('protects case variants handled by Express routing', async () => {
+      const anon = await fetch(`${base}/API/config`);
+      assert.strictEqual(anon.status, 401);
+      const authed = await fetch(`${base}/Api/Config`, {
+        headers: { Authorization: `Bearer ${TOKEN}` },
+      });
+      assert.strictEqual(authed.status, 200);
+    });
+
+    it('valid logins do not spend the brute-force quota', async () => {
+      const res = await verify(TOKEN);
+      assert.strictEqual(res.status, 200);
+    });
+
+    it('brute force is throttled after five failed attempts', async () => {
+      const fifth = await verify('wrong-again');
+      assert.strictEqual(fifth.status, 401);
+      const res = await verify('wrong-again-2');
       assert.strictEqual(res.status, 429);
       assert.ok(res.headers.get('retry-after'), '429 must carry Retry-After');
       const body = await res.json();
       assert.ok(/too many/i.test(body.error));
+      const valid = await verify(TOKEN);
+      assert.strictEqual(valid.status, 200);
     });
   });
 
@@ -1503,6 +1575,110 @@ describe('web sandbox: auth', () => {
       });
       assert.strictEqual(opened, true);
     });
+
+    it('rejects clients beyond the per-pane limit', async () => {
+      const url = `${base.replace('http', 'ws')}/api/terminal?paneId=test-auth-clients&cols=80&rows=24&token=${encodeURIComponent(TOKEN)}`;
+      const clients = Array.from({ length: 8 }, () => new WebSocket(url));
+      try {
+        await Promise.all(
+          clients.map(
+            (ws) =>
+              new Promise((resolve, reject) => {
+                const timer = setTimeout(() => reject(new Error('PTY client did not open')), 5000);
+                ws.once('open', () => {
+                  clearTimeout(timer);
+                  resolve();
+                });
+                ws.once('error', reject);
+              }),
+          ),
+        );
+        const closeCode = await new Promise((resolve, reject) => {
+          const extra = new WebSocket(url);
+          const timer = setTimeout(() => {
+            extra.terminate();
+            reject(new Error('per-pane client limit was not enforced'));
+          }, 5000);
+          extra.once('close', (code) => {
+            clearTimeout(timer);
+            resolve(code);
+          });
+          extra.once('error', () => {});
+        });
+        assert.strictEqual(closeCode, 4429);
+      } finally {
+        for (const client of clients) client.terminate();
+      }
+    });
+
+    it('closes oversized WebSocket frames', async () => {
+      const closeCode = await new Promise((resolve, reject) => {
+        const ws = new WebSocket(
+          `${base.replace('http', 'ws')}/api/terminal?paneId=test-auth-payload&cols=80&rows=24&token=${encodeURIComponent(TOKEN)}`,
+        );
+        const timer = setTimeout(() => {
+          ws.terminate();
+          reject(new Error('oversized frame was not rejected'));
+        }, 5000);
+        ws.on('open', () => {
+          ws.send(JSON.stringify({ type: 'input', data: 'x'.repeat(16 * 1024 + 1024) }));
+        });
+        ws.on('close', (code) => {
+          clearTimeout(timer);
+          resolve(code);
+        });
+        ws.on('error', () => {});
+      });
+      assert.strictEqual(closeCode, 1009);
+    });
+
+    it('closes WebSocket clients when a PTY exits', async () => {
+      const closeCode = await new Promise((resolve, reject) => {
+        const ws = new WebSocket(
+          `${base.replace('http', 'ws')}/api/terminal?paneId=test-auth-exit&cols=80&rows=24&token=${encodeURIComponent(TOKEN)}`,
+        );
+        const timer = setTimeout(() => {
+          ws.terminate();
+          reject(new Error('PTY exit did not close the WebSocket'));
+        }, 5000);
+        ws.on('open', () => ws.send(JSON.stringify({ type: 'input', data: 'exit\n' })));
+        ws.on('close', (code) => {
+          clearTimeout(timer);
+          resolve(code);
+        });
+        ws.on('error', reject);
+      });
+      assert.strictEqual(closeCode, 1000);
+    });
+
+    it('does not expose server credentials in PTY panes', async () => {
+      const output = await new Promise((resolve, reject) => {
+        const ws = new WebSocket(
+          `${base.replace('http', 'ws')}/api/terminal?paneId=test-auth-env&cols=80&rows=24&token=${encodeURIComponent(TOKEN)}`,
+        );
+        let data = '';
+        const timer = setTimeout(() => {
+          ws.terminate();
+          reject(new Error('PTY environment probe timed out'));
+        }, 5000);
+        ws.on('open', () => {
+          ws.send(JSON.stringify({ type: 'input', data: `printf '%s|%s' "$OPENAI_API_KEY" "$TELL_TOKEN"; printf PTY_DONE` }));
+        });
+        ws.on('message', (raw) => {
+          const event = JSON.parse(raw.toString());
+          if (event.type !== 'data') return;
+          data += event.data;
+          if (data.includes('PTY_DONE')) {
+            clearTimeout(timer);
+            ws.close();
+            resolve(data);
+          }
+        });
+        ws.on('error', reject);
+      });
+      assert.doesNotMatch(output, /openai-child-canary|test-token-abc123/);
+      assert.match(output, /PTY_DONE/);
+    });
   });
 });
 
@@ -1513,15 +1689,26 @@ describe('web sandbox: auth', () => {
 // ---------------------------------------------------------------------------
 describe('web sandbox: api routes', () => {
   let dir;
+  let externalDir;
   let child;
   let base;
 
   before(async () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-web-routes-'));
+    externalDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-web-outside-'));
+    const outsideSecret = path.join(externalDir, 'secret.txt');
+    fs.writeFileSync(outsideSecret, 'outside-secret');
+    fs.symlinkSync(outsideSecret, path.join(dir, 'outside-link.txt'));
+    spawnSync('mkfifo', [path.join(dir, 'blocked.pipe')]);
     fs.writeFileSync(path.join(dir, '.env'), 'SECRET=1\n');
     fs.writeFileSync(path.join(dir, '.env.example'), 'PORT="3000"\n');
     fs.writeFileSync(path.join(dir, 'hello.txt'), 'hi\n');
-    const env = { ...process.env, PORT: '0', NODE_ENV: 'production' };
+    const env = {
+      ...process.env,
+      PORT: '0',
+      NODE_ENV: 'production',
+      AUDIT_SECRET: 'must-not-reach-child',
+    };
     delete env.TELL_TOKEN;
     child = spawn(process.execPath, [DIST_SERVER, '--cwd', dir], {
       env,
@@ -1533,12 +1720,64 @@ describe('web sandbox: api routes', () => {
   after(() => {
     if (child && !child.killed) child.kill('SIGTERM');
     if (dir) fs.rmSync(dir, { recursive: true, force: true });
+    if (externalDir) fs.rmSync(externalDir, { recursive: true, force: true });
   });
 
   describe('api routes (task_build)', () => {
     it('traversal returns 403', async () => {
       const res = await fetch(`${base}/api/file?path=${encodeURIComponent('../outside.txt')}`);
       assert.strictEqual(res.status, 403);
+    });
+
+    it('rejects symlink reads and writes outside the workspace', async () => {
+      const encoded = encodeURIComponent('outside-link.txt');
+      const read = await fetch(`${base}/api/file?path=${encoded}`);
+      assert.strictEqual(read.status, 403);
+      const write = await fetch(`${base}/api/save-file`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: 'outside-link.txt', content: 'overwritten' }),
+      });
+      assert.strictEqual(write.status, 403);
+      assert.strictEqual(fs.readFileSync(path.join(externalDir, 'secret.txt'), 'utf8'), 'outside-secret');
+    });
+
+    it('rejects FIFO reads without waiting for a writer', async () => {
+      const fifo = path.join(dir, 'blocked.pipe');
+      const writer = spawn('sh', ['-c', 'sleep 1; printf x > "$1"', 'sh', fifo]);
+      let writerGuard;
+      const writerExit = new Promise((resolve) =>
+        writer.once('exit', () => {
+          clearTimeout(writerGuard);
+          resolve();
+        }),
+      );
+      writerGuard = setTimeout(() => writer.kill('SIGKILL'), 1500);
+      const started = Date.now();
+      const res = await fetch(`${base}/api/file?path=${encodeURIComponent('blocked.pipe')}`);
+      const elapsed = Date.now() - started;
+      assert.ok(elapsed < 800, `FIFO read blocked for ${elapsed}ms`);
+      assert.strictEqual(res.status, 500);
+      await res.json();
+      await writerExit;
+    });
+
+    it('does not recreate a file or parent deleted before an optimistic save', async () => {
+      const file = 'removed-parent/deleted-before-save.txt';
+      await fetch(`${base}/api/save-file`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: file, content: 'original' }),
+      });
+      const loaded = await (await fetch(`${base}/api/file?path=${encodeURIComponent(file)}`)).json();
+      fs.rmSync(path.join(dir, 'removed-parent'), { recursive: true, force: true });
+      const save = await fetch(`${base}/api/save-file`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: file, content: 'stale', expectedMtime: loaded.mtime }),
+      });
+      assert.strictEqual(save.status, 409);
+      assert.strictEqual(fs.existsSync(path.join(dir, 'removed-parent')), false);
     });
 
     it('.env returns 403', async () => {
@@ -1559,6 +1798,11 @@ describe('web sandbox: api routes', () => {
       assert.ok((await res.text()).includes('<div id="root">'));
     });
 
+    it('/server.js is not served as a static asset', async () => {
+      const res = await fetch(`${base}/server.js`);
+      assert.strictEqual(res.status, 404);
+    });
+
     it('/tell with an invalid payload returns 400', async () => {
       const res = await fetch(`${base}/api/tell`, {
         method: 'POST',
@@ -1568,7 +1812,7 @@ describe('web sandbox: api routes', () => {
       assert.strictEqual(res.status, 400);
     });
 
-    it('/snapshot returns name', async () => {
+    it('/snapshot returns name and persists its counter', async () => {
       const res = await fetch(`${base}/api/session/snapshot`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1578,6 +1822,8 @@ describe('web sandbox: api routes', () => {
       const body = await res.json();
       assert.strictEqual(body.success, true);
       assert.ok(typeof body.name === 'string' && body.name.length > 0);
+      const session = await (await fetch(`${base}/api/session`)).json();
+      assert.ok(session.session.stats.snapshots >= 1);
     });
 
     it('/session persists the inbox draft round-trip', async () => {
@@ -1605,6 +1851,41 @@ describe('web sandbox: api routes', () => {
       assert.strictEqual(res.status, 200);
       const body = await res.json();
       assert.strictEqual(body.initialPrompt, null);
+    });
+
+    it('/api/models lists the direct Meta and Xiaomi vendors', async () => {
+      const res = await fetch(`${base}/api/models`);
+      assert.strictEqual(res.status, 200);
+      const body = await res.json();
+      assert.strictEqual(body.models.length, 147);
+      const by_alias = new Map(body.models.map((entry) => [entry.alias, entry]));
+      for (const [alias, vendor, model] of [
+        ['m', 'meta', 'muse-spark-1.3'],
+        ['mc', 'meta', 'muse-spark-1.3-contributor'],
+        ['mi', 'xiaomi', 'mimo-v2.6-pro'],
+        ['mif', 'xiaomi', 'mimo-v2.6-flash'],
+      ]) {
+        const entry = by_alias.get(alias);
+        assert.ok(entry, `missing alias ${alias}`);
+        assert.strictEqual(entry.vendor, vendor, alias);
+        assert.strictEqual(entry.model, model, alias);
+      }
+      assert.strictEqual(by_alias.get('m++').thinking, 'max');
+      assert.strictEqual(by_alias.get('mif+').thinking, 'high');
+      for (const vendor of ['meta', 'xiaomi']) {
+        assert.strictEqual(typeof body.keysStatus[vendor], 'boolean', vendor);
+      }
+    });
+
+    it('/execute blocks environment inspection and secret-bearing children', async () => {
+      const res = await fetch(`${base}/api/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: 'printenv AUDIT_SECRET' }),
+      });
+      assert.strictEqual(res.status, 400);
+      const body = await res.json();
+      assert.doesNotMatch(body.output, /must-not-reach-child/);
     });
 
     it('/risk-check flags risky commands without executing', async () => {
@@ -1809,6 +2090,110 @@ describe('web sandbox: tell transport', () => {
       assert.match(contentType, /application\/json/);
       assert.strictEqual(JSON.parse(text).text, REPLY);
     });
+  });
+});
+
+describe('web sandbox: execution policy', () => {
+  let dir;
+  let child;
+  let base;
+
+  before(async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-web-no-exec-'));
+    const env = { ...process.env, PORT: '0', NODE_ENV: 'production' };
+    delete env.TELL_TOKEN;
+    child = spawn(process.execPath, [DIST_SERVER, '--cwd', dir, '--no-exec'], {
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    base = await waitForServer(child, 45000, '/api/auth/status');
+  });
+
+  after(() => {
+    if (child && !child.killed) child.kill('SIGTERM');
+    if (dir) fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('reports a disabled execution policy', async () => {
+    const res = await fetch(`${base}/api/config`);
+    const body = await res.json();
+    assert.strictEqual(body.noExec, true);
+    assert.strictEqual(body.autoExecute, false);
+  });
+
+  it('rejects direct execution requests', async () => {
+    const marker = path.join(dir, 'executed');
+    const res = await fetch(`${base}/api/execute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ command: `touch ${JSON.stringify(marker)}` }),
+    });
+    assert.strictEqual(res.status, 403);
+    assert.strictEqual(fs.existsSync(marker), false);
+  });
+});
+
+describe('web sandbox: dotenv auth', () => {
+  let dir;
+  let child;
+  let base;
+  const token = 'dotenv-token';
+
+  before(async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-web-dotenv-'));
+    fs.writeFileSync(path.join(dir, '.env'), `TELL_TOKEN=${token}\n`);
+    const env = { ...process.env, PORT: '0', NODE_ENV: 'production', TELL_TRUST_WORKSPACE_ENV: 'true' };
+    delete env.TELL_TOKEN;
+    child = spawn(process.execPath, [DIST_SERVER, '--cwd', dir], {
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    base = await waitForServer(child, 45000, '/api/auth/status');
+  });
+
+  after(() => {
+    if (child && !child.killed) child.kill('SIGTERM');
+    if (dir) fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('loads TELL_TOKEN from the workspace .env', async () => {
+    const status = await (await fetch(`${base}/api/auth/status`)).json();
+    assert.strictEqual(status.authRequired, true);
+    const anon = await fetch(`${base}/api/config`);
+    assert.strictEqual(anon.status, 401);
+    const authed = await fetch(`${base}/api/config`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.strictEqual(authed.status, 200);
+  });
+});
+
+describe('web sandbox: untrusted workspace env', () => {
+  let dir;
+  let child;
+  let base;
+
+  before(async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-web-untrusted-env-'));
+    fs.writeFileSync(path.join(dir, '.env'), 'TELL_TOKEN=workspace-token\nOPENAI_BASE_URL=http://attacker.invalid/v1\n');
+    const env = { ...process.env, PORT: '0', NODE_ENV: 'production' };
+    delete env.TELL_TOKEN;
+    delete env.TELL_TRUST_WORKSPACE_ENV;
+    child = spawn(process.execPath, [DIST_SERVER, '--cwd', dir], {
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    base = await waitForServer(child, 45000, '/api/auth/status');
+  });
+
+  after(() => {
+    if (child && !child.killed) child.kill('SIGTERM');
+    if (dir) fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('ignores workspace .env unless explicitly trusted', async () => {
+    const status = await (await fetch(`${base}/api/auth/status`)).json();
+    assert.strictEqual(status.authRequired, false);
   });
 });
 
