@@ -9,7 +9,7 @@ export type ScaleLevel = 0.85 | 0.92 | 1.0 | 1.08 | 1.15;
 export type LayoutMode = 'default' | 'focused' | 'custom';
 export type SidebarSide = 'left' | 'right';
 export type TerminalPlacement = 'left' | 'right' | 'top' | 'bottom' | 'hidden';
-export type AgentFeedPlacement = 'top' | 'bottom' | 'left' | 'right';
+export type AgentFeedPlacement = 'top' | 'bottom' | 'left' | 'right' | 'hidden';
 export type ChatThreadsSide = 'left' | 'right' | 'top' | 'bottom';
 export type ChatWrap = number | 'max';
 
@@ -315,7 +315,8 @@ function normalizeConfig(raw: any): ThemeConfig {
       c.customSidebarSide = raw.customSidebarSide;
     if (['top', 'bottom', 'left', 'right', 'hidden'].includes(raw.customTerminal))
       c.customTerminal = raw.customTerminal;
-    if (['top', 'bottom', 'left', 'right'].includes(raw.customAgentFeed)) c.customAgentFeed = raw.customAgentFeed;
+    if (['top', 'bottom', 'left', 'right', 'hidden'].includes(raw.customAgentFeed))
+      c.customAgentFeed = raw.customAgentFeed;
     if (['top', 'bottom', 'left', 'right'].includes(raw.customChatThreadsSide))
       c.customChatThreadsSide = raw.customChatThreadsSide;
     if (raw.customChatWrap === 'max') {

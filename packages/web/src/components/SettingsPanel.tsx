@@ -511,6 +511,17 @@ export default function SettingsPanel({
                       </button>
                     ))}
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => setCustomAgentFeed('hidden')}
+                    className={`mt-1.5 flex w-full items-center justify-center gap-1 px-2 py-1.5 text-[9px] font-bold uppercase tracking-wider border cursor-pointer transition-colors ${
+                      config.customAgentFeed === 'hidden'
+                        ? 'bg-(--color-accent) border-(--color-accent) text-white'
+                        : 'bg-(--color-bg-secondary) border-(--color-border-medium) text-(--color-text-muted) hover:text-(--color-text-primary)'
+                    }`}
+                  >
+                    <EyeOff className="w-3 h-3" /> Hidden
+                  </button>
                 </div>
                 <div>
                   <span className="block text-[9px] uppercase tracking-wider text-(--color-text-muted) font-bold mb-1">
