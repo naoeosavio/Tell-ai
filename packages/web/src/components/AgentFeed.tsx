@@ -1,5 +1,5 @@
 import { Check, ChevronDown, ChevronUp, Copy } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import type { TerminalLine } from './Terminal.tsx';
 
 interface AgentFeedProps {
@@ -7,7 +7,6 @@ interface AgentFeedProps {
   open: boolean;
   onToggle: (open: boolean) => void;
   onClear?: () => void;
-  pendingCommand?: string | null;
   className?: string;
 }
 
@@ -15,21 +14,9 @@ function SparkleIcon() {
   return <span className="text-(--color-accent)">✦</span>;
 }
 
-export default function AgentFeed({ lines, open, onToggle, onClear, pendingCommand, className }: AgentFeedProps) {
+export default function AgentFeed({ lines, open, onToggle, onClear, className }: AgentFeedProps) {
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
-  const lastErrorCountRef = useRef(0);
-
-  // Auto-open when a fresh error arrives or a command awaits authorization
-  useEffect(() => {
-    const errors = lines.filter((l) => l.type === 'error').length;
-    if (errors > lastErrorCountRef.current) onToggle(true);
-    lastErrorCountRef.current = errors;
-  }, [lines, onToggle]);
-
-  useEffect(() => {
-    if (pendingCommand) onToggle(true);
-  }, [pendingCommand, onToggle]);
 
   const handleCopy = async (idx: number, text: string) => {
     try {
