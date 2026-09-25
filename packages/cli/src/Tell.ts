@@ -11,6 +11,7 @@ import {
   extract_runs,
   MODELS,
   resolve_model_spec,
+  sanitize_reasoning,
   strip_run_tags,
   strip_think_tags,
   summarize_context,
@@ -38,6 +39,26 @@ const MAX_BUFFER = 32 * 1024 * 1024;
 const MAX_CHAIN_STEPS = 8;
 const EXEC_TIMEOUT = 120_000;
 const STDIN_TIMEOUT = 30_000;
+const SENSITIVE_ENV_NAMES = new Set([
+  'BASH_ENV',
+  'DYLD_INSERT_LIBRARIES',
+  'DYLD_LIBRARY_PATH',
+  'ENV',
+  'GPG_AGENT_INFO',
+  'GPG_KEY',
+  'LD_AUDIT',
+  'LD_LIBRARY_PATH',
+  'LD_PRELOAD',
+  'NODE_OPTIONS',
+  'PERL5LIB',
+  'PYTHONPATH',
+  'RUBYLIB',
+  'SSH_AUTH_SOCK',
+  'TELL_KEY',
+  'TELL_TOKEN',
+]);
+const SENSITIVE_ENV_SUFFIX =
+  /(?:^|_)(?:ACCESS_KEY(?:_ID)?|API_KEY|AUTH_TOKEN|CREDENTIALS?|PASSWORD|PASSWD|PRIVATE_KEY|SECRET(?:_KEY)?|TOKEN)$/;
 // Chars of accumulated conversation context; beyond this the oldest part is
 // summarized away (LLM windows are far below 64K chars of raw history).
 const MAX_CONTEXT_CHARS = 64 * 1024;
@@ -145,6 +166,21 @@ function print_model_help(): void {
   console.log('\nFull specs are also accepted: vendor:model[:thinking]');
 }
 
+function lock_process_environment(): void {
+  for (const name of Object.keys(process.env)) {
+    if (SENSITIVE_ENV_NAMES.has(name) || SENSITIVE_ENV_SUFFIX.test(name)) delete process.env[name];
+  }
+}
+
+function sanitized_command_env(): NodeJS.ProcessEnv {
+  const sanitized: NodeJS.ProcessEnv = {};
+  for (const [name, value] of Object.entries(process.env)) {
+    if (value === undefined || SENSITIVE_ENV_NAMES.has(name) || SENSITIVE_ENV_SUFFIX.test(name)) continue;
+    sanitized[name] = value;
+  }
+  return sanitized;
+}
+
 async function execute_command(script: string): Promise<CommandResult> {
   try {
     const { stdout, stderr } = await EXEC_ASYNC(script, {
@@ -152,6 +188,7 @@ async function execute_command(script: string): Promise<CommandResult> {
       maxBuffer: MAX_BUFFER,
       shell: '/bin/bash',
       timeout: EXEC_TIMEOUT,
+      env: sanitized_command_env(),
     });
     return { output: stdout + stderr, exitCode: 0 };
   } catch (error) {
@@ -478,8 +515,13 @@ function is_high_risk_script(script: string): boolean {
   ].join('');
   return [
     /\b(?:sudo|doas|pkexec)\b/,
-    /\brm\s+(-[^\s]*[rf][^\s]*|-[^\s]*[fr][^\s]*)\b/,
-    /\b(git\s+clean\s+-[^\s]*[xfd]|mkfs|shutdown|reboot)\b/,
+    /(?:^|[\s;&|(])(?:[^\s;&|()]*\/)?(?:ba|z|da|k)?sh\b[^;&|]*\s-c(?:\s|$)/,
+    /(?:^|[\s;&|(])(?:[^\s;&|()]*\/)?(?:curl|wget|nc|ncat|netcat|telnet|ssh|scp|sftp|ftp)\b/,
+    /(?:^|[\s;&|(])(?:[^\s;&|()]*\/)?printenv\b/,
+    /\/proc(?:\/|\b)/,
+    /\brm\s+(?:-[^\s]*[rRfF][^\s]*)(?:\s|$)/,
+    /\bgit\s+clean\b[^;&|]*(?:--force\b|-[^-][^\s]*[fdx])/,
+    /\b(?:mkfs|shutdown|reboot)\b/,
     /\bdd\b.*\bof=/,
     /\b(chmod|chown)\s+-R\b.*\s\/(?:\s|$)/,
     // Non-recursive permission/ownership changes on privileged paths
@@ -510,7 +552,10 @@ function is_high_risk_script(script: string): boolean {
 // bare `..`), optionally after `=` (`--output=/x`) and inside quotes. The
 // token body stops at whitespace or shell separators.
 const OUTSIDE_PATH_TOKEN =
-  /(?:^|[\s;&|("'=`])((?:\/|~\/|\$HOME\/?|\.{1,2}\/)[^\s;&|'"]*|\$HOME|[~.]{1,2})(?=$|[\s;&|'")=])/g;
+  /(?:^|[\s;&|("'=`])((?:\/|~\/|(?:\$\{HOME\}|\$HOME)\/?|\.{1,2}\/)[^\s;&|'"]*|\$\{HOME\}|\$HOME|[~.]{1,2})(?=$|[\s;&|'")=])/g;
+const FILE_ARGUMENT_TOKEN =
+  /(?:^|[\s;&|])(?:cat|head|tail|less|more|file|stat|cp|mv|rm|ln|chmod|chown|truncate|tar)\b([^;&|]*)/g;
+const SHELL_ARGUMENT_TOKEN = /"([^"]*)"|'([^']*)'|([^\s]+)/g;
 
 // True when the script references any path that resolves outside `cwd` —
 // reads included, mirroring the `@path` mention read gate. Resolution is
@@ -519,13 +564,30 @@ const OUTSIDE_PATH_TOKEN =
 // reference resolves inside and stays allowed.
 function script_touches_outside_cwd(script: string, cwd: string): boolean {
   const home = os.homedir();
-  const compact = script.replace(/\\\n/g, ' ');
+  const compact = script
+    .replace(/\\\n/g, ' ')
+    .replace(/\\\//g, '/')
+    .replace(/\$\{PWD\}|\$PWD/g, cwd);
+  if (/\$\{(?:PWD|HOME)(?::[-=+?]|\+)/.test(compact)) return true;
   for (const match of compact.matchAll(OUTSIDE_PATH_TOKEN)) {
     const token = match[1];
     if (!token) continue;
-    const expanded = token.replace(/^\$HOME/, home).replace(/^~(?=\/|$)/, home);
+    const expanded = token
+      .replace(/^\$\{HOME\}/, home)
+      .replace(/^\$HOME/, home)
+      .replace(/^~(?=\/|$)/, home);
     const resolved = path.resolve(cwd, expanded);
     if (is_outside_cwd(resolved, cwd)) return true;
+  }
+  for (const match of compact.matchAll(FILE_ARGUMENT_TOKEN)) {
+    const args = match[1];
+    if (!args) continue;
+    for (const argument of args.matchAll(SHELL_ARGUMENT_TOKEN)) {
+      const token = argument[1] ?? argument[2] ?? argument[3];
+      if (!token || token.startsWith('-')) continue;
+      const resolved = path.resolve(cwd, token);
+      if (is_outside_cwd(resolved, cwd)) return true;
+    }
   }
   return false;
 }
@@ -602,6 +664,15 @@ function extract_think(response: string): string {
   return /<think>([\s\S]*?)<\/think>/i.exec(response)?.[1]?.trim() ?? '';
 }
 
+function sanitize_wrapped_reasoning(response: string): string {
+  const lower = response.toLowerCase();
+  const start = lower.indexOf('<think>');
+  const end = lower.lastIndexOf('</think>');
+  if (start < 0 || end < start + '<think>'.length) return response;
+  const reasoning = response.slice(start + '<think>'.length, end);
+  return `${response.slice(0, start)}<think>${sanitize_reasoning(reasoning)}</think>${response.slice(end + '</think>'.length)}`;
+}
+
 function print_reasoning(reasoning: string): void {
   if (!reasoning) return;
   process.stderr.write(`\x1b[2m${reasoning}\x1b[0m\n`);
@@ -624,6 +695,7 @@ async function tell_silently(
   } finally {
     process.stderr.write('\r\x1b[K');
   }
+  response = sanitize_wrapped_reasoning(response);
   if (show_think) print_reasoning(extract_think(response));
   return response;
 }
@@ -660,14 +732,16 @@ async function tell_streaming(
   try {
     for await (const event of ai.ask_stream(message, { system: get_system_prompt(options) })) {
       switch (event.type) {
-        case 'reasoning':
-          reasoning += event.text;
+        case 'reasoning': {
+          const safe_reasoning = sanitize_reasoning(event.text);
+          reasoning += safe_reasoning;
           if (show_think) {
             clear_indicator();
-            process.stderr.write(`\x1b[2m${event.text}\x1b[0m`);
+            process.stderr.write(`\x1b[2m${safe_reasoning}\x1b[0m`);
             is_reasoning_open = true;
           }
           break;
+        }
         case 'text':
           clear_indicator();
           close_reasoning_line();
@@ -1020,6 +1094,7 @@ async function run_tell(
   try {
     const config = await load_sdk_config();
     ai = await create_ask_ai(model, config);
+    lock_process_environment();
     await run_response_loop(ai, state, log, context_path, previous_context);
   } catch (error) {
     console.error('\x1b[31m%s\x1b[0m', format_model_error(error));

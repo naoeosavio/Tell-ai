@@ -28,6 +28,8 @@ export async function load_sdk_config(): Promise<SDKConfig> {
     openrouter: ENV('OPENROUTER_API_KEY') || (await read_token_file('openrouter')),
     alibaba: ENV('ALIBABA_API_KEY') || (await read_token_file('alibaba')),
     zhipu: ENV('ZHIPU_API_KEY') || (await read_token_file('zhipu')),
+    meta: ENV('META_API_KEY') || (await read_token_file('meta')),
+    xiaomi: ENV('MIMO_API_KEY') || (await read_token_file('mimo')),
   };
   const urls: SDKUrls = {
     openai: 'https://api.openai.com/v1',
@@ -40,6 +42,8 @@ export async function load_sdk_config(): Promise<SDKConfig> {
     openrouter: 'https://openrouter.ai/api/v1',
     alibaba: ENV('ALIBABA_BASE_URL') || 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
     zhipu: ENV('ZHIPU_BASE_URL') || 'https://api.z.ai/api/paas/v4',
+    meta: ENV('META_BASE_URL') || 'https://api.meta.ai/v1',
+    xiaomi: ENV('MIMO_BASE_URL') || 'https://api.xiaomimimo.com/v1',
     vast: ENV('VAST_BASE_URL'),
     local: ENV('LOCAL_OPENAI_BASE_URL'),
   };
