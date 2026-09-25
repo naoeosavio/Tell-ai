@@ -5,8 +5,10 @@ export interface CliArgs {
   cwd: string;
   /** Optional initial prompt used to pre-seed the first chat message. */
   initialPrompt?: string | undefined;
-  /** Whether automatic execution of AI-generated commands is enabled. Defaults to true (unless --no-exec). */
+  /** Whether automatic execution of AI-generated commands is enabled. Defaults to false. */
   autoExecute: boolean;
+  /** Whether command execution is disabled for the entire server. */
+  noExec: boolean;
   /** Model shortcode or full spec (`-m/--model`). */
   model: string;
   /** Whether to continue after command output until the AI gives a final answer. */
@@ -67,9 +69,8 @@ export function parseCliArgs(argv: string[], defaultCwd: string): CliArgs {
   return {
     cwd: path.resolve(argCwd || defaultCwd),
     initialPrompt,
-    // `--no-exec` always wins (same precedence as the CLI); `-y` is not part
-    // of this expression — autoExecute merely reflects the default toggle state.
-    autoExecute: !noExec,
+    autoExecute: yes && !noExec,
+    noExec,
     model,
     chain,
     yes,

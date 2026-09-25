@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { get_system_prompt } from '@tell-ai/sdk';
+import { resolveWithin } from './paths';
 
 const MAX_DEPTH = 4;
 const MAX_FILE_CHARS = 6 * 1024;
@@ -94,7 +95,9 @@ function renderTree(nodes: TreeNode[], prefix = ''): string {
 
 function findDoc(cwd: string, name: string): fs.Stats | null {
   try {
-    const stat = fs.statSync(path.join(cwd, name));
+    const full = resolveWithin(cwd, name);
+    if (!full) return null;
+    const stat = fs.lstatSync(full);
     return stat.isFile() ? stat : null;
   } catch {
     return null;
@@ -102,29 +105,28 @@ function findDoc(cwd: string, name: string): fs.Stats | null {
 }
 
 function readDoc(cwd: string, name: string): string | null {
-  const stat = findDoc(cwd, name);
-  if (!stat) return null;
-  const full = path.join(cwd, name);
+  if (!findDoc(cwd, name)) return null;
+  const full = resolveWithin(cwd, name);
+  if (!full) return null;
+  let fd: number | null = null;
   try {
+    fd = fs.openSync(full, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    const stat = fs.fstatSync(fd);
     let text: string;
     if (stat.size > MAX_DOC_BYTES) {
-      // Partial read of the first MAX_DOC_BYTES bytes; avoids reading oversized docs.
-      const fd = fs.openSync(full, 'r');
-      try {
-        const buf = Buffer.alloc(MAX_DOC_BYTES);
-        const bytes = fs.readSync(fd, buf, 0, MAX_DOC_BYTES, 0);
-        text = buf.toString('utf8', 0, bytes);
-      } finally {
-        fs.closeSync(fd);
-      }
-      if (!text.trim()) return null;
-      return `${text}\n\n[truncated ${stat.size} bytes total]`;
+      const buf = Buffer.alloc(MAX_DOC_BYTES);
+      const bytes = fs.readSync(fd, buf, 0, MAX_DOC_BYTES, 0);
+      text = buf.toString('utf8', 0, bytes);
+    } else {
+      text = fs.readFileSync(fd, 'utf8');
     }
-    text = fs.readFileSync(full, 'utf8');
     if (!text.trim()) return null;
+    if (stat.size > MAX_DOC_BYTES) return `${text}\n\n[truncated ${stat.size} bytes total]`;
     return text.length > MAX_FILE_CHARS ? `${text.slice(0, MAX_FILE_CHARS)}\n\n[truncated]` : text;
   } catch {
     return null;
+  } finally {
+    if (fd !== null) fs.closeSync(fd);
   }
 }
 

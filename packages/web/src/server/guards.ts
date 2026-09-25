@@ -30,6 +30,88 @@ export function isSensitiveRelPath(relPath: string): boolean {
 // Rate limiting (per-key token timestamps, in memory)
 // ---------------------------------------------------------------------------
 
+const SENSITIVE_ENV_NAMES = new Set([
+  'BASH_ENV',
+  'DYLD_INSERT_LIBRARIES',
+  'DYLD_LIBRARY_PATH',
+  'ENV',
+  'GPG_AGENT_INFO',
+  'GPG_KEY',
+  'LD_AUDIT',
+  'LD_LIBRARY_PATH',
+  'LD_PRELOAD',
+  'NODE_OPTIONS',
+  'PERL5LIB',
+  'PYTHONPATH',
+  'RUBYLIB',
+  'SSH_AUTH_SOCK',
+  'TELL_KEY',
+  'TELL_TOKEN',
+]);
+
+const SENSITIVE_ENV_SUFFIX =
+  /(?:^|_)(?:ACCESS_KEY(?:_ID)?|API_KEY|AUTH_TOKEN|CREDENTIALS?|PASSWORD|PASSWD|PRIVATE_KEY|SECRET(?:_KEY)?|TOKEN)$/;
+
+export function sanitizeChildEnv(env: Record<string, string | undefined>): Record<string, string> {
+  const sanitized: Record<string, string> = {};
+  for (const [name, value] of Object.entries(env)) {
+    if (value === undefined || SENSITIVE_ENV_NAMES.has(name) || SENSITIVE_ENV_SUFFIX.test(name)) continue;
+    sanitized[name] = value;
+  }
+  return sanitized;
+}
+
+export function normalizeApiPath(pathname: string): string {
+  const normalized = pathname.toLowerCase();
+  return normalized.length > 1 && normalized.endsWith('/') ? normalized.slice(0, -1) : normalized;
+}
+
+function normalized_host(host: string): string | null {
+  if (!host || host.length > 255 || /[\s/?#\\@]/.test(host)) return null;
+  try {
+    const parsed = new URL(`http://${host}`);
+    if (parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) return null;
+    const hostname = parsed.hostname.toLowerCase();
+    const bracketed = hostname.includes(':') ? `[${hostname.replace(/^\[|\]$/g, '')}]` : hostname;
+    const expected = parsed.port ? `${bracketed}:${parsed.port}` : bracketed;
+    return host.toLowerCase() === expected ? hostname.replace(/^\[|\]$/g, '') : null;
+  } catch {
+    return null;
+  }
+}
+
+function is_ip_host(hostname: string): boolean {
+  if (hostname.includes(':')) return true;
+  const parts = hostname.split('.');
+  return parts.length === 4 && parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255);
+}
+
+export function isAllowedHost(host: string | undefined, allowedHosts: ReadonlySet<string>): boolean {
+  if (!host) return false;
+  const raw = host.toLowerCase();
+  if (allowedHosts.has(raw)) return true;
+  const hostname = normalized_host(host);
+  if (!hostname) return false;
+  return hostname === 'localhost' || is_ip_host(hostname) || allowedHosts.has(hostname);
+}
+
+export function isAllowedOrigin(
+  origin: string | undefined,
+  requestHost: string | undefined,
+  allowedHosts: ReadonlySet<string>,
+): boolean {
+  if (!origin) return true;
+  if (!requestHost || !isAllowedHost(requestHost, allowedHosts)) return false;
+  try {
+    const parsed = new URL(origin);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return false;
+    if (parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) return false;
+    return parsed.host.toLowerCase() === requestHost.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
 export interface RateLimiterOptions {
   max: number;
   windowMs: number;
@@ -144,18 +226,26 @@ export const TELL_MAX_CONTENT_CHARS = 50 * 1024;
 export const TELL_MAX_SYSTEM_CHARS = 30 * 1024;
 
 /** Returns an error message when the payload is invalid, null when acceptable. */
-export function validateTellPayload(body: { messages?: unknown; systemPrompt?: unknown }): string | null {
-  const { messages, systemPrompt } = body || {};
+export function validateTellPayload(body: unknown): string | null {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return 'messages array is required';
+  const { messages, systemPrompt } = body as { messages?: unknown; systemPrompt?: unknown };
   if (!Array.isArray(messages)) return 'messages array is required';
   if (messages.length > TELL_MAX_MESSAGES) {
     return `messages limited to ${TELL_MAX_MESSAGES} items`;
   }
   for (const message of messages) {
-    const content = (message as any)?.content;
+    if (!message || typeof message !== 'object' || Array.isArray(message)) {
+      return 'each message needs string content';
+    }
+    const { role, content } = message as { role?: unknown; content?: unknown };
     if (typeof content !== 'string') return 'each message needs string content';
+    if (role !== 'user' && role !== 'assistant') return 'each message role must be user or assistant';
     if (content.length > TELL_MAX_CONTENT_CHARS) {
       return `message content limited to ${TELL_MAX_CONTENT_CHARS} chars`;
     }
+  }
+  if (systemPrompt !== undefined && systemPrompt !== null && typeof systemPrompt !== 'string') {
+    return 'systemPrompt must be a string';
   }
   if (typeof systemPrompt === 'string' && systemPrompt.length > TELL_MAX_SYSTEM_CHARS) {
     return `systemPrompt limited to ${TELL_MAX_SYSTEM_CHARS} chars`;
@@ -195,8 +285,13 @@ function highRiskPatterns(): RegExp[] {
   ].join('');
   return [
     /\b(?:sudo|doas|pkexec)\b/,
-    /\brm\s+(-[^\s]*[rf][^\s]*|-[^\s]*[fr][^\s]*)\b/,
-    /\b(git\s+clean\s+-[^\s]*[xfd]|mkfs|shutdown|reboot)\b/,
+    /(?:^|[\s;&|(])(?:[^\s;&|()]*\/)?(?:ba|z|da|k)?sh\b[^;&|]*\s-c(?:\s|$)/,
+    /(?:^|[\s;&|(])(?:[^\s;&|()]*\/)?(?:curl|wget|nc|ncat|netcat|telnet|ssh|scp|sftp|ftp)\b/,
+    /(?:^|[\s;&|(])(?:[^\s;&|()]*\/)?printenv\b/,
+    /\/proc(?:\/|\b)/,
+    /\brm\s+(?:-[^\s]*[rRfF][^\s]*)(?:\s|$)/,
+    /\bgit\s+clean\b[^;&|]*(?:--force\b|-[^-][^\s]*[fdx])/,
+    /\b(?:mkfs|shutdown|reboot)\b/,
     /\bdd\b.*\bof=/,
     /\b(chmod|chown)\s+-R\b.*\s\/(?:\s|$)/,
     /(?:curl|wget)\b[^|;&]*\|\s*(?:ba)?sh\b/,
@@ -208,7 +303,7 @@ function highRiskPatterns(): RegExp[] {
     // Interpreter eval: python|python3|node|perl|ruby with -c/-e (RCE via stdin of the exec shell)
     /\b(?:python3?|node|perl|ruby)\b[^;&|]*\s(?:-c|-e|--eval)\b/,
     // `env` used to launch commands (bypasses alias/scope expectations)
-    /(?:^|[;&|(]\s*)env\b/,
+    /\benv\b/,
     // Payload de-obfuscation
     /\bbase64\s+(?:-[a-zA-Z]+\s+)*(?:-d\b|--decode\b)/,
     // Shell expansion / substitution

@@ -5,7 +5,7 @@ import type { Duplex } from 'node:stream';
 import { type IPty, spawn } from 'node-pty';
 import type { WebSocket } from 'ws';
 import { WebSocketServer } from 'ws';
-import { clampTerminalSize, isValidPaneId } from './guards';
+import { clampTerminalSize, isAllowedHost, isAllowedOrigin, isValidPaneId, sanitizeChildEnv } from './guards';
 import { getMaxScrollbackChars, safeForeground, shouldKeepPane } from './pty-policy';
 
 /** Constant-time WS token check (sha256 both sides so lengths don't leak). */
@@ -17,12 +17,16 @@ function wsTokensEqual(provided: string, expected: string): boolean {
 
 export const GC_AFTER_MS = 5 * 60 * 1000;
 export const MAX_SESSIONS = 12;
+export const MAX_PANE_CLIENTS = 8;
+export const MAX_WS_PAYLOAD_BYTES = 16 * 1024;
+export const MAX_CLIENT_BUFFERED_BYTES = 1024 * 1024;
 
 export interface TerminalServerOptions {
   cwd: string;
   shell?: string;
   /** When set, WS upgrades must carry ?token=<value> (mirrors TELL_TOKEN auth). */
   token?: string | undefined;
+  allowedHosts?: ReadonlySet<string> | undefined;
 }
 
 interface PaneSession {
@@ -46,9 +50,10 @@ export interface ScrollbackBuffer {
 }
 
 export function pushScrollback(session: ScrollbackBuffer, data: string): void {
-  session.scrollback.push(data);
-  session.scrollbackChars += data.length;
   const maxChars = getMaxScrollbackChars();
+  const bounded = data.length > maxChars ? data.slice(-maxChars) : data;
+  session.scrollback.push(bounded);
+  session.scrollbackChars += bounded.length;
   while (session.scrollbackChars > maxChars && session.scrollback.length > 0) {
     const dropped = session.scrollback.shift();
     if (dropped) session.scrollbackChars -= dropped.length;
@@ -59,6 +64,11 @@ export function getScrollback(paneId: string): string {
   const session = sessions.get(paneId);
   if (!session) return '';
   return session.scrollback.join('');
+}
+
+export function getReplayData(session: Pick<ScrollbackBuffer, 'scrollback'>): string {
+  const maxChars = Math.min(getMaxScrollbackChars(), MAX_CLIENT_BUFFERED_BYTES);
+  return session.scrollback.join('').slice(-maxChars);
 }
 
 export function activePaneIds(): string[] {
@@ -116,7 +126,7 @@ function ensureSession(paneId: string, opts: TerminalServerOptions): PaneSession
   if (session) return session;
 
   const env = {
-    ...process.env,
+    ...sanitizeChildEnv(process.env),
     TERM: 'xterm-256color',
     COLORTERM: 'truecolor',
   };
@@ -144,37 +154,59 @@ function ensureSession(paneId: string, opts: TerminalServerOptions): PaneSession
   pty.onData((data) => {
     pushScrollback(session, data);
     for (const client of session.clients) {
-      if (client.readyState === client.OPEN) {
-        client.send(JSON.stringify({ type: 'data', data }));
+      if (client.readyState !== client.OPEN) continue;
+      if (client.bufferedAmount > MAX_CLIENT_BUFFERED_BYTES) {
+        client.close(1013, 'client is too slow');
+        continue;
       }
+      client.send(JSON.stringify({ type: 'data', data }));
     }
   });
   pty.onExit(({ exitCode }) => {
     const payload = JSON.stringify({ type: 'exit', code: exitCode });
     for (const client of session.clients) {
-      if (client.readyState === client.OPEN) client.send(payload);
+      if (client.readyState !== client.OPEN) continue;
+      client.send(payload);
+      client.close(1000, 'terminal exited');
+      setTimeout(() => client.terminate(), 1000).unref();
     }
+    cancelGcTimer(session);
+    if (sessions.get(paneId) === session) sessions.delete(paneId);
+    session.clients.clear();
   });
 
   return session;
 }
 
-function attachClient(session: PaneSession, ws: WebSocket, replay: boolean): void {
+function attachClient(session: PaneSession, ws: WebSocket, replay: boolean): boolean {
+  if (replay) {
+    const payload = JSON.stringify({ type: 'data', data: getReplayData(session) });
+    if (ws.bufferedAmount + Buffer.byteLength(payload) > MAX_CLIENT_BUFFERED_BYTES) {
+      ws.close(1013, 'replay is too large');
+      return false;
+    }
+    ws.send(payload);
+  }
   session.clients.add(ws);
-  if (replay) ws.send(JSON.stringify({ type: 'data', data: session.scrollback.join('') }));
   cancelGcTimer(session);
   session.lastDisconnect = null;
+  return true;
 }
 
 function detachClient(session: PaneSession, ws: WebSocket): void {
   session.clients.delete(ws);
-  scheduleGc(session.paneId, session);
+  if (sessions.get(session.paneId) === session) scheduleGc(session.paneId, session);
 }
 
 export function attachTerminalServer(server: http.Server, opts: TerminalServerOptions): void {
-  const wss = new WebSocketServer({ noServer: true });
+  const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_WS_PAYLOAD_BYTES });
 
   server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+    const allowedHosts = opts.allowedHosts ?? new Set<string>();
+    if (!isAllowedHost(req.headers.host, allowedHosts)) {
+      socket.destroy();
+      return;
+    }
     const { pathname, searchParams } = new URL(req.url || '/', `http://${req.headers.host}`);
 
     // Leave Vite's HMR socket alone in dev; destroy anything else off-path so
@@ -187,16 +219,9 @@ export function attachTerminalServer(server: http.Server, opts: TerminalServerOp
 
     // Origin check: same host only (anti cross-site WS hijacking)
     const origin = req.headers.origin;
-    if (origin) {
-      try {
-        if (new URL(origin).host !== req.headers.host) {
-          socket.destroy();
-          return;
-        }
-      } catch {
-        socket.destroy();
-        return;
-      }
+    if (!isAllowedOrigin(origin, req.headers.host, allowedHosts)) {
+      socket.destroy();
+      return;
     }
 
     // Bearer token parity with the REST API (constant-time; in-memory token only)
@@ -229,10 +254,24 @@ export function attachTerminalServer(server: http.Server, opts: TerminalServerOp
       ws.close(4429, 'too many terminal sessions');
       return;
     }
+    const currentSession = sessions.get(paneId);
+    if (currentSession && currentSession.clients.size >= MAX_PANE_CLIENTS) {
+      ws.close(4429, 'too many clients for terminal session');
+      return;
+    }
 
     const session = ensureSession(paneId, opts);
     const replay = searchParams.get('scrollback') !== '0';
-    attachClient(session, ws, replay);
+    if (!attachClient(session, ws, replay)) {
+      if (session.clients.size === 0) {
+        cancelGcTimer(session);
+        sessions.delete(paneId);
+        try {
+          session.pty.kill();
+        } catch {}
+      }
+      return;
+    }
 
     try {
       session.pty.resize(size.cols, size.rows);

@@ -2,6 +2,8 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import { sanitizeChildEnv } from './guards';
+import { resolveWithin } from './paths';
 
 const execFileAsync = promisify(execFile);
 
@@ -66,6 +68,69 @@ export function emptySession(cwd: string): TellSession {
 }
 
 const MAX_SESSION_BYTES = 2 * 1024 * 1024;
+const PRIVATE_DIR_MODE = 0o700;
+const PRIVATE_FILE_MODE = 0o600;
+
+function ensurePrivateDirectory(cwd: string, relativePath: string): string {
+  const full = resolveWithin(cwd, relativePath);
+  if (!full) throw new Error('Session path escapes the workspace');
+  fs.mkdirSync(full, { recursive: true, mode: PRIVATE_DIR_MODE });
+  const safePath = resolveWithin(cwd, relativePath);
+  if (!safePath || !fs.lstatSync(safePath).isDirectory()) throw new Error('Session path is not a directory');
+  fs.chmodSync(safePath, PRIVATE_DIR_MODE);
+  return safePath;
+}
+
+function openPrivateFile(filePath: string): number {
+  const fd = fs.openSync(
+    filePath,
+    fs.constants.O_WRONLY |
+      fs.constants.O_CREAT |
+      fs.constants.O_TRUNC |
+      fs.constants.O_NOFOLLOW |
+      fs.constants.O_NONBLOCK,
+    PRIVATE_FILE_MODE,
+  );
+  if (!fs.fstatSync(fd).isFile()) {
+    fs.closeSync(fd);
+    throw new Error('Session file is not a regular file');
+  }
+  fs.fchmodSync(fd, PRIVATE_FILE_MODE);
+  return fd;
+}
+
+function writePrivateFile(filePath: string, content: string): void {
+  const fd = openPrivateFile(filePath);
+  try {
+    fs.writeFileSync(fd, content, 'utf8');
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function readPrivateFile(filePath: string): string {
+  const fd = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  try {
+    if (!fs.fstatSync(fd).isFile()) throw new Error('Session file is not a regular file');
+    return fs.readFileSync(fd, 'utf8');
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function repairPrivateModes(cwd: string): void {
+  const tell = resolveWithin(cwd, '.tell');
+  if (tell && fs.lstatSync(tell).isDirectory()) fs.chmodSync(tell, PRIVATE_DIR_MODE);
+  const session = resolveWithin(cwd, path.join('.tell', 'session.json'));
+  if (session && fs.lstatSync(session).isFile()) fs.chmodSync(session, PRIVATE_FILE_MODE);
+  const history = resolveWithin(cwd, path.join('.tell', 'history'));
+  if (!history || !fs.lstatSync(history).isDirectory()) return;
+  fs.chmodSync(history, PRIVATE_DIR_MODE);
+  for (const name of fs.readdirSync(history)) {
+    const file = resolveWithin(cwd, path.join('.tell', 'history', name));
+    if (file && fs.lstatSync(file).isFile()) fs.chmodSync(file, PRIVATE_FILE_MODE);
+  }
+}
 
 function asArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : [];
@@ -117,10 +182,13 @@ function sanitizeSession(cwd: string, raw: unknown): TellSession {
 }
 
 export function loadSession(cwd: string): TellSession | null {
-  const file = sessionPath(cwd);
-  if (!fs.existsSync(file)) return null;
   try {
-    const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+    repairPrivateModes(cwd);
+  } catch {}
+  const file = resolveWithin(cwd, path.join('.tell', 'session.json'));
+  if (!file || !fs.existsSync(file)) return null;
+  try {
+    const raw = JSON.parse(readPrivateFile(file));
     return sanitizeSession(cwd, raw);
   } catch {
     return null;
@@ -142,10 +210,13 @@ export function saveSession(cwd: string, session: TellSession): boolean {
     session.updatedAt = new Date().toISOString();
     const json = serializeBounded(session, 'saveSession');
     if (!json) return false;
-    fs.mkdirSync(sessionDir(cwd), { recursive: true });
-    const tmp = `${sessionPath(cwd)}.tmp`;
-    fs.writeFileSync(tmp, json, 'utf8');
-    fs.renameSync(tmp, sessionPath(cwd));
+    ensurePrivateDirectory(cwd, '.tell');
+    const target = resolveWithin(cwd, path.join('.tell', 'session.json'));
+    const tmp = resolveWithin(cwd, path.join('.tell', 'session.json.tmp'));
+    if (!target || !tmp) return false;
+    writePrivateFile(tmp, json);
+    fs.renameSync(tmp, target);
+    fs.chmodSync(target, PRIVATE_FILE_MODE);
     return true;
   } catch {
     return false;
@@ -153,9 +224,12 @@ export function saveSession(cwd: string, session: TellSession): boolean {
 }
 
 export function listHistory(cwd: string): Array<{ name: string; createdAt: string; size: number }> {
+  try {
+    repairPrivateModes(cwd);
+  } catch {}
   repairLatestSymlink(cwd);
-  const dir = historyDir(cwd);
-  if (!fs.existsSync(dir)) return [];
+  const dir = resolveWithin(cwd, path.join('.tell', 'history'));
+  if (!dir || !fs.existsSync(dir) || !fs.lstatSync(dir).isDirectory()) return [];
   let names: string[];
   try {
     names = fs.readdirSync(dir);
@@ -165,10 +239,12 @@ export function listHistory(cwd: string): Array<{ name: string; createdAt: strin
   return names
     .filter((n) => n.endsWith('.json'))
     .map((name) => {
-      const full = path.join(dir, name);
+      const full = resolveWithin(cwd, path.join('.tell', 'history', name));
+      if (!full) return null;
       let stat: fs.Stats | undefined;
       try {
-        stat = fs.statSync(full);
+        stat = fs.lstatSync(full);
+        if (!stat.isFile()) return null;
       } catch {
         return null;
       }
@@ -185,10 +261,11 @@ export function createSnapshot(cwd: string, session: TellSession): string | null
     session.updatedAt = new Date().toISOString();
     const json = serializeBounded(session, 'createSnapshot');
     if (!json) return null;
-    fs.mkdirSync(historyDir(cwd), { recursive: true });
+    ensurePrivateDirectory(cwd, path.join('.tell', 'history'));
     const name = `${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
-    const full = path.join(historyDir(cwd), name);
-    fs.writeFileSync(full, json, 'utf8');
+    const full = resolveWithin(cwd, path.join('.tell', 'history', name));
+    if (!full) return null;
+    writePrivateFile(full, json);
     updateLatestSymlink(cwd, name);
     return name;
   } catch {
@@ -197,7 +274,9 @@ export function createSnapshot(cwd: string, session: TellSession): string | null
 }
 
 function updateLatestSymlink(cwd: string, snapshotName: string): void {
-  const latest = path.join(sessionDir(cwd), 'latest');
+  const tell = resolveWithin(cwd, '.tell');
+  if (!tell) return;
+  const latest = path.join(tell, 'latest');
   try {
     fs.unlinkSync(latest);
   } catch {
@@ -212,7 +291,9 @@ function updateLatestSymlink(cwd: string, snapshotName: string): void {
 
 /** Drop a dangling `latest` symlink; ignore if missing or valid. */
 export function repairLatestSymlink(cwd: string): void {
-  const latest = path.join(sessionDir(cwd), 'latest');
+  const tell = resolveWithin(cwd, '.tell');
+  if (!tell) return;
+  const latest = path.join(tell, 'latest');
   let isSymlink = false;
   try {
     isSymlink = fs.lstatSync(latest).isSymbolicLink();
@@ -222,7 +303,13 @@ export function repairLatestSymlink(cwd: string): void {
   if (!isSymlink) return;
   try {
     const target = fs.readlinkSync(latest);
-    fs.accessSync(path.resolve(sessionDir(cwd), target));
+    const history = resolveWithin(cwd, path.join('.tell', 'history'));
+    if (!history) throw new Error('Invalid history directory');
+    const targetPath = path.resolve(tell, target);
+    const relative = path.relative(history, targetPath);
+    if (relative.startsWith('..') || path.isAbsolute(relative) || !fs.lstatSync(targetPath).isFile()) {
+      throw new Error('Invalid snapshot target');
+    }
   } catch {
     try {
       fs.unlinkSync(latest);
@@ -235,7 +322,11 @@ export function repairLatestSymlink(cwd: string): void {
 
 export async function listGitChanges(cwd: string): Promise<string[]> {
   try {
-    const { stdout } = await execFileAsync('git', ['status', '--porcelain'], { cwd, timeout: 5000 });
+    const { stdout } = await execFileAsync('git', ['status', '--porcelain'], {
+      cwd,
+      timeout: 5000,
+      env: sanitizeChildEnv(process.env),
+    });
     return stdout
       .split('\n')
       .map((l) => l.trim())

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { create_ask_ai, get_model, MODELS, resolve_model_spec, type SDKConfig } from '@tell-ai/sdk';
 import { generateText } from 'ai';
+import { config as loadEnv } from 'dotenv';
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import { type ChatStreamEvent, encode_chat_stream_event } from '../shared/chat-stream';
@@ -15,10 +16,14 @@ import { buildSystemPrompt } from './context-builder';
 import {
   authFailureMessage,
   createRateLimiter,
+  isAllowedHost,
+  isAllowedOrigin,
   isHighRiskScript,
   isSensitiveRelPath,
   isValidTokenInput,
+  normalizeApiPath,
   resolveStreamMode,
+  sanitizeChildEnv,
   validateTellPayload,
 } from './guards';
 import { resolveWithin } from './paths';
@@ -27,7 +32,6 @@ import { configureScrollbackMax } from './pty-policy';
 import {
   createSnapshot,
   emptySession,
-  historyDir,
   listGitChanges,
   listHistory,
   loadSession,
@@ -49,9 +53,23 @@ if (!fs.existsSync(cliArgs.cwd) || !fs.statSync(cliArgs.cwd).isDirectory()) {
   console.error(`Error: --cwd "${cliArgs.cwd}" does not exist or is not a directory.`);
   process.exit(1);
 }
-const CWD = cliArgs.cwd;
+const CWD = fs.realpathSync(cliArgs.cwd);
+const ENV_PATH = path.join(CWD, '.env');
+if (process.env['TELL_TRUST_WORKSPACE_ENV'] === 'true') {
+  try {
+    const envStat = fs.lstatSync(ENV_PATH);
+    if (envStat.isSymbolicLink() || !envStat.isFile()) throw new Error('not a regular file');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.error(`Error: --cwd .env must be a regular file inside the workspace.`);
+      process.exit(1);
+    }
+  }
+  loadEnv({ path: ENV_PATH, quiet: true });
+}
 const INITIAL_PROMPT = cliArgs.initialPrompt;
 const AUTO_EXECUTE = cliArgs.autoExecute;
+const NO_EXEC = cliArgs.noExec;
 const DEFAULT_MODEL = (cliArgs.model || process.env['TELL_MODEL'] || 'l').trim();
 const CHAIN = cliArgs.chain;
 const YES = cliArgs.yes;
@@ -62,6 +80,13 @@ const PORT = cliArgs.port ?? Number(process.env['PORT'] || 3000);
 const HOST = cliArgs.host || '127.0.0.1';
 const EXEC_TIMEOUT_MS = cliArgs.execTimeout ?? 120_000;
 const TELL_TOKEN = process.env['TELL_TOKEN'] || '';
+const ALLOWED_HOSTS = new Set(
+  (process.env['TELL_ALLOWED_HOSTS'] || '')
+    .split(',')
+    .map((host) => host.trim().toLowerCase())
+    .filter(Boolean),
+);
+if (!['0.0.0.0', '::', '[::]'].includes(HOST.toLowerCase())) ALLOWED_HOSTS.add(HOST.toLowerCase());
 configureScrollbackMax(Number(process.env['TELL_SCROLLBACK_MAX']) || undefined);
 
 // API keys / base URLs are injected into the SDK (it never reads process.env).
@@ -82,13 +107,56 @@ function load_sdk_config_from_env(): SDKConfig {
       openrouter: env('OPENROUTER_API_KEY'),
       alibaba: env('ALIBABA_API_KEY'),
       zhipu: env('ZHIPU_API_KEY'),
+      meta: env('META_API_KEY'),
+      xiaomi: env('MIMO_API_KEY'),
     },
     urls: {
-      zhipu: env('ZHIPU_BASE_URL'),
+      openai: env('OPENAI_BASE_URL') || 'https://api.openai.com/v1',
+      anthropic: env('ANTHROPIC_BASE_URL') || 'https://api.anthropic.com/v1',
+      google: env('GOOGLE_BASE_URL') || 'https://generativelanguage.googleapis.com/v1beta',
+      xai: env('XAI_BASE_URL') || 'https://api.x.ai/v1',
+      deepseek: env('DEEPSEEK_BASE_URL') || 'https://api.deepseek.com',
+      cerebras: env('CEREBRAS_BASE_URL') || 'https://api.cerebras.ai/v1',
+      moonshotai: env('MOONSHOTAI_BASE_URL') || 'https://api.moonshot.ai/v1',
+      openrouter: env('OPENROUTER_BASE_URL') || 'https://openrouter.ai/api/v1',
+      alibaba: env('ALIBABA_BASE_URL') || 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+      zhipu: env('ZHIPU_BASE_URL') || 'https://api.z.ai/api/paas/v4',
+      meta: env('META_BASE_URL') || 'https://api.meta.ai/v1',
+      xiaomi: env('MIMO_BASE_URL') || 'https://api.xiaomimimo.com/v1',
       vast: env('VAST_BASE_URL'),
       local: env('LOCAL_OPENAI_BASE_URL'),
     },
   };
+}
+
+const SDK_CONFIG = load_sdk_config_from_env();
+const RETAINED_SERVER_ENV = new Set([
+  'COLORTERM',
+  'FORCE_COLOR',
+  'HOME',
+  'LANG',
+  'LANGUAGE',
+  'LC_ALL',
+  'LC_CTYPE',
+  'LOGNAME',
+  'NODE_ENV',
+  'NO_COLOR',
+  'PATH',
+  'PORT',
+  'SHELL',
+  'TELL_ALLOWED_HOSTS',
+  'TELL_MODEL',
+  'TELL_SCROLLBACK_MAX',
+  'TERM',
+  'TMPDIR',
+  'TMP',
+  'TEMP',
+  'TZ',
+  'USER',
+]);
+
+for (const name of Object.keys(process.env)) {
+  if (!RETAINED_SERVER_ENV.has(name)) delete process.env[name];
 }
 
 const EXEC_MAX_CONCURRENCY = 2;
@@ -117,14 +185,16 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Same-origin guard for auth endpoints (mirrors the WS Origin check). */
 function isCrossSite(req: express.Request): boolean {
-  const origin = req.headers.origin;
-  if (!origin) return false;
-  try {
-    return new URL(origin).host !== req.headers.host;
-  } catch {
-    return true;
-  }
+  return !isAllowedOrigin(req.headers.origin, req.headers.host, ALLOWED_HOSTS);
 }
+
+app.use((req, res, next) => {
+  if (!isAllowedHost(req.headers.host, ALLOWED_HOSTS)) {
+    res.status(403).json({ error: 'Forbidden: Host is not allowed' });
+    return;
+  }
+  next();
+});
 
 app.use(express.json({ limit: '1mb' }));
 
@@ -146,8 +216,9 @@ app.use((_req, res, next) => {
 // Everything else under /api/* — including /api/config (cwd/model leak) — requires auth.
 app.use((req, res, next) => {
   if (!TELL_TOKEN) return next();
-  if (!req.path.startsWith('/api/')) return next();
-  if (req.path === '/api/auth/status' || req.path === '/api/auth/verify') return next();
+  const apiPath = normalizeApiPath(req.path);
+  if (!apiPath.startsWith('/api/')) return next();
+  if (apiPath === '/api/auth/status' || apiPath === '/api/auth/verify') return next();
   const header = req.headers.authorization || '';
   const provided = header.startsWith('Bearer ') ? header.slice(7) : '';
   if (provided && tokensEqual(provided, TELL_TOKEN)) return next();
@@ -274,6 +345,17 @@ function buildMergedSession(body: Partial<TellSession>): TellSession {
   return mergePaneScrollback(merged);
 }
 
+function open_regular_file(filePath: string, flags: number, mode?: number): number {
+  const fd = mode === undefined ? fs.openSync(filePath, flags) : fs.openSync(filePath, flags, mode);
+  try {
+    if (!fs.fstatSync(fd).isFile()) throw new Error('Path is not a regular file');
+    return fd;
+  } catch (error) {
+    fs.closeSync(fd);
+    throw error;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // API routes
 // ---------------------------------------------------------------------------
@@ -303,18 +385,22 @@ app.get('/api/file', (req, res) => {
     return res.status(403).json({ error: 'Access denied: Sensitive file' });
   }
 
+  let fd: number | null = null;
   try {
     if (!fs.existsSync(resolvedPath)) {
       return res.status(404).json({ error: 'File not found' });
     }
-    const stat = fs.statSync(resolvedPath);
+    fd = open_regular_file(resolvedPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    const stat = fs.fstatSync(fd);
     if (stat.size > 10 * 1024 * 1024) {
       return res.status(413).json({ error: 'File too large to preview (>10MB). Use download instead.' });
     }
-    const content = fs.readFileSync(resolvedPath, 'utf8');
+    const content = fs.readFileSync(fd, 'utf8');
     return res.json({ content, mtime: stat.mtimeMs, size: stat.size });
   } catch (error: any) {
     return res.status(500).json({ error: error.message });
+  } finally {
+    if (fd !== null) fs.closeSync(fd);
   }
 });
 
@@ -333,21 +419,45 @@ app.get('/api/file/raw', (req, res) => {
     return res.status(403).json({ error: 'Access denied: Sensitive file' });
   }
 
+  let fd: number | null = null;
   try {
     if (!fs.existsSync(resolvedPath)) {
       return res.status(404).json({ error: 'File not found' });
     }
-    return res.download(resolvedPath);
+    fd = open_regular_file(resolvedPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    const stat = fs.fstatSync(fd);
+    res.attachment(path.basename(resolvedPath));
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Length', stat.size);
+    const stream = fs.createReadStream(resolvedPath, { fd, autoClose: true });
+    fd = null;
+    res.once('close', () => stream.destroy());
+    stream.on('error', (error) => {
+      if (res.headersSent) {
+        res.destroy(error);
+      } else {
+        res.status(500).json({ error: error.message });
+      }
+    });
+    stream.pipe(res);
+    return;
   } catch (error: any) {
+    if (fd !== null) fs.closeSync(fd);
     return res.status(500).json({ error: error.message });
   }
 });
 
 // API: Save file content (409 when the file changed on disk since it was loaded)
 app.post('/api/save-file', (req, res) => {
-  const { path: filePath, content, expectedMtime } = req.body;
-  if (!filePath || content === undefined) {
-    return res.status(400).json({ error: 'Path and content are required' });
+  const body = req.body as { path?: unknown; content?: unknown; expectedMtime?: unknown } | undefined;
+  const filePath = body?.path;
+  const content = body?.content;
+  const expectedMtime = body?.expectedMtime;
+  if (typeof filePath !== 'string' || !filePath || typeof content !== 'string') {
+    return res.status(400).json({ error: 'Path and string content are required' });
+  }
+  if (expectedMtime !== undefined && expectedMtime !== null && !Number.isFinite(Number(expectedMtime))) {
+    return res.status(400).json({ error: 'expectedMtime must be a number' });
   }
 
   const resolvedPath = resolveWithin(CWD, filePath);
@@ -358,30 +468,54 @@ app.post('/api/save-file', (req, res) => {
     return res.status(403).json({ error: 'Access denied: Sensitive file' });
   }
 
+  const hasExpectedMtime = expectedMtime !== undefined && expectedMtime !== null;
+  let fd: number | null = null;
   try {
-    if (expectedMtime != null && fs.existsSync(resolvedPath)) {
-      const stat = fs.statSync(resolvedPath);
-      if (stat.mtimeMs !== Number(expectedMtime)) {
+    if (hasExpectedMtime && !fs.existsSync(resolvedPath)) {
+      return res.status(409).json({ error: 'File was deleted since it was loaded. Reload before saving.' });
+    }
+    if (!hasExpectedMtime) fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
+    if (!resolveWithin(CWD, filePath)) {
+      return res.status(403).json({ error: 'Access denied: Directory traversal blocked' });
+    }
+    const writeFlags = fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK;
+    if (hasExpectedMtime) {
+      try {
+        fd = open_regular_file(resolvedPath, writeFlags | fs.constants.O_CREAT | fs.constants.O_EXCL, 0o666);
+        fs.closeSync(fd);
+        fd = null;
+        fs.unlinkSync(resolvedPath);
+        return res.status(409).json({ error: 'File was deleted since it was loaded. Reload before saving.' });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      }
+      fd = open_regular_file(resolvedPath, writeFlags);
+      const openedStat = fs.fstatSync(fd);
+      if (openedStat.mtimeMs !== Number(expectedMtime)) {
         return res.status(409).json({
           error: 'File was modified externally since it was loaded. Reload before saving.',
-          mtime: stat.mtimeMs,
+          mtime: openedStat.mtimeMs,
         });
       }
+    } else {
+      fd = open_regular_file(resolvedPath, writeFlags | fs.constants.O_CREAT | fs.constants.O_TRUNC, 0o666);
     }
-    fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
-    fs.writeFileSync(resolvedPath, content, 'utf8');
+    fs.ftruncateSync(fd, 0);
+    fs.writeFileSync(fd, content, 'utf8');
     serverState.filesChanged.add(filePath);
-    const stat = fs.statSync(resolvedPath);
+    const stat = fs.fstatSync(fd);
     return res.json({ success: true, mtime: stat.mtimeMs });
   } catch (error: any) {
     return res.status(500).json({ error: error.message });
+  } finally {
+    if (fd !== null) fs.closeSync(fd);
   }
 });
 
 // API: Classify a command without executing it (drives the
 // Require Approval + Auto-Run combo: safe runs directly, risky needs approval)
 app.post('/api/risk-check', (req, res) => {
-  const { command } = req.body;
+  const command = (req.body as { command?: unknown } | undefined)?.command;
   if (!command || typeof command !== 'string') {
     return res.status(400).json({ error: 'Command is required' });
   }
@@ -393,6 +527,9 @@ app.post('/api/execute', async (req, res) => {
   const { command } = req.body;
   if (!command || typeof command !== 'string') {
     return res.status(400).json({ error: 'Command is required' });
+  }
+  if (NO_EXEC) {
+    return res.status(403).json({ error: 'Command execution is disabled by --no-exec' });
   }
 
   if (!executeRateLimit.check(clientIp(req))) {
@@ -417,6 +554,7 @@ app.post('/api/execute', async (req, res) => {
       maxBuffer: 32 * 1024 * 1024,
       shell: '/bin/bash',
       timeout: EXEC_TIMEOUT_MS,
+      env: sanitizeChildEnv(process.env),
     });
     const truncate = (text: string) =>
       text.length > EXEC_OUTPUT_LIMIT ? `${text.slice(0, EXEC_OUTPUT_LIMIT)}\n[truncated]` : text;
@@ -455,16 +593,18 @@ app.get('/api/models', (_req, res) => {
 
   // Check which API keys are active in the environment
   const keysStatus = {
-    google: !!(process.env['GOOGLE_API_KEY'] || process.env['GEMINI_API_KEY']),
-    openai: !!process.env['OPENAI_API_KEY'],
-    anthropic: !!process.env['ANTHROPIC_API_KEY'],
-    xai: !!process.env['XAI_API_KEY'],
-    deepseek: !!process.env['DEEPSEEK_API_KEY'],
-    cerebras: !!process.env['CEREBRAS_API_KEY'],
-    moonshotai: !!process.env['MOONSHOTAI_API_KEY'],
-    openrouter: !!process.env['OPENROUTER_API_KEY'],
-    alibaba: !!process.env['ALIBABA_API_KEY'],
-    zhipu: !!process.env['ZHIPU_API_KEY'],
+    google: Boolean(SDK_CONFIG.keys.google),
+    openai: Boolean(SDK_CONFIG.keys.openai),
+    anthropic: Boolean(SDK_CONFIG.keys.anthropic),
+    xai: Boolean(SDK_CONFIG.keys.xai),
+    deepseek: Boolean(SDK_CONFIG.keys.deepseek),
+    cerebras: Boolean(SDK_CONFIG.keys.cerebras),
+    moonshotai: Boolean(SDK_CONFIG.keys.moonshotai),
+    openrouter: Boolean(SDK_CONFIG.keys.openrouter),
+    alibaba: Boolean(SDK_CONFIG.keys.alibaba),
+    zhipu: Boolean(SDK_CONFIG.keys.zhipu),
+    meta: Boolean(SDK_CONFIG.keys.meta),
+    xiaomi: Boolean(SDK_CONFIG.keys.xiaomi),
   };
 
   res.json({
@@ -518,26 +658,20 @@ app.post('/api/auth/verify', async (req, res) => {
     res.status(403).json({ error: 'Forbidden: cross-site request blocked' });
     return;
   }
-  const ip = clientIp(req);
-  if (!authRateLimit.check(ip)) {
-    res.setHeader('Retry-After', '900');
-    res.status(429).json({ error: 'Too many login attempts. Try again in 15 minutes.' });
-    return;
-  }
   // No token configured → login is skipped entirely.
   if (!TELL_TOKEN) {
     res.json({ ok: true, authRequired: false });
     return;
   }
+  const ip = clientIp(req);
   const token = (req.body as any)?.token;
-  if (!isValidTokenInput(token)) {
-    await delay(500);
-    console.warn(`[auth] failed login attempt from ${ip} at ${new Date().toISOString()} (malformed)`);
-    res.status(401).json({ error: authFailureMessage() });
+  if (isValidTokenInput(token) && tokensEqual(token, TELL_TOKEN)) {
+    res.json({ ok: true, authRequired: true });
     return;
   }
-  if (tokensEqual(token, TELL_TOKEN)) {
-    res.json({ ok: true, authRequired: true });
+  if (!authRateLimit.check(ip)) {
+    res.setHeader('Retry-After', '900');
+    res.status(429).json({ error: 'Too many login attempts. Try again in 15 minutes.' });
     return;
   }
   await delay(500);
@@ -551,6 +685,7 @@ app.get('/api/config', (_req, res) => {
   res.json({
     defaultModel: DEFAULT_MODEL,
     autoExecute: AUTO_EXECUTE,
+    noExec: NO_EXEC,
     chain: CHAIN,
     yes: YES,
     requireApproval: REQUIRE_APPROVAL,
@@ -594,7 +729,7 @@ async function stream_tell(
   messages: Array<{ role: 'user' | 'assistant'; content: string }>,
   system: string,
 ): Promise<void> {
-  const ai = await create_ask_ai(modelSpec, load_sdk_config_from_env());
+  const ai = await create_ask_ai(modelSpec, SDK_CONFIG);
 
   let is_client_gone = false;
   res.on('close', () => {
@@ -637,11 +772,17 @@ async function stream_tell(
 
 // API: Model execution route (using Vercel AI SDK)
 app.post('/api/tell', async (req, res) => {
-  const { messages, modelAlias, systemPrompt } = req.body;
-
-  const payloadError = validateTellPayload({ messages, systemPrompt });
+  const payloadError = validateTellPayload(req.body);
   if (payloadError) {
     return res.status(400).json({ error: payloadError });
+  }
+  const { messages, modelAlias, systemPrompt } = req.body as {
+    messages: Array<{ role: 'user' | 'assistant'; content: string }>;
+    modelAlias?: unknown;
+    systemPrompt?: string | null;
+  };
+  if (modelAlias !== undefined && (typeof modelAlias !== 'string' || modelAlias.length > 256)) {
+    return res.status(400).json({ error: 'modelAlias must be a string limited to 256 chars' });
   }
 
   if (!tellRateLimit.check(clientIp(req))) {
@@ -675,7 +816,7 @@ app.post('/api/tell', async (req, res) => {
     }
 
     // Resolve model spec and get AI SDK model instance (via @tell-ai/sdk)
-    const handle = await get_model(modelSpec, load_sdk_config_from_env());
+    const handle = await get_model(modelSpec, SDK_CONFIG);
     const reasoning = handle.fast ? 'none' : handle.reasoning;
 
     // Call generateText
@@ -735,15 +876,22 @@ app.get('/api/session/history/:name', (req, res) => {
   if (!name.endsWith('.json')) {
     return res.status(400).json({ error: 'Invalid snapshot name' });
   }
-  const full = path.join(historyDir(CWD), name);
+  const full = resolveWithin(CWD, path.join('.tell', 'history', name));
+  if (!full) {
+    return res.status(400).json({ error: 'Invalid snapshot name' });
+  }
   if (!fs.existsSync(full)) {
     return res.status(404).json({ error: 'Snapshot not found' });
   }
+  let fd: number | null = null;
   try {
-    const session = JSON.parse(fs.readFileSync(full, 'utf8'));
+    fd = open_regular_file(full, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    const session = JSON.parse(fs.readFileSync(fd, 'utf8'));
     return res.json({ name, session });
   } catch (error: any) {
     return res.status(500).json({ error: error.message });
+  } finally {
+    if (fd !== null) fs.closeSync(fd);
   }
 });
 
@@ -753,7 +901,10 @@ app.delete('/api/session/history/:name', (req, res) => {
   if (!name.endsWith('.json')) {
     return res.status(400).json({ error: 'Invalid snapshot name' });
   }
-  const full = path.join(historyDir(CWD), name);
+  const full = resolveWithin(CWD, path.join('.tell', 'history', name));
+  if (!full) {
+    return res.status(400).json({ error: 'Invalid snapshot name' });
+  }
   if (!fs.existsSync(full)) {
     return res.status(404).json({ error: 'Snapshot not found' });
   }
@@ -772,9 +923,9 @@ app.post('/api/session/snapshot', async (req, res) => {
     for (const line of gitChanges) serverState.filesChanged.add(line);
     const body = req.body?.session as Partial<TellSession> | undefined;
     const merged = buildMergedSession(body || {});
-    saveSession(CWD, merged);
     const name = createSnapshot(CWD, merged);
-    return res.json({ success: !!name, name, gitChanges, history: listHistory(CWD) });
+    const saved = saveSession(CWD, merged);
+    return res.json({ success: Boolean(name && saved), name, gitChanges, history: listHistory(CWD) });
   } catch (error: any) {
     return res.status(500).json({ error: error.message });
   }
@@ -792,13 +943,14 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = __dirname;
-    app.use(express.static(distPath));
+    app.use('/assets', express.static(path.join(distPath, 'assets')));
+    app.get('/server.js', (_req, res) => res.status(404).end());
     app.get('*', (_req, res) => {
       return res.sendFile(path.join(distPath, 'index.html'));
     });
   }
 
-  attachTerminalServer(server, { cwd: CWD, token: TELL_TOKEN || undefined });
+  attachTerminalServer(server, { cwd: CWD, token: TELL_TOKEN || undefined, allowedHosts: ALLOWED_HOSTS });
 
   server.listen(PORT, HOST, () => {
     const address = server.address();
