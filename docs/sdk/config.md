@@ -1,6 +1,6 @@
 # SDKConfig — key and URL injection
 
-Every SDK call that needs credentials takes an injected `SDKConfig` (`config.ts:29`):
+Every SDK call that needs credentials takes an injected `SDKConfig` (`config.ts:33`):
 
 ```ts
 interface SDKConfig {
@@ -11,7 +11,7 @@ interface SDKConfig {
 
 The SDK has **zero `node:*` imports and zero `process.env` reads**. It never calls `process.env` itself, never reads token files, and never looks at the filesystem. Everything the providers need arrives through `SDKConfig`, which is how the same package runs unchanged in Node, Bun, and the browser.
 
-## Keys (`SDKKeys`, `config.ts:1-12`)
+## Keys (`SDKKeys`, `config.ts:1-14`)
 
 | Slot | Vendors served |
 |---|---|
@@ -22,20 +22,22 @@ The SDK has **zero `node:*` imports and zero `process.env` reads**. It never cal
 | `deepseek` | `d`/`D` |
 | `cerebras` | Cerebras models (`gpt-oss-120b`, `gemma-4-31b`) |
 | `moonshotai` | `k`/`K` |
-| `openrouter` | `m` |
+| `openrouter` | raw ids containing `/` (no alias) |
 | `alibaba` | `a`/`at`/`al`/`af` |
-| `zhipu` | **`zai`** vendor (`z`/`zf`) — note the slot is `zhipu`, not `zai` (`VENDOR_KEY`, `models.ts:208-219`) |
+| `zhipu` | **`zai`** vendor (`z`/`zf`) — note the slot is `zhipu`, not `zai` (`VENDOR_KEY`, `models.ts:233-246`) |
+| `meta` | `m`/`mc` (Bearer auth, Responses API) |
+| `xiaomi` | `mi`/`mif` (sent as the `api-key` header, never as a bearer) |
 
 Keys are looked up only from `config.keys`; a vendor with no key builds a provider without one (e.g. self-hosted `vast`/`local`, or proxies that inject keys server-side).
 
-## URLs (`SDKUrls`, `config.ts:14-27`)
+## URLs (`SDKUrls`, `config.ts:16-30`)
 
 Per-vendor `baseURL` override, honored by every handler via the AI SDK's `baseURL` option. Two slots have **no** default at all:
 
-* `urls.vast` — required for `v` (throws without it: `vendor "vast" requires urls.vast`, `models.ts:531`).
-* `urls.local` — required for `q` (`models.ts:538`).
+* `urls.vast` — required for `v` (throws without it: `vendor "vast" requires urls.vast`).
+* `urls.local` — required for `q`.
 
-Every other vendor has a built-in default (e.g. `zai` → `https://api.z.ai/api/paas/v4`, `models.ts:522`). Setting a `urls.*` entry turns that provider into a CORS-friendly custom endpoint.
+Every other vendor has a built-in default (e.g. `zai` → `https://api.z.ai/api/paas/v4`, `meta` → `https://api.meta.ai/v1`, `xiaomi` → `https://api.xiaomimimo.com/v1`). Setting a `urls.*` entry turns that provider into a CORS-friendly custom endpoint.
 
 ## Who assembles `SDKConfig`
 
@@ -67,7 +69,7 @@ create_ask_ai('g', {
 });
 ```
 
-Google can authenticate with an `x-goog-api-key` header instead of `Authorization: Bearer`, which some proxies find easier to forward; the demo uses that.
+Google can authenticate with an `x-goog-api-key` header instead of `Authorization: Bearer`, which some proxies find easier to forward; the demo uses that. Xiaomi is the reverse case: MiMo **requires** `api-key`, so the SDK never sends a bearer for it and the example proxy injects `api-key` server-side from `MIMO_API_KEY`.
 
 ## Custom endpoints
 
@@ -94,6 +96,6 @@ OLLAMA_MODEL=qwen3 bun examples/sdk/custom-endpoint.ts # needs `ollama serve`
 
 ## Design contract (tests)
 
-`test/test-sdk.js` verifies: public export surface, spec parsing (aliases/fast/thinking budgets), the `MODELS` round-trip invariant (every spec re-parses to itself), offline `get_model` handles — including that `vast`/`local` reject an empty config with the `urls.*` error — and the exec/no-exec system prompts plus tag helpers.
+`test/test-sdk.js` verifies: public export surface, spec parsing (aliases/fast/thinking budgets), the `MODELS` round-trip invariant (every spec re-parses to itself) and its 147-entry size, offline `get_model` handles — including that `vast`/`local` reject an empty config with the `urls.*` error — plus localhost wire tests pinning Meta to `/v1/responses` with a bearer and `forceReasoning`, and Xiaomi to `/v1/chat/completions` with an `api-key` header and no `Authorization`. The exec/no-exec system prompts and tag helpers are covered there as well.
 
 Sources: `config.ts:1-32`, `models.ts:208-219`, `models.ts:528-541`, `tsup.config.ts:1-85`, `src/shims/node.cjs:1-107`.

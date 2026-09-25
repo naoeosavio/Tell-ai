@@ -5,7 +5,7 @@ Complete reference for the `@tell-ai/sdk` package (`packages/sdk/`): a browser-s
 | Page | Contents |
 |------|----------|
 | [api.md](api.md) | Full API reference: `create_ask_ai` / `ask` / `ask_stream`, `tell`, `get_model`, `resolve_model_spec`, `MODELS`, `get_system_prompt`, tag helpers, `summarize_context` |
-| [models.md](models.md) | Model spec format (`vendor:model:thinking`), 129 aliases, fast/dot mode, thinking budgets, vendor dispatch |
+| [models.md](models.md) | Model spec format (`vendor:model:thinking`), 147 aliases, fast/dot mode, thinking budgets, vendor dispatch |
 | [streaming.md](streaming.md) | `AskStream` events (`reasoning`, `reasoning_end`, `text`), lazy iteration, Node/browser consumption |
 | [config.md](config.md) | `SDKConfig` key/URL injection, browser-safety contract, CORS proxies |
 | [imports.md](imports.md) | Build variants: Node ESM/CJS, browser ESM, browser global (IIFE) |

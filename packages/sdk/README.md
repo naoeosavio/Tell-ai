@@ -6,7 +6,7 @@ The SDK has zero `node:*` imports and zero `process.env` reads. All environment 
 
 ## Features
 
-- **`MODELS` / `resolve_model_spec(model)`** — 70+ short aliases (e.g. `g` → `openai:gpt-5.6-sol:medium`) resolving to `vendor:model:thinking_budget` specs, with dot-prefix fast mode (`.g`).
+- **`MODELS` / `resolve_model_spec(model)`** — 147 short aliases (e.g. `g` → `openai:gpt-6-sol:medium`) resolving to `vendor:model:thinking_budget` specs, with dot-prefix fast mode (`.g`).
 - **`create_ask_ai(spec, config)`** — returns an `AskInstance` with `ask()` (one-shot, backed by `generateText()`) and `ask_stream()` (token-by-token, backed by `streamText()`) over openai, anthropic, google, xai, deepseek, cerebras, and moonshotai providers.
 - **`tell(message, options)`** — one-shot `tell --no-exec` as a library call: builds the tell system prompt (execution disabled by default), calls the model, and returns the answer with ` thinking`/`<RUN>` tags stripped.
 - **`get_system_prompt(options)`** — the shared tell system prompt (`PromptOptions { chain?, exec?, cwd?, platform? }`); `exec: false` emits the no-command-execution variant.
@@ -24,7 +24,7 @@ bun add @tell-ai/sdk or npm add @tell-ai/sdk
 ```ts
 import { create_ask_ai, tell } from '@tell-ai/sdk';
 
-const ai = create_ask_ai('openai:gpt-5.6-sol', { keys: { openai: process.env.OPENAI_API_KEY } });
+const ai = create_ask_ai('openai:gpt-6-sol', { keys: { openai: process.env.OPENAI_API_KEY } });
 const { text } = await ai.ask('explain this repository in one paragraph');
 ```
 
@@ -76,7 +76,7 @@ const answer = await tell('summarize the uncommitted changes', {
 All providers honor `SDKConfig.urls` via `baseURL`, enabling CORS proxies:
 
 ```ts
-create_ask_ai('openai:gpt-5.6-sol', {
+create_ask_ai('openai:gpt-6-sol', {
   keys: { openai: 'sk-...' },
   urls: { openai: 'https://my-proxy.example/v1' },
 });
