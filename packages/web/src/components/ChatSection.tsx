@@ -76,6 +76,7 @@ interface ChatSectionProps {
   requireApproval: boolean;
   onRequireApprovalChange: (val: boolean) => void;
   noExec: boolean;
+  isNoExecLocked?: boolean;
   onNoExecChange: (val: boolean) => void;
   /** Default open state for reasoning headers (persisted; seeded by server `--think`). */
   reasoningExpanded: boolean;
@@ -122,6 +123,8 @@ const KEYED_VENDORS = new Set([
   'openrouter',
   'moonshotai',
   'cerebras',
+  'meta',
+  'xiaomi',
 ]);
 const VENDOR_KEY_ALIASES: Record<string, string> = { google: 'google' };
 
@@ -150,6 +153,7 @@ export default function ChatSection({
   requireApproval,
   onRequireApprovalChange,
   noExec,
+  isNoExecLocked = false,
   onNoExecChange,
   reasoningExpanded,
   onReasoningToggle,
@@ -408,14 +412,19 @@ export default function ChatSection({
 
           {/* No-Exec Toggle — never run, only show what would run */}
           <label
-            className="flex items-center gap-2 cursor-pointer text-(--color-text-secondary) hover:text-(--color-text-primary) transition-colors"
-            title="Never execute commands — show what would run (--no-exec)"
+            className={`flex items-center gap-2 transition-colors ${isNoExecLocked ? 'cursor-not-allowed text-(--color-text-muted) opacity-50' : 'cursor-pointer text-(--color-text-secondary) hover:text-(--color-text-primary)'}`}
+            title={
+              isNoExecLocked
+                ? 'Execution is disabled for this server'
+                : 'Never execute commands — show what would run (--no-exec)'
+            }
           >
             <input
               type="checkbox"
               checked={noExec}
+              disabled={isNoExecLocked}
               onChange={(e) => onNoExecChange(e.target.checked)}
-              className="accent-(--color-accent) rounded-none bg-(--color-bg-secondary) border-(--color-border-medium) focus:ring-0 cursor-pointer w-3.5 h-3.5"
+              className="accent-(--color-accent) rounded-none bg-(--color-bg-secondary) border-(--color-border-medium) focus:ring-0 cursor-pointer w-3.5 h-3.5 disabled:cursor-not-allowed"
             />
             <span className="font-bold tracking-wider text-[10px] uppercase">No-Exec</span>
           </label>

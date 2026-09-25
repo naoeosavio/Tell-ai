@@ -87,6 +87,8 @@ const KEYED_VENDORS = new Set([
   'openrouter',
   'moonshotai',
   'cerebras',
+  'meta',
+  'xiaomi',
 ]);
 
 interface SessionInfo {
@@ -155,6 +157,8 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
     xai: false,
     deepseek: false,
     openrouter: false,
+    meta: false,
+    xiaomi: false,
   });
 
   // Execution toggles persist in localStorage (survive reloads); the server
@@ -168,6 +172,7 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
     savedExecTogglesRef.current?.requireApproval ?? false,
   );
   const [noExec, setNoExec] = useState<boolean>(savedExecTogglesRef.current?.noExec ?? false);
+  const [isNoExecLocked, setIsNoExecLocked] = useState<boolean>(false);
   // Default open state for reasoning headers; server `--think` seeds the first
   // visit, and any manual expand/collapse persists (like the toggles above).
   const [reasoningExpanded, setReasoningExpanded] = useState<boolean>(
@@ -182,7 +187,8 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
   const [streamingReasoning, setStreamingReasoning] = useState<StreamingReasoning | null>(null);
   // Effective auto-run: No-Exec kills it; Require Approval keeps it for safe
   // commands only (risky ones are routed to the confirm card per command).
-  const canAutoRun = autoExecute && !noExec;
+  const isNoExec = noExec || isNoExecLocked;
+  const canAutoRun = autoExecute && !isNoExec;
   const [systemPrompt, setSystemPrompt] = useState<string>(DEFAULT_SYSTEM_PROMPT);
   const [generatedSystemPrompt, setGeneratedSystemPrompt] = useState<string | null>(null);
   const [cwd, setCwd] = useState<string>('');
@@ -375,6 +381,11 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
         const res = await apiFetch('/api/config');
         const data = await res.json();
         if (data.defaultModel) setModelAlias(data.defaultModel);
+        if (typeof data.noExec === 'boolean' && data.noExec) {
+          setIsNoExecLocked(true);
+          setNoExec(true);
+          setAutoExecute(false);
+        }
         // Server config only seeds toggles on the first visit; saved choices win on reload.
         if (typeof data.autoExecute === 'boolean' && savedExecTogglesRef.current?.autoExecute === undefined)
           setAutoExecute(data.autoExecute);
@@ -951,6 +962,10 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
         signal: controller.signal,
         body: JSON.stringify({ command: script }),
       });
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({}));
+        throw new Error(error.error || 'Command execution failed');
+      }
       const data = await res.json();
       const output = data.output || '';
       appendAgentLine('output', output);
@@ -993,7 +1008,7 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
   const handleConfirmPending = async (editedCommand: string) => {
     const command = editedCommand.trim() || pendingCommand || '';
     setPendingCommand(null);
-    if (noExec) {
+    if (isNoExec) {
       // No-Exec mode: never POST /api/execute — record what would have run.
       appendAgentLine('input', command);
       appendAgentLine('system', 'Command execution disabled (--no-exec) — not run.');
@@ -1023,6 +1038,10 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
         signal: controller.signal,
         body: JSON.stringify({ command }),
       });
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({}));
+        throw new Error(error.error || 'Command execution failed');
+      }
       const data = await res.json();
       const output = data.output || '';
       appendAgentLine('output', output);
@@ -1561,8 +1580,10 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
         onAutoExecuteChange={(val) => setAutoExecute(val)}
         requireApproval={requireApproval}
         onRequireApprovalChange={(val) => setRequireApproval(val)}
-        noExec={noExec}
+        noExec={isNoExec}
+        isNoExecLocked={isNoExecLocked}
         onNoExecChange={(val) => {
+          if (isNoExecLocked && !val) return;
           setNoExec(val);
           if (val) setAutoExecute(false);
         }}

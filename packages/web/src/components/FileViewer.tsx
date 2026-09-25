@@ -133,15 +133,25 @@ export default function FileViewer({ filePath, onSaveCompleted, onCloseFile }: F
     if (filePath) fetchFile(filePath);
   };
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
     if (!filePath) return;
-    const url = `/api/file/raw?path=${encodeURIComponent(filePath)}`;
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filePath.split('/').pop() || 'file';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+    try {
+      const res = await apiFetch(`/api/file/raw?path=${encodeURIComponent(filePath)}`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Download failed');
+      }
+      const objectUrl = URL.createObjectURL(await res.blob());
+      const a = document.createElement('a');
+      a.href = objectUrl;
+      a.download = filePath.split('/').pop() || 'file';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+    } catch (error: any) {
+      toast('error', error.message || 'Download failed');
+    }
   };
 
   if (!filePath) {

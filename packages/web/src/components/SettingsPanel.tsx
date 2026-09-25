@@ -94,6 +94,8 @@ const VENDOR_LABELS: Record<string, string> = {
   cerebras: 'Cerebras',
   moonshotai: 'Moonshot AI',
   openrouter: 'OpenRouter',
+  meta: 'Meta',
+  xiaomi: 'Xiaomi MiMo',
 };
 
 function formatBytes(bytes: number): string {
