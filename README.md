@@ -110,6 +110,8 @@ export FIREWORKS_API_KEY="..."
 export CEREBRAS_API_KEY="..."
 export MOONSHOTAI_API_KEY="..."
 export OPENROUTER_API_KEY="..."
+export META_API_KEY="..."
+export MIMO_API_KEY="..."
 ```
 
 Token files (fallback):
@@ -124,6 +126,8 @@ Token files (fallback):
 ~/.config/cerebras.token
 ~/.config/moonshotai.token
 ~/.config/openrouter.token
+~/.config/meta.token
+~/.config/mimo.token
 ```
 
 Self-hosted endpoints (optional):

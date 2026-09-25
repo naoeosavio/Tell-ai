@@ -43,7 +43,7 @@ The codebase has four layers:
 Browser-safe AI provider layer: **zero `node:*` imports, zero `process.env` reads**. All environment concerns are injected via `SDKConfig` (`{ keys, urls }`, both partial). Built by tsup to ESM + CJS + `.d.ts`/`.d.cts`.
 
 Key exports from `packages/sdk/src/index.ts`:
-- **`MODELS`** — Record of 129 short aliases (e.g., `g` → `openai:gpt-5.6-sol:medium`)
+- **`MODELS`** — Record of 147 short aliases (e.g., `g` → `openai:gpt-6-sol:medium`)
 - **`resolve_model_spec(model)`** — Parses `vendor:model:thinking` specs, handles dot-prefix fast mode
 - **`get_model(spec, config)`** — Returns a `ModelHandle` (`{ model, reasoning, fast}`) backed by the vendor provider; used by `create_ask_ai()` and directly by the web server for multi-turn `generateText()` calls
 - **`create_ask_ai(spec, config)`** — Returns an `AskInstance` with an `ask()` method (one-shot, `generateText()`) and an `ask_stream()` method (token-by-token, `streamText()`). Streaming yields `AskStreamEvent`s (`reasoning`/`reasoning_end`/`text`) as a **lazy** `AsyncIterable`; input is a prompt string or a multi-turn message array (`AskStreamInput`)
@@ -96,14 +96,15 @@ Files:
 
 ### WEB: `packages/web` (`@tell-ai/web` — browser sandbox + `tell-web` server)
 
-Browser-based terminal + AI console (`tell-web` bin → `dist/server.js`), anchored to a working directory (`--cwd`). Built by tsup (`src/server/server.ts` → `dist/server.js`, ESM) + vite frontend assets into the same `dist/` (`--emptyOutDir false`, served from `__dirname` in production; vite middleware in dev). `node-pty` (native), `ws` and `vite` stay external. Requires Node `>=20`. Depends on `@tell-ai/sdk` (workspace) for model resolution (`MODELS`, `resolve_model_spec`, `get_model`) and the shared system prompt (`get_system_prompt({ chain: true })` composed with the project context); keys/URLs are injected from `process.env` in `server.ts` (`load_sdk_config_from_env`, env-only, no token files).
+Browser-based terminal + AI console (`tell-web` bin → `dist/server.js`), anchored to a working directory (`--cwd`). Built by tsup (`src/server/server.ts` → `dist/server.js`, ESM) + vite frontend assets into the same `dist/` (`--emptyOutDir false`, served from `__dirname` in production; vite middleware in dev). `node-pty` (native), `ws` and `vite` stay external. Requires Node `>=22`. Depends on `@tell-ai/sdk` (workspace) for model resolution (`MODELS`, `resolve_model_spec`, `get_model`) and the shared system prompt (`get_system_prompt({ chain: true })` composed with the project context); keys/URLs are captured from `process.env` in `server.ts` and the credential environment is then purged; workspace `.env` loads only with `TELL_TRUST_WORKSPACE_ENV=true` (no token files).
 
 Key behaviors:
 - Real PTY panes (`node-pty` + WebSocket + xterm.js, up to 8 sessions max, scrollback persisted)
-- Token auth (`TELL_TOKEN`, Bearer on `/api/*` + `?token=` on WS, memory-only login screen, rate-limited verify)
-- `.tell/` session persistence (`session.json`, `history/`, `latest` symlink)
-- Stricter `isHighRiskScript()` than the CLI (`src/server/guards.ts`: blocks all interpreter `-c`/`-e`, `env` launches, `base64 -d`, shell expansions — test-pinned divergence, do not "dedupe")
-- Execution toggles (chat header, per browser session): `Auto-Run` / `Require Approval` / `No-Exec` (`No-Exec` > per-command risk gate via `POST /api/risk-check`, fail-closed to approval); feedback cards start minimized
+- Token auth (`TELL_TOKEN`, case-insensitive Bearer boundary on `/api/*` + `?token=` on WS, memory-only login screen, failed-attempt rate limit); `TELL_ALLOWED_HOSTS` gates HTTP/WS Host and Origin against DNS rebinding
+- `.tell/` session persistence (`session.json`, `history/`, `latest` symlink), private `0700/0600` modes, symlink-safe workspace paths
+- Stricter `isHighRiskScript()` than the CLI (`src/server/guards.ts`: blocks all interpreter `-c`/`-e`, network clients, `env` launches, `base64 -d`, shell expansions — test-pinned divergence, do not "dedupe")
+- Commands and PTY panes receive a scrubbed child environment without provider keys, `TELL_TOKEN`, or loader-injection variables
+- Execution toggles (chat header, per browser session): `Auto-Run` / `Require Approval` / `No-Exec` (Auto-Run requires `-y`; server `--no-exec` is enforced by `/api/execute` and overrides saved browser toggles); feedback cards start minimized
 - `--stream` replies on `/api/tell` as NDJSON (`reasoning`/`reasoning_end`/`text`/`done`/`error`; codec shared in `src/shared/chat-stream.ts`); collapsed reasoning headers with a live `Thinking… Ns` timer
 - `--think` seeds reasoning headers expanded on first visit; manual expand/collapse persists to `localStorage`. Provider `reasoning_end` is not universal — the client freezes the timer on the first `text` delta
 - Sensitive files never served (`.env*` except `.env.example`, `.tell/**`, `.git/**`, `*.key`, `*.pem`); per-IP rate limits on chat/execute/auth
@@ -123,7 +124,7 @@ Files:
 - **Dot prefix** (`.g`) = fast mode
 - **Self-hosted**: `q` = local `/root/model`, `v` = vast `/root/model`
 
-Canonical format: `vendor:official_model_name:thinking_budget` (e.g., `openai:gpt-5.6-sol:high`).
+Canonical format: `vendor:official_model_name:thinking_budget` (e.g., `openai:gpt-6-sol:high`).
 
 ## Dependencies
 
@@ -135,7 +136,7 @@ Canonical format: `vendor:official_model_name:thinking_budget` (e.g., `openai:gp
 - **[@ai-sdk/deepseek](https://www.npmjs.com/package/@ai-sdk/deepseek)** — DeepSeek provider (native)
 - **[@ai-sdk/cerebras](https://www.npmjs.com/package/@ai-sdk/cerebras)** — Cerebras provider (native)
 - **[@ai-sdk/moonshotai](https://www.npmjs.com/package/@ai-sdk/moonshotai)** — MoonshotAI provider (native)
-- **[@ai-sdk/openai-compatible](https://www.npmjs.com/package/@ai-sdk/openai-compatible)** — OpenAI-compatible provider (`alibaba`/`zai` vendors + fallback for vendors without a dedicated handler)
+- **[@ai-sdk/openai-compatible](https://www.npmjs.com/package/@ai-sdk/openai-compatible)** — OpenAI-compatible Chat Completions provider (`alibaba`/`zai`/`xiaomi` vendors + fallback for vendors without a dedicated handler); `meta` shares the same wire path but uses `@ai-sdk/openai`'s `.responses()` (`OPENAI_WIRE_VENDORS` in `models.ts`)
 - **[commander](https://www.npmjs.com/package/commander)** — CLI argument parsing
 
 The provider packages above are dependencies of `@tell-ai/sdk`; `commander` lives in `tell-ai`. The web package adds `express`, `ws`, `node-pty` (native), `vite` + `react`/`@xterm/*` for the frontend.
