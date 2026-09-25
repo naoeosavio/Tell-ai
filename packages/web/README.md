@@ -83,8 +83,20 @@ Each pane folds to its own title bar through the chevron in its header, and the
 collapsed/expanded state persists in `localStorage` (`theme-config-v3`) next to
 `sidebarCollapsed`/`threadsCollapsed`. Collapsing the explorer hands its height
 to settings (and vice versa), and the settings resize handle only exists while
-the settings pane is open. The navbar's global toggle still hides the whole
-sidebar at once.
+the settings pane is open. The sidebar wrapper owns the single outer divider, so
+the `Files` header stays aligned on either side and in both collapse states. The
+navbar's global toggle still hides the whole sidebar at once.
+
+## Agent notifications and feed
+
+The navbar badge lives on the `Agent` button: `!` while a command awaits
+authorization, or the number of retained Agent Feed errors. It disappears while
+the Agent view is active and stays on the Agent (not on `Terminal`) otherwise.
+
+**Settings → Appearance & Theme → Custom layout → Agent Feed** accepts `Top`,
+`Bottom`, `Left`, `Right`, and `Hidden`. `Hidden` only suppresses the panel: the
+retained lines and the navbar badge are preserved, so restoring a position shows
+the same log. The choice persists in `theme-config-v3` (`customAgentFeed`).
 
 ## Envs (see `.env.example`)
 

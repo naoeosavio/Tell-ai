@@ -616,6 +616,41 @@ describe('web sandbox: sidebar pane layout', () => {
   });
 });
 
+describe('web sandbox: agent notification', () => {
+  const { resolve_agent_notification } = loadModule('src/shared/agent-feed.ts');
+
+  it('stays hidden while the agent view is visible', () => {
+    assert.strictEqual(
+      resolve_agent_notification({ is_agent_visible: true, pending_command: 'rm -rf build', error_count: 3 }),
+      null,
+    );
+  });
+
+  it('prefers the pending marker over retained errors', () => {
+    assert.deepStrictEqual(
+      resolve_agent_notification({ is_agent_visible: false, pending_command: 'ls -la', error_count: 4 }),
+      { label: '!', title: 'Command awaiting authorization' },
+    );
+  });
+
+  it('counts retained agent feed errors when no command waits', () => {
+    assert.deepStrictEqual(
+      resolve_agent_notification({ is_agent_visible: false, pending_command: null, error_count: 2 }),
+      {
+        label: '2',
+        title: '2 Agent Feed error(s)',
+      },
+    );
+  });
+
+  it('returns null without a pending command or errors', () => {
+    assert.strictEqual(
+      resolve_agent_notification({ is_agent_visible: false, pending_command: null, error_count: 0 }),
+      null,
+    );
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Execution toggles: Auto-Run / Require Approval / No-Exec persist through
 // page reloads (localStorage), and garbage/shape errors fall back to null so

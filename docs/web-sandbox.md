@@ -307,6 +307,14 @@ first visit and stays the fallback when the field is absent. Both modes produce
 the same accumulated text — the toggle changes the transport (NDJSON vs one
 JSON body), so logs, context and `<RUN>` extraction stay identical.
 
+The navbar notification belongs to the **Agent** button: `!` means a command is
+waiting for authorization, and a number is the count of retained Agent Feed
+errors. The badge disappears while the Agent view is active. In **Settings →
+Appearance & Theme → Custom layout**, the Agent Feed can be docked `Top`,
+`Bottom`, `Left`, `Right`, or set to `Hidden`; `Hidden` suppresses the panel
+without clearing its lines or the notification, so switching back to a visible
+position restores the same log.
+
 Precedence: `No-Exec` > per-command risk gate. These are client-side toggles
 whose last choice is remembered in `localStorage` (survives page reloads;
 `localStorage` → first-visit only, server flags like `-y`/`--no-exec` seed the

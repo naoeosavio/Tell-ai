@@ -25,6 +25,7 @@ import FileViewer from './components/FileViewer.tsx';
 import SettingsPanel from './components/SettingsPanel.tsx';
 import Terminal, { type TerminalLayout, type TerminalLine, type TerminalTabMeta } from './components/Terminal.tsx';
 import { useToast } from './components/Toast.tsx';
+import { resolve_agent_notification } from './shared/agent-feed.ts';
 import { consume_chat_stream } from './shared/chat-stream.ts';
 import { loadExecToggles, saveExecToggles } from './shared/exec-toggles.ts';
 import {
@@ -39,7 +40,7 @@ import {
   mergeRestoredTerminalLayout,
   resolveSafeActiveTabId,
 } from './shared/terminal-layout.ts';
-import { type TerminalPlacement, useTheme } from './theme.tsx';
+import { type AgentFeedPlacement, type TerminalPlacement, useTheme } from './theme.tsx';
 
 // Fallback until /api/context loads: the server replaces this with the
 // generated prompt (project tree + README/AGENTS + @tell-ai/sdk protocol).
@@ -120,8 +121,7 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
     config.layout === 'focused' ? 'right' : config.layout === 'default' ? 'right' : config.customSidebarSide;
   const terminalPlacement: TerminalPlacement =
     config.layout === 'focused' ? 'hidden' : config.layout === 'default' ? 'bottom' : config.customTerminal;
-  const agentFeedPlacement: 'top' | 'bottom' | 'left' | 'right' =
-    config.layout === 'custom' ? config.customAgentFeed : 'top';
+  const agentFeedPlacement: AgentFeedPlacement = config.layout === 'custom' ? config.customAgentFeed : 'top';
   const threadsSide: 'left' | 'right' | 'top' | 'bottom' =
     config.layout === 'custom' ? config.customChatThreadsSide : 'left';
   const sidebarCollapsed = config.sidebarCollapsed;
@@ -195,6 +195,16 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
 
   const [terminalLines, setTerminalLines] = useState<TerminalLine[]>([]);
   const [pendingCommand, setPendingCommand] = useState<string | null>(null);
+  const lastAgentErrorCountRef = useRef<number>(0);
+  useEffect(() => {
+    const error_count = terminalLines.filter((line) => line.type === 'error').length;
+    const has_new_errors = error_count > lastAgentErrorCountRef.current;
+    lastAgentErrorCountRef.current = error_count;
+    if (has_new_errors) setAgentFeedOpen(true);
+  }, [terminalLines]);
+  useEffect(() => {
+    if (pendingCommand) setAgentFeedOpen(true);
+  }, [pendingCommand]);
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
   const [refreshFileTreeTrigger, setRefreshFileTreeTrigger] = useState<number>(0);
   // Unified view state: 'chat' shows the chat section, 'terminal' maximizes the console.
@@ -1437,6 +1447,11 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
 
   // Badge feedback outside the pane: pending auth + Agent Feed errors
   const agentFeedErrorCount = terminalLines.filter((l) => l.type === 'error').length;
+  const agentNotification = resolve_agent_notification({
+    is_agent_visible: chatActive,
+    pending_command: pendingCommand,
+    error_count: agentFeedErrorCount,
+  });
   const handleAgentFeedToggle = useCallback((open: boolean) => setAgentFeedOpen(open), []);
 
   const threadsCollapsed = config.threadsCollapsed;
@@ -1477,6 +1492,14 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
         >
           <Sparkles className="w-3.5 h-3.5 text-(--color-accent)" />
           <span>Agent</span>
+          {agentNotification && (
+            <span
+              title={agentNotification.title}
+              className="flex items-center justify-center min-w-[14px] h-[14px] px-1 bg-(--color-error) text-white text-[8px] font-black font-mono"
+            >
+              {agentNotification.label}
+            </span>
+          )}
         </button>
 
         <button
@@ -1494,14 +1517,6 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
         >
           <TerminalIcon className="w-3.5 h-3.5 text-(--color-accent)" />
           <span>Terminal</span>
-          {!consoleVisible && (pendingCommand || agentFeedErrorCount > 0) && (
-            <span
-              title={pendingCommand ? 'Command awaiting authorization' : `${agentFeedErrorCount} Agent Feed error(s)`}
-              className="flex items-center justify-center min-w-[14px] h-[14px] px-1 bg-(--color-error) text-white text-[8px] font-black font-mono"
-            >
-              {pendingCommand ? '!' : agentFeedErrorCount}
-            </span>
-          )}
         </button>
       </div>
 
@@ -1538,15 +1553,15 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
     </div>
   );
 
-  const agentFeedPanel = (
-    <AgentFeed
-      lines={terminalLines}
-      open={agentFeedOpen}
-      onToggle={handleAgentFeedToggle}
-      onClear={() => setTerminalLines([])}
-      pendingCommand={pendingCommand}
-    />
-  );
+  const agentFeedPanel =
+    agentFeedPlacement === 'hidden' ? null : (
+      <AgentFeed
+        lines={terminalLines}
+        open={agentFeedOpen}
+        onToggle={handleAgentFeedToggle}
+        onClear={() => setTerminalLines([])}
+      />
+    );
 
   const threadsPanel = (layout: 'vertical' | 'horizontal') => (
     <ChatThreads
