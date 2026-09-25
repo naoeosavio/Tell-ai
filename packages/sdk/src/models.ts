@@ -26,12 +26,12 @@ export interface ModelHandle {
 }
 
 export const MODELS: Record<string, string> = {
-  'g--': 'openai:gpt-5.6-sol:none',
-  'g-': 'openai:gpt-5.6-sol:low',
-  g: 'openai:gpt-5.6-sol:medium',
-  'g+': 'openai:gpt-5.6-sol:high',
-  'g++': 'openai:gpt-5.6-sol:max',
-  G: 'openai:gpt-5.6-sol:high',
+  'g--': 'openai:gpt-6-sol:none',
+  'g-': 'openai:gpt-6-sol:low',
+  g: 'openai:gpt-6-sol:medium',
+  'g+': 'openai:gpt-6-sol:high',
+  'g++': 'openai:gpt-6-sol:max',
+  G: 'openai:gpt-6-sol:high',
 
   p: 'openai:gpt-5.6-sol-pro:medium',
   'p+': 'openai:gpt-5.6-sol-pro:high',
@@ -45,12 +45,12 @@ export const MODELS: Record<string, string> = {
   't++': 'openai:gpt-5.6-terra:max',
   T: 'openai:gpt-5.6-terra:high',
 
-  'c--': 'openai:gpt-5.6-luna:none',
-  'c-': 'openai:gpt-5.6-luna:low',
-  c: 'openai:gpt-5.6-luna:medium',
-  'c+': 'openai:gpt-5.6-luna:high',
-  'c++': 'openai:gpt-5.6-luna:max',
-  C: 'openai:gpt-5.6-luna:high',
+  'c--': 'openai:gpt-6-luna:none',
+  'c-': 'openai:gpt-6-luna:low',
+  c: 'openai:gpt-6-luna:medium',
+  'c+': 'openai:gpt-6-luna:high',
+  'c++': 'openai:gpt-6-luna:max',
+  C: 'openai:gpt-6-luna:high',
 
   'e--': 'openai:gpt-6-astra:none',
   'e-': 'openai:gpt-6-astra:low',
@@ -73,12 +73,12 @@ export const MODELS: Record<string, string> = {
   's++': 'anthropic:claude-sonnet-5:max',
   S: 'anthropic:claude-sonnet-5:high',
 
-  'o--': 'anthropic:claude-opus-5:none',
-  'o-': 'anthropic:claude-opus-5:low',
-  o: 'anthropic:claude-opus-5:medium',
-  'o+': 'anthropic:claude-opus-5:high',
-  'o++': 'anthropic:claude-opus-5:max',
-  O: 'anthropic:claude-opus-5:high',
+  'o--': 'anthropic:claude-opus-5.5:none',
+  'o-': 'anthropic:claude-opus-5.5:low',
+  o: 'anthropic:claude-opus-5.5:medium',
+  'o+': 'anthropic:claude-opus-5.5:high',
+  'o++': 'anthropic:claude-opus-5.5:max',
+  O: 'anthropic:claude-opus-5.5:high',
 
   'f--': 'anthropic:claude-fable-5.1:none',
   'f-': 'anthropic:claude-fable-5.1:low',
@@ -105,12 +105,12 @@ export const MODELS: Record<string, string> = {
   'l++': 'google:gemini-3.8-flash:max',
   L: 'google:gemini-3.8-flash:high',
 
-  'x--': 'xai:grok-4.6:none',
-  'x-': 'xai:grok-4.6:low',
-  x: 'xai:grok-4.6:medium',
-  'x+': 'xai:grok-4.6:high',
-  'x++': 'xai:grok-4.6:xhigh',
-  X: 'xai:grok-4.6:high',
+  'x--': 'xai:grok-4.7:none',
+  'x-': 'xai:grok-4.7:low',
+  x: 'xai:grok-4.7:medium',
+  'x+': 'xai:grok-4.7:high',
+  'x++': 'xai:grok-4.7:xhigh',
+  X: 'xai:grok-4.7:high',
 
   q: 'local:/root/model:none',
 
@@ -174,12 +174,33 @@ export const MODELS: Record<string, string> = {
   K: 'moonshotai:kimi-k3:high',
   'K+': 'moonshotai:kimi-k3:max',
 
-  'm--': 'openrouter:meta/muse-spark-1.3:none',
-  'm-': 'openrouter:meta/muse-spark-1.3:low',
-  m: 'openrouter:meta/muse-spark-1.3:medium',
-  'm+': 'openrouter:meta/muse-spark-1.3:high',
-  'm++': 'openrouter:meta/muse-spark-1.3:max',
-  M: 'openrouter:meta/muse-spark-1.3:high',
+  'm--': 'meta:muse-spark-1.3:none',
+  'm-': 'meta:muse-spark-1.3:low',
+  m: 'meta:muse-spark-1.3:medium',
+  'm+': 'meta:muse-spark-1.3:high',
+  'm++': 'meta:muse-spark-1.3:max',
+  M: 'meta:muse-spark-1.3:high',
+
+  'mc--': 'meta:muse-spark-1.3-contributor:none',
+  'mc-': 'meta:muse-spark-1.3-contributor:low',
+  mc: 'meta:muse-spark-1.3-contributor:medium',
+  'mc+': 'meta:muse-spark-1.3-contributor:high',
+  'mc++': 'meta:muse-spark-1.3-contributor:max',
+  MC: 'meta:muse-spark-1.3-contributor:high',
+
+  'mi--': 'xiaomi:mimo-v2.6-pro:none',
+  'mi-': 'xiaomi:mimo-v2.6-pro:low',
+  mi: 'xiaomi:mimo-v2.6-pro:medium',
+  'mi+': 'xiaomi:mimo-v2.6-pro:high',
+  'mi++': 'xiaomi:mimo-v2.6-pro:max',
+  MI: 'xiaomi:mimo-v2.6-pro:high',
+
+  'mif--': 'xiaomi:mimo-v2.6-flash:none',
+  'mif-': 'xiaomi:mimo-v2.6-flash:low',
+  mif: 'xiaomi:mimo-v2.6-flash:medium',
+  'mif+': 'xiaomi:mimo-v2.6-flash:high',
+  'mif++': 'xiaomi:mimo-v2.6-flash:max',
+  MIF: 'xiaomi:mimo-v2.6-flash:high',
 };
 
 const AI_SDK_THINKING: Record<string, string> = {
@@ -205,6 +226,8 @@ const SUPPORTED_VENDORS = new Set([
   'cerebras',
   'alibaba',
   'zai',
+  'meta',
+  'xiaomi',
 ]);
 
 const VENDOR_KEY: Record<string, keyof SDKKeys> = {
@@ -218,6 +241,8 @@ const VENDOR_KEY: Record<string, keyof SDKKeys> = {
   openrouter: 'openrouter',
   alibaba: 'alibaba',
   zai: 'zhipu',
+  meta: 'meta',
+  xiaomi: 'xiaomi',
 };
 
 const CEREBRAS_MODELS = new Set(['gpt-oss-120b', 'gemma-4-31b']);
@@ -228,16 +253,48 @@ function get_api_key(vendor: string, config: SDKConfig): string | undefined {
   return undefined;
 }
 
+const MISSING_API_KEY = 'tell-sdk-missing-api-key';
+const DEFAULT_VENDOR_URLS = {
+  anthropic: 'https://api.anthropic.com/v1',
+  cerebras: 'https://api.cerebras.ai/v1',
+  deepseek: 'https://api.deepseek.com',
+  google: 'https://generativelanguage.googleapis.com/v1beta',
+  moonshotai: 'https://api.moonshot.ai/v1',
+  openai: 'https://api.openai.com/v1',
+  xai: 'https://api.x.ai/v1',
+};
+const API_KEY_CACHE_TOKENS = new Map<string, string>();
+let next_api_key_cache_token = 0;
+
+function api_key_cache_token(api_key: string | undefined): string {
+  const value = api_key === undefined ? 'missing' : `key:${api_key}`;
+  const existing = API_KEY_CACHE_TOKENS.get(value);
+  if (existing) return existing;
+  const token = `key-${next_api_key_cache_token++}`;
+  API_KEY_CACHE_TOKENS.set(value, token);
+  return token;
+}
+
+function provider_cache_key(vendor: string, base_url: string, api_key: string | undefined): string {
+  return `${vendor}\0${base_url}\0${api_key_cache_token(api_key)}`;
+}
+
+function injected_api_key(api_key: string | undefined): string {
+  return api_key ?? MISSING_API_KEY;
+}
+
 function infer_vendor(model: string): string {
   const normalized = model.toLowerCase();
   if (normalized.startsWith('alibaba/')) return 'alibaba';
+  if (normalized.includes('/')) return 'openrouter';
   if (normalized.startsWith('glm')) return 'zai';
   if (normalized.startsWith('gpt') || /^o\d/.test(normalized)) return 'openai';
   if (normalized.startsWith('claude')) return 'anthropic';
   if (normalized.startsWith('gemini')) return 'google';
   if (normalized.startsWith('grok')) return 'xai';
   if (normalized.startsWith('kimi')) return 'moonshotai';
-  if (normalized.includes('/')) return 'openrouter';
+  if (normalized.startsWith('muse')) return 'meta';
+  if (normalized.startsWith('mimo')) return 'xiaomi';
   throw new Error(`Unsupported vendor for model "${model}"`);
 }
 
@@ -251,33 +308,60 @@ const DEEPSEEK_PROVIDERS: Record<string, any> = {};
 const CEREBRAS_PROVIDERS: Record<string, any> = {};
 const MOONSHOTAI_PROVIDERS: Record<string, any> = {};
 const OPENROUTER_PROVIDERS: Record<string, any> = {};
-const COMPAT_PROVIDERS: Record<string, any> = {};
+const OPENAI_WIRE_PROVIDERS: Record<string, (model: string) => any> = {};
 const VAST_PROVIDERS: Record<string, any> = {};
 const LOCAL_PROVIDERS: Record<string, any> = {};
 
-// Default OpenAI-compatible base URLs for vendors served through the generic
-// provider (`alibaba`, `zai`) and any future vendor without a dedicated handler.
-const COMPAT_DEFAULT_URLS: Record<CompatVendor, string> = {
-  alibaba: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
-  zai: 'https://api.z.ai/api/paas/v4',
+/** Vendors that speak one of the OpenAI wire APIs, with no dedicated AI SDK package. */
+type OpenAiWireVendor = 'alibaba' | 'zai' | 'xiaomi' | 'meta';
+
+type OpenAiWireSpec = {
+  /** `responses` = OpenAI Responses API, `chat` = Chat Completions. */
+  api: 'chat' | 'responses';
+  default_url: string;
+  url_key: keyof SDKUrls;
+  /** Header carrying the API key when it is not a Bearer token. */
+  key_header?: string;
+  /** Force the provider to send reasoning for model ids it does not recognize. */
+  force_reasoning?: boolean;
 };
 
-// SDKUrls slot per compat vendor (`zai` reads the `zhipu` slot).
-const COMPAT_URL_KEYS: Record<CompatVendor, keyof SDKUrls> = {
-  alibaba: 'alibaba',
-  zai: 'zhipu',
+const OPENAI_WIRE_VENDORS: Record<OpenAiWireVendor, OpenAiWireSpec> = {
+  alibaba: {
+    api: 'chat',
+    default_url: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+    url_key: 'alibaba',
+  },
+  zai: {
+    api: 'chat',
+    default_url: 'https://api.z.ai/api/paas/v4',
+    url_key: 'zhipu',
+  },
+  xiaomi: {
+    api: 'chat',
+    default_url: 'https://api.xiaomimimo.com/v1',
+    url_key: 'xiaomi',
+    key_header: 'api-key',
+  },
+  meta: {
+    api: 'responses',
+    default_url: 'https://api.meta.ai/v1',
+    url_key: 'meta',
+    force_reasoning: true,
+  },
 };
 
 async function get_openrouter_provider(config: SDKConfig): Promise<any> {
   const base_url = config.urls.openrouter ?? 'https://openrouter.ai/api/v1';
-  if (OPENROUTER_PROVIDERS[base_url]) return OPENROUTER_PROVIDERS[base_url];
   const api_key = get_api_key('openrouter', config);
-  OPENROUTER_PROVIDERS[base_url] = createOpenAI({
-    ...(api_key ? { apiKey: api_key } : {}),
+  const cache_key = provider_cache_key('openrouter', base_url, api_key);
+  if (OPENROUTER_PROVIDERS[cache_key]) return OPENROUTER_PROVIDERS[cache_key];
+  OPENROUTER_PROVIDERS[cache_key] = createOpenAI({
+    apiKey: injected_api_key(api_key),
     baseURL: base_url,
     name: 'openrouter',
   });
-  return OPENROUTER_PROVIDERS[base_url];
+  return OPENROUTER_PROVIDERS[cache_key];
 }
 
 const VALID_THINKING = new Set(['none', 'low', 'medium', 'high', 'xhigh', 'max', 'auto']);
@@ -394,28 +478,42 @@ async function get_local_provider(baseUrl: string): Promise<any> {
   return LOCAL_PROVIDERS[baseUrl];
 }
 
-/** Vendors served through a generic OpenAI-compatible provider. */
-type CompatVendor = 'alibaba' | 'zai';
-
 /**
- * Builds an OpenAI-compatible provider for vendors without a native AI SDK
- * provider — and as a fallback for any vendor without a dedicated handler,
- * so future vendors only need a URL to work. Cached per vendor + base URL
- * so different endpoints in one process never share a stale provider.
+ * Builds a model factory for vendors that speak an OpenAI wire API but have no
+ * dedicated AI SDK package — Chat Completions goes through
+ * `@ai-sdk/openai-compatible`, while the Responses API reuses `@ai-sdk/openai`'s
+ * `.responses()`. The factory is cached per vendor + API + base URL so different
+ * endpoints in one process never share a stale provider. Vendors in
+ * `OPENAI_WIRE_VENDORS` are described by that table; any other vendor without a
+ * dedicated handler falls back to Chat Completions so future vendors only need
+ * a URL to work.
  */
-async function get_compat_provider(vendor: string, config: SDKConfig): Promise<any> {
-  const url_key = (COMPAT_URL_KEYS as Record<string, keyof SDKUrls>)[vendor];
-  const default_url = (COMPAT_DEFAULT_URLS as Record<string, string>)[vendor] ?? '';
-  const base_url = (url_key ? config.urls[url_key] : undefined) ?? default_url;
-  const cache_key = `${vendor}::${base_url}`;
-  if (COMPAT_PROVIDERS[cache_key]) return COMPAT_PROVIDERS[cache_key];
+async function get_openai_wire_factory(vendor: string, config: SDKConfig): Promise<(model: string) => any> {
+  const wire = (OPENAI_WIRE_VENDORS as Record<string, OpenAiWireSpec | undefined>)[vendor];
+  const api = wire?.api ?? 'chat';
+  const url_key = wire?.url_key;
+  const base_url = (url_key ? config.urls[url_key] : undefined) ?? wire?.default_url ?? '';
   const api_key = get_api_key(vendor, config);
-  COMPAT_PROVIDERS[cache_key] = createOpenAICompatible({
-    name: vendor,
-    ...(api_key ? { apiKey: api_key } : {}),
-    baseURL: base_url,
-  });
-  return COMPAT_PROVIDERS[cache_key];
+  const cache_key = provider_cache_key(vendor, `${api}::${base_url}`, api_key);
+  if (OPENAI_WIRE_PROVIDERS[cache_key]) return OPENAI_WIRE_PROVIDERS[cache_key];
+  if (api === 'responses') {
+    const provider = createOpenAI({
+      apiKey: injected_api_key(api_key),
+      baseURL: base_url,
+      name: vendor,
+    });
+    OPENAI_WIRE_PROVIDERS[cache_key] = (model) => provider.responses(model);
+  } else {
+    const provider = createOpenAICompatible({
+      name: vendor,
+      ...(wire?.key_header
+        ? { ...(api_key ? { headers: { [wire.key_header]: api_key } } : {}) }
+        : { apiKey: injected_api_key(api_key) }),
+      baseURL: base_url,
+    });
+    OPENAI_WIRE_PROVIDERS[cache_key] = (model) => provider(model);
+  }
+  return OPENAI_WIRE_PROVIDERS[cache_key];
 }
 
 async function handle_cerebras(
@@ -424,13 +522,13 @@ async function handle_cerebras(
   fast: boolean,
   config: SDKConfig,
 ): Promise<ModelHandle> {
-  const cache_key = config.urls.cerebras ?? '';
+  const api_key = get_api_key('cerebras', config);
+  const base_url = config.urls.cerebras ?? DEFAULT_VENDOR_URLS.cerebras;
+  const cache_key = provider_cache_key('cerebras', base_url, api_key);
   if (!CEREBRAS_PROVIDERS[cache_key]) {
-    const api_key = get_api_key('cerebras', config);
-    const base_url = config.urls.cerebras;
     CEREBRAS_PROVIDERS[cache_key] = createCerebras({
-      ...(api_key ? { apiKey: api_key } : {}),
-      ...(base_url ? { baseURL: base_url } : {}),
+      apiKey: injected_api_key(api_key),
+      baseURL: base_url,
     });
   }
   return { model: CEREBRAS_PROVIDERS[cache_key](model), reasoning, fast };
@@ -442,13 +540,13 @@ async function handle_open_ai(
   fast: boolean,
   config: SDKConfig,
 ): Promise<ModelHandle> {
-  const cache_key = config.urls.openai ?? '';
+  const api_key = get_api_key('openai', config);
+  const base_url = config.urls.openai ?? DEFAULT_VENDOR_URLS.openai;
+  const cache_key = provider_cache_key('openai', base_url, api_key);
   if (!OPENAI_PROVIDERS[cache_key]) {
-    const api_key = get_api_key('openai', config);
-    const base_url = config.urls.openai;
     OPENAI_PROVIDERS[cache_key] = createOpenAI({
-      ...(api_key ? { apiKey: api_key } : {}),
-      ...(base_url ? { baseURL: base_url } : {}),
+      apiKey: injected_api_key(api_key),
+      baseURL: base_url,
     });
   }
   return { model: OPENAI_PROVIDERS[cache_key](model), reasoning, fast };
@@ -460,38 +558,39 @@ async function handle_anthropic(
   fast: boolean,
   config: SDKConfig,
 ): Promise<ModelHandle> {
-  const cache_key = config.urls.anthropic ?? '';
+  const api_key = get_api_key('anthropic', config);
+  const base_url = config.urls.anthropic ?? DEFAULT_VENDOR_URLS.anthropic;
+  const cache_key = provider_cache_key('anthropic', base_url, api_key);
   if (!ANTHROPIC_PROVIDERS[cache_key]) {
-    const api_key = get_api_key('anthropic', config);
-    const base_url = config.urls.anthropic;
     ANTHROPIC_PROVIDERS[cache_key] = createAnthropic({
-      ...(api_key ? { apiKey: api_key } : {}),
-      ...(base_url ? { baseURL: base_url } : {}),
+      apiKey: injected_api_key(api_key),
+      baseURL: base_url,
     });
   }
   return { model: ANTHROPIC_PROVIDERS[cache_key](model), reasoning, fast };
 }
 
 async function handle_google(model: string, reasoning: string, fast: boolean, config: SDKConfig): Promise<ModelHandle> {
-  const cache_key = config.urls.google ?? '';
+  const api_key = get_api_key('google', config);
+  const base_url = config.urls.google ?? DEFAULT_VENDOR_URLS.google;
+  const cache_key = provider_cache_key('google', base_url, api_key);
   if (!GOOGLE_PROVIDERS[cache_key]) {
-    const api_key = get_api_key('google', config);
-    const base_url = config.urls.google;
-    GOOGLE_PROVIDERS[cache_key] = api_key
-      ? createGoogleGenerativeAI({ apiKey: api_key, ...(base_url ? { baseURL: base_url } : {}) })
-      : createGoogleGenerativeAI({ ...(base_url ? { baseURL: base_url } : {}) });
+    GOOGLE_PROVIDERS[cache_key] = createGoogleGenerativeAI({
+      apiKey: injected_api_key(api_key),
+      baseURL: base_url,
+    });
   }
   return { model: GOOGLE_PROVIDERS[cache_key](model), reasoning, fast };
 }
 
 async function handle_xai(model: string, reasoning: string, fast: boolean, config: SDKConfig): Promise<ModelHandle> {
-  const cache_key = config.urls.xai ?? '';
+  const api_key = get_api_key('xai', config);
+  const base_url = config.urls.xai ?? DEFAULT_VENDOR_URLS.xai;
+  const cache_key = provider_cache_key('xai', base_url, api_key);
   if (!XAI_PROVIDERS[cache_key]) {
-    const api_key = get_api_key('xai', config);
-    const base_url = config.urls.xai;
     XAI_PROVIDERS[cache_key] = createXai({
-      ...(api_key ? { apiKey: api_key } : {}),
-      ...(base_url ? { baseURL: base_url } : {}),
+      apiKey: injected_api_key(api_key),
+      baseURL: base_url,
     });
   }
   return { model: XAI_PROVIDERS[cache_key](model), reasoning, fast };
@@ -503,13 +602,13 @@ async function handle_deepseek(
   fast: boolean,
   config: SDKConfig,
 ): Promise<ModelHandle> {
-  const cache_key = config.urls.deepseek ?? '';
+  const api_key = get_api_key('deepseek', config);
+  const base_url = config.urls.deepseek ?? DEFAULT_VENDOR_URLS.deepseek;
+  const cache_key = provider_cache_key('deepseek', base_url, api_key);
   if (!DEEPSEEK_PROVIDERS[cache_key]) {
-    const api_key = get_api_key('deepseek', config);
-    const base_url = config.urls.deepseek;
     DEEPSEEK_PROVIDERS[cache_key] = createDeepSeek({
-      ...(api_key ? { apiKey: api_key } : {}),
-      ...(base_url ? { baseURL: base_url } : {}),
+      apiKey: injected_api_key(api_key),
+      baseURL: base_url,
     });
   }
   return { model: DEEPSEEK_PROVIDERS[cache_key](model), reasoning, fast };
@@ -521,13 +620,13 @@ async function handle_moonshot_ai(
   fast: boolean,
   config: SDKConfig,
 ): Promise<ModelHandle> {
-  const cache_key = config.urls.moonshotai ?? '';
+  const api_key = get_api_key('moonshotai', config);
+  const base_url = config.urls.moonshotai ?? DEFAULT_VENDOR_URLS.moonshotai;
+  const cache_key = provider_cache_key('moonshotai', base_url, api_key);
   if (!MOONSHOTAI_PROVIDERS[cache_key]) {
-    const api_key = get_api_key('moonshotai', config);
-    const base_url = config.urls.moonshotai;
     MOONSHOTAI_PROVIDERS[cache_key] = createMoonshotAI({
-      ...(api_key ? { apiKey: api_key } : {}),
-      ...(base_url ? { baseURL: base_url } : {}),
+      apiKey: injected_api_key(api_key),
+      baseURL: base_url,
     });
   }
   return { model: MOONSHOTAI_PROVIDERS[cache_key](model), reasoning, fast };
@@ -548,14 +647,24 @@ async function handle_alibaba(
   fast: boolean,
   config: SDKConfig,
 ): Promise<ModelHandle> {
-  const provider = await get_compat_provider('alibaba', config);
+  const factory = await get_openai_wire_factory('alibaba', config);
   // DashScope model ids may carry the `alibaba/` prefix — strip it.
-  return { model: provider(model.replace(/^alibaba\//i, '')), reasoning, fast };
+  return { model: factory(model.replace(/^alibaba\//i, '')), reasoning, fast };
 }
 
 async function handle_zhipu(model: string, reasoning: string, fast: boolean, config: SDKConfig): Promise<ModelHandle> {
-  const provider = await get_compat_provider('zai', config);
-  return { model: provider(model), reasoning, fast };
+  const factory = await get_openai_wire_factory('zai', config);
+  return { model: factory(model), reasoning, fast };
+}
+
+async function handle_xiaomi(model: string, reasoning: string, fast: boolean, config: SDKConfig): Promise<ModelHandle> {
+  const factory = await get_openai_wire_factory('xiaomi', config);
+  return { model: factory(model), reasoning, fast };
+}
+
+async function handle_meta(model: string, reasoning: string, fast: boolean, config: SDKConfig): Promise<ModelHandle> {
+  const factory = await get_openai_wire_factory('meta', config);
+  return { model: factory(model), reasoning, fast };
 }
 
 async function handle_vast(model: string, reasoning: string, fast: boolean, config: SDKConfig): Promise<ModelHandle> {
@@ -584,6 +693,8 @@ const VENDOR_HANDLERS: Record<string, (m: string, r: string, f: boolean, config:
   openrouter: handle_openrouter,
   alibaba: handle_alibaba,
   zai: handle_zhipu,
+  xiaomi: handle_xiaomi,
+  meta: handle_meta,
   vast: handle_vast,
   local: handle_local,
 };
@@ -603,6 +714,9 @@ function resolve_reasoning(
   fast: boolean,
 ): { reasoning: string; providerOptions?: Record<string, any> } {
   if (fast) return { reasoning: 'none' };
+  if ((OPENAI_WIRE_VENDORS as Record<string, OpenAiWireSpec | undefined>)[vendor]?.force_reasoning) {
+    return { reasoning: mapped, providerOptions: { openai: { forceReasoning: true } } };
+  }
   if (mapped !== 'max') return { reasoning: mapped };
   switch (vendor) {
     case 'anthropic':
@@ -615,7 +729,7 @@ function resolve_reasoning(
     case 'moonshotai':
       return { reasoning: 'max', providerOptions: { moonshotai: { reasoningEffort: 'max' } } };
     case 'xai':
-      // Grok tops out at `xhigh` (kept verbatim on grok-4.6, else `high`).
+      // Grok tops out at `xhigh` (kept verbatim on grok-4.7, else `high`).
       return { reasoning: 'xhigh' };
     case 'google':
       // Gemini thinking levels top out at `high`.
@@ -640,11 +754,11 @@ export async function get_model(spec: string, config: SDKConfig): Promise<ModelH
 
   const handler = VENDOR_HANDLERS[resolved.vendor];
   if (!handler) {
-    // No dedicated handler: try a generic OpenAI-compatible endpoint so
-    // future vendors only need a URL to work.
-    const provider = await get_compat_provider(resolved.vendor, config);
+    // No dedicated handler: use the OpenAI wire factory (Chat Completions or
+    // Responses, per OPENAI_WIRE_VENDORS) so future vendors only need a URL.
+    const factory = await get_openai_wire_factory(resolved.vendor, config);
     return {
-      model: provider(resolved.model),
+      model: factory(resolved.model),
       reasoning,
       fast: resolved.fast,
       ...(providerOptions ? { providerOptions } : {}),
