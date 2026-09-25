@@ -5,7 +5,7 @@ command execution and PTY terminal — all anchored to a working directory (`--c
 
 ## Requirements
 
-Node.js `>=20` (see `engines` in `package.json`).
+Node.js `>=22` (see `engines` in `package.json`).
 
 ## Run
 
@@ -90,9 +90,15 @@ sidebar at once.
 
 `PORT`, `TELL_MODEL`, `TELL_TOKEN` (`Bearer` auth on `/api/*` except the public
 `GET /api/auth/status` + `POST /api/auth/verify`, and `?token=` on WS;
-token lives only in browser memory — retyped on every connection) + vendor keys (`GEMINI_API_KEY`,
+token lives only in browser memory — retyped on every connection) +
+`TELL_ALLOWED_HOSTS` (comma-separated public hostnames for tunnels/proxies;
+`localhost` and IP literals are always accepted) + vendor keys (`GEMINI_API_KEY`,
 `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XAI_API_KEY`, `DEEPSEEK_API_KEY`,
-`CEREBRAS_API_KEY`, `OPENROUTER_API_KEY`, …).
+`CEREBRAS_API_KEY`, `OPENROUTER_API_KEY`, `META_API_KEY`, `MIMO_API_KEY`, …).
+
+A workspace `.env` is ignored by default. Set `TELL_TRUST_WORKSPACE_ENV=true`
+before starting the server only when that workspace is trusted; otherwise a
+repository can redirect provider keys or authentication settings.
 
 `TELL_SCROLLBACK_MAX` (bytes/chars per terminal pane, default `262144` = 256KB)
 caps the PTY scrollback buffer. Panes running a program (`htop`, `opencode`,
@@ -114,7 +120,7 @@ are not detected.
 | GET | `/api/models` | Models/aliases + `keysStatus` per vendor |
 | GET | `/api/auth/status` | Public: `{authRequired}` only (drives the isolated login screen) |
 | POST | `/api/auth/verify` | Public + rate-limited (5/15min/IP): `{token}` → `200`/`401` generic/`429` + `Retry-After` |
-| GET | `/api/config` | `defaultModel`, `autoExecute`, `chain`, `yes`, `stream`, `think`, `cwd`, `initialPrompt` (requires auth when `TELL_TOKEN` is set) |
+| GET | `/api/config` | `defaultModel`, `autoExecute`, `noExec`, `chain`, `yes`, `stream`, `think`, `cwd`, `initialPrompt` (requires auth when `TELL_TOKEN` is set) |
 | GET | `/api/context` | Generated system prompt (tree + README + conventions) |
 | POST | `/api/tell` | `{messages, modelAlias?, systemPrompt?, stream?}` (400 invalid payload, 429); NDJSON event stream when `stream` is `true`, JSON otherwise. Missing `stream` falls back to the server's boot `--stream` |
 | GET/PUT | `/api/session` | Persisted state + server facts + live scrollbacks |
@@ -123,7 +129,7 @@ are not detected.
 | POST | `/api/session/snapshot` | `{success, name, gitChanges, history}` |
 | WS | `/api/terminal?paneId=&cols=&rows=` | PTY (`?token=` when `TELL_TOKEN`) |
 
-Sensitive files never exposed: `.env*` (except the `.env.example` template), `.tell/**`, `.git/**`, `*.key`, `*.pem`.
+Sensitive files never exposed: `.env*` (except the `.env.example` template), `.tell/**`, `.git/**`, `*.key`, `*.pem`. Workspace symlinks are rejected by file, context, and session APIs; `.tell` is stored with private directory/file modes.
 
 ## `.tell/` layout (local, git-ignored)
 

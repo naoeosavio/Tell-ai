@@ -172,6 +172,10 @@ cloudflared tunnel --url http://localhost:3000
 ngrok http 3000
 ```
 
+For tunnel or reverse-proxy hostnames, set the public hostname explicitly
+(e.g. `TELL_ALLOWED_HOSTS=random-words.trycloudflare.com`) so DNS-rebinding
+protection does not reject the forwarded `Host` header.
+
 **D. Systemd + reverse proxy (Nginx/Caddy) — always-on:**
 
 `/etc/systemd/system/tell-web.service`:
@@ -187,6 +191,8 @@ Environment=PORT=3000
 Environment=TELL_MODEL=g
 # Generate once with `openssl rand -hex 32`; clients paste it in the browser prompt.
 Environment=TELL_TOKEN=replace-with-generated-token
+# Public proxy hostname, required when the browser does not use localhost/IP.
+Environment=TELL_ALLOWED_HOSTS=tell.example.com
 # Optional: per-pane terminal scrollback budget in chars (default 262144 = 256KB).
 Environment=TELL_SCROLLBACK_MAX=262144
 ExecStart=/usr/bin/tell --web
@@ -334,6 +340,10 @@ history list.
 
 ## Authentication (`TELL_TOKEN`)
 
+The workspace `.env` is ignored unless `TELL_TRUST_WORKSPACE_ENV=true` is set
+before startup. Only enable this for a trusted workspace: otherwise a cloned
+repository could redirect provider URLs or change security-sensitive settings.
+
 By default the sandbox binds to `127.0.0.1` (localhost only) and needs no
 authentication. To make it reachable from other devices, expose the port
 explicitly **and** protect it with a token:
@@ -355,18 +365,19 @@ With `TELL_TOKEN` set:
   needed) and `POST /api/auth/verify` (checks the token) are public —
   `GET /api/config` also requires auth so it can't leak `cwd`/model info.
 - The terminal WebSocket requires the same token (`?token=` on the upgrade
-  request) and only accepts same-origin connections.
+  request) and only accepts same-origin connections. Public tunnel/proxy
+  hostnames must be listed in `TELL_ALLOWED_HOSTS`; `localhost` and IP literals
+  are accepted by default.
 - The command bridge enforces limits even with a valid token: 10 commands/min
   per IP, max 2 concurrent commands, 200 KB output truncation, per-command
   timeout (`--exec-timeout`, default 120 s).
 
 **Logging in from the browser:** open the page and a dedicated login screen
 asks for the token (animated Tell logo included). The main environment —
-chat, files, terminal — only loads after a successful login. The token lives
-**only in memory**: it is never written to `localStorage`, `sessionStorage`,
-cookies or the URL, so reloading the page (or closing the tab) always asks
-for it again. Every following request (and the terminal WebSocket) sends it
-automatically until then.
+chat, files, terminal — only loads after a successful login. The token is
+never written to `localStorage`, `sessionStorage` or cookies. REST requests
+send it in the `Authorization` header; the terminal WebSocket carries it in
+the upgrade query string, so avoid exposing query strings in proxy logs.
 
 - Wrong or rotated token? The login shows a generic `Invalid token` — just
   paste the correct one. After 3 failures the form waits 5 s (30 s after 5),
@@ -390,18 +401,23 @@ automatically until then.
   access, and keep TLS in front (reverse proxy or tunnel). See
   [Authentication](#authentication-tell_token).
 - **High-risk and obfuscated commands are blocked** by the sandbox guard: `sudo`,
-  `rm -rf`, writes to system paths (`/etc`, `/boot`, `/usr`), `curl | sh`,
-  crontab manipulation, `mkfs`, `dd of=`, interpreter eval (`python/node/perl/ruby
-  -c/-e`), `env`-launched commands, `base64 -d` payloads, and shell expansion
-  (`${…}`, `$(…)`, backticks with pipes). This is a heuristic, not a security
-  boundary — treat it as best-effort.
+  `rm -rf`, writes to system paths (`/etc`, `/boot`, `/usr`), network clients
+  (`curl`, `wget`, `ssh`), `printenv`, shell `-c`, crontab manipulation, `mkfs`,
+  `dd of=`, interpreter eval (`python/node/perl/ruby -c/-e`), `env`-launched
+  commands, `base64 -d` payloads, and shell expansion (`${…}`, `$(…)`, backticks
+  with pipes). This is a heuristic, not a security boundary — treat it as
+  best-effort.
 - **Sensitive files are never served** through the file API (`.env*`, `.tell/`,
   `.git/`, `*.key`, `*.pem`) and cannot be overwritten via the editor API.
 - **API keys come from the environment** (`OPENAI_API_KEY`, etc.). The sandbox never
-  stores key values — only the provider names you used.
+  stores key values — only the provider names you used. The server captures
+  provider configuration in memory and purges credential/loader variables from
+  its own environment; commands and PTY panes receive a scrubbed child
+  environment without provider keys, `TELL_TOKEN`, or process-loader variables.
 - **Abuse limits are built in**: 1 MB request body cap (HTTP 413), rate limits on
-  the AI chat and command bridge (10/min per IP), and a maximum of 12 concurrent
-  PTY sessions (extra connections are rejected).
+  the AI chat and command bridge (10/min per IP), a 16 KB terminal WebSocket
+  frame cap, at most 8 clients per pane, and a maximum of 12 concurrent PTY
+  sessions (extra connections are rejected).
 - For untrusted or adversarial use, run the sandbox **inside a container or VM**
   (see below) so damage is contained.
 
@@ -422,6 +438,7 @@ docker run --rm -it -p 3000:3000 \
 
 | Problem | Fix |
 |---------|-----|
+| `403 Forbidden: Host is not allowed` | A tunnel or reverse proxy forwards a public hostname. Add it to `TELL_ALLOWED_HOSTS` and restart the server. |
 | `401 Unauthorized` / login screen keeps rejecting | The server runs with `TELL_TOKEN`. Paste the exact value into the login form (nothing is stored — a stale token can't linger; just retype). After too many tries wait 15 min (`429` + `Retry-After`). |
 | `Failed to load native module: pty.node` | `node-pty` is a native module. Run `npm rebuild node-pty` (from `packages/web`) or install build tools (`python3`, `make`, `g++`). |
 | Port already in use | Set another port: `PORT=3100 tell --web` |
