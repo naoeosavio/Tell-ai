@@ -1,6 +1,6 @@
 {
   "name": "@tell-ai/sdk",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Browser-safe AI provider layer for tell-ai: model resolution, vendor dispatch, RUN/think tag handling and context summarization",
   "license": "MIT",
   "repository": {
