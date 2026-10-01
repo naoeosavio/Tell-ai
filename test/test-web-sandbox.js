@@ -1888,13 +1888,20 @@ describe('web sandbox: api routes', () => {
       assert.strictEqual(body.initialPrompt, null);
     });
 
-    it('/api/models lists the direct Meta and Xiaomi vendors', async () => {
+    it('/api/models lists the refreshed catalog and direct vendors', async () => {
       const res = await fetch(`${base}/api/models`);
       assert.strictEqual(res.status, 200);
       const body = await res.json();
-      assert.strictEqual(body.models.length, 147);
+      assert.strictEqual(body.models.length, 142);
       const by_alias = new Map(body.models.map((entry) => [entry.alias, entry]));
       for (const [alias, vendor, model] of [
+        ['g', 'openai', 'gpt-6.1-sol'],
+        ['p', 'openai', 'gpt-6.1-sol-pro'],
+        ['r', 'openai', 'gpt-6-astra-pro'],
+        ['s', 'anthropic', 'claude-sonnet-5-5'],
+        ['h', 'anthropic', 'claude-haiku-4-5'],
+        ['i', 'google', 'gemini-3.1-pro'],
+        ['at', 'alibaba', 'qwen3.8-27b'],
         ['m', 'meta', 'muse-spark-1.3'],
         ['mc', 'meta', 'muse-spark-1.3-contributor'],
         ['mi', 'xiaomi', 'mimo-v2.6-pro'],
@@ -1907,7 +1914,9 @@ describe('web sandbox: api routes', () => {
       }
       assert.strictEqual(by_alias.get('m++').thinking, 'max');
       assert.strictEqual(by_alias.get('mif+').thinking, 'high');
-      for (const vendor of ['meta', 'xiaomi']) {
+      assert.strictEqual(by_alias.get('K').thinking, 'high');
+      assert.strictEqual(body.keysStatus.minimax, undefined);
+      for (const vendor of ['alibaba', 'zhipu', 'meta', 'xiaomi']) {
         assert.strictEqual(typeof body.keysStatus[vendor], 'boolean', vendor);
       }
     });

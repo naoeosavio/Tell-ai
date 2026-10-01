@@ -106,7 +106,8 @@ token lives only in browser memory — retyped on every connection) +
 `TELL_ALLOWED_HOSTS` (comma-separated public hostnames for tunnels/proxies;
 `localhost` and IP literals are always accepted) + vendor keys (`GEMINI_API_KEY`,
 `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XAI_API_KEY`, `DEEPSEEK_API_KEY`,
-`CEREBRAS_API_KEY`, `OPENROUTER_API_KEY`, `META_API_KEY`, `MIMO_API_KEY`, …).
+`CEREBRAS_API_KEY`, `OPENROUTER_API_KEY`, `ALIBABA_API_KEY`, `ZHIPU_API_KEY`,
+`META_API_KEY`, `MIMO_API_KEY`, …).
 
 A workspace `.env` is ignored by default. Set `TELL_TRUST_WORKSPACE_ENV=true`
 before starting the server only when that workspace is trusted; otherwise a
