@@ -7,10 +7,11 @@ The SDK has zero `node:*` imports and zero `process.env` reads. All environment 
 ## Features
 
 - **`MODELS` / `resolve_model_spec(model)`** — 142 short aliases (e.g. `g` → `openai:gpt-6.1-sol:medium`) resolving to `vendor:model:thinking_budget` specs, with dot-prefix fast mode (`.g`).
-- **`create_ask_ai(spec, config)`** — returns an `AskInstance` with `ask()` (one-shot, backed by `generateText()`) and `ask_stream()` (token-by-token, backed by `streamText()`) over openai, anthropic, google, xai, deepseek, cerebras, and moonshotai providers.
+- **`create_ask_ai(spec, config)`** — returns an `AskInstance` with `ask()` (one-shot, backed by `generateText()`) and `ask_stream()` (token-by-token, backed by `streamText()`), over the `openai`, `anthropic`, `google`, `xai`, `deepseek`, `cerebras`, `moonshotai`, `openrouter`, `alibaba`, `zai`, `meta` and `xiaomi` vendors plus the self-hosted `vast`/`local` endpoints.
+- **`get_model(spec, config)`** — the lower-level handle (`{ model, reasoning, fast, providerOptions? }`) behind `create_ask_ai()`, for consumers that need a `ModelHandle` for their own `generateText()`/`streamText()` calls (e.g. multi-turn chat in a server).
 - **`tell(message, options)`** — one-shot `tell --no-exec` as a library call: builds the tell system prompt (execution disabled by default), calls the model, and returns the answer with ` thinking`/`<RUN>` tags stripped.
 - **`get_system_prompt(options)`** — the shared tell system prompt (`PromptOptions { chain?, exec?, cwd?, platform? }`); `exec: false` emits the no-command-execution variant.
-- **Tag helpers** — `extract_runs`, `strip_run_tags`, `strip_think_tags`, `strip_markdown_code_blocks` for `<RUN>`/reasoning/markdown handling.
+- **Tag helpers** — `extract_runs`, `strip_run_tags`, `strip_think_tags`, `strip_markdown_code_blocks` for `<RUN>`/reasoning/markdown handling, plus `sanitize_reasoning` so provider reasoning cannot forge a `<think>`/`<RUN>` boundary.
 - **`summarize_context(ai, text)`** — AI-driven conversation history compression.
 
 ## Install
@@ -33,7 +34,7 @@ Streaming: consume reasoning/`text` deltas as the model generates them. `ask_str
 ```ts
 import { create_ask_ai } from '@tell-ai/sdk';
 
-const ai = await create_ask_ai('g', { keys: { openai: process.env.OPENAI_API_KEY } });
+const ai = create_ask_ai('g', { keys: { openai: process.env.OPENAI_API_KEY } });
 let text = '';
 for await (const event of ai.ask_stream('explain this repo', { system: 'be brief' })) {
   switch (event.type) {
@@ -81,6 +82,30 @@ create_ask_ai('openai:gpt-6.1-sol', {
   urls: { openai: 'https://my-proxy.example/v1' },
 });
 ```
+
+## Vendors, keys and endpoints
+
+Keys and base URLs are injected per vendor, never read from the environment
+(the SDK performs zero `process.env` reads):
+
+| `keys` / `urls` slot | Vendor | Wire |
+|---|---|---|
+| `openai`, `anthropic`, `google`, `xai`, `deepseek`, `cerebras`, `moonshotai` | native providers | dedicated `@ai-sdk/*` handlers |
+| `openrouter` | OpenRouter | any `vendor/model` id, including raw ids belonging to other vendors |
+| `alibaba` | Alibaba Qwen | OpenAI-compatible chat completions |
+| `zhipu` | Z.ai GLM (`zai` vendor) | OpenAI-compatible chat completions |
+| `meta` | Meta Llama API | Responses API (`/v1/responses`) with `Authorization: Bearer` |
+| `xiaomi` | Xiaomi MiMo | OpenAI-compatible chat completions, `api-key` header (no bearer) |
+| `vast`, `local` | self-hosted | `urls` only — bring your own endpoint and key |
+
+A vendor without a dedicated handler falls back to the generic
+OpenAI-compatible provider, so pointing `urls.<vendor>` at a custom endpoint
+(localhost mock, Ollama, a brand-new vendor) needs no code change beyond the
+spec. The reasoning budget is resolved per vendor (`none`/`low`/`medium`/`high`/
+`xhigh`/`max`), with `max` mapped to each provider's closest option
+(`effort: 'max'` for Anthropic/DeepSeek/Moonshot, `xhigh` for xAI, `high` for
+Google), and provider caches are keyed by base URL *and* credential, so two
+configs never share a provider.
 
 ## Usage (browser)
 

@@ -44,6 +44,16 @@ tell --no-exec d "run ls" # never executes requested commands
 
 `-y`/`--yes` is intended for disposable or sandboxed environments. The CLI blocks known high-risk command patterns, but this is a heuristic guard, not a security boundary. Do not use automatic execution in production, critical hosts, or trusted workstations unless it is contained by a real sandbox such as a container or VM.
 
+High-risk commands always ask, even with `-y`, and so does any command touching a
+path outside the working directory (reads included). `--require-approval` makes
+that posture explicit: with `-y` safe commands run directly and high-risk ones
+still ask; without `-y` every command asks, same as the default.
+
+```bash
+tell --require-approval "fix the failing test"   # ask for everything
+tell -y --require-approval "fix the failing test"  # auto-run safe, ask risky
+```
+
 Persistent context across sessions:
 
 ```bash
@@ -53,6 +63,30 @@ tell -c "now add a users table migration"   # remembers the previous message
 
 Context is stored per working directory and model under `~/.ai/tell_context`.
 Without `-c`, each invocation starts fresh.
+
+Name a context with `--ctx` instead of the per-directory default. The first word
+of the value is the ref (`@N` by recency, `%id` by name) and the rest is the
+prompt for that context:
+
+```bash
+tell --ctx %myproj "remember the deploy steps"    # use-or-create the named context
+tell --ctx %myproj "now write the migration"      # same context, keeps the thread
+tell --ctx @0 "and what about staging?"           # the most recent context
+tell --ctx %myproj -n "start over"                # -n resets it, even if it exists
+```
+
+A bare `--ctx` with no ref is prompt text for the default context (same as `-c`),
+so `tell --ctx "just this"` needs no extra flag. Full grammar: `docs/cli/context.md`.
+
+Browse saved contexts and past conversations without a model call, an API key or
+network access:
+
+```bash
+tell -l                     # list contexts (@N) and conversations (%N)
+tell -l @0                  # reprint one context
+tell -l %3                  # reprint one conversation
+tell -l postgres            # search both stores
+```
 
 Multi-step chain mode — the assistant can run a command, see its output, and continue with follow-up commands until it reaches a final answer:
 
@@ -80,14 +114,31 @@ git diff --staged | tell --input "review this change"
 
 Tell logs conversations under `~/.ai/tell_history`.
 
+Launch the browser sandbox instead of the one-shot prompt — it opens a terminal,
+file explorer and chat anchored to a directory:
+
+```bash
+tell -w                              # sandbox in the current directory
+tell -w --cwd ~/project -m s --stream
+```
+
+`--stream`, `--think`, `--chain`, `-y`, `--no-exec` and `--require-approval` are
+forwarded to it. See [`@tell-ai/web`](../web/README.md).
+
 ### Flag interactions
 
 | Flags | Reads context? | Deletes? | Writes? | Loop? |
 |-------|--------|---------|--------|------|
 | *(none)* | no | yes | no | no |
-| `-c` | yes | no | yes (final) | no |
+| `-c` / bare `--ctx` | yes (default file) | no | yes | no |
+| `--ctx @N` / `--ctx %id` | yes (that file) | no | yes | no |
 | `--chain` | no | yes | no | yes (8 rounds) |
 | `-c --chain` | yes | no | yes (incremental) | yes (8 rounds) |
+| `-l` / `--history` | no | no | no | no |
+| `-y` / `--require-approval` / `--no-exec` | no | no | no | no |
+
+`--ctx` cannot be combined with `-c`. `--stream` and `--think` only change what
+is printed: the log, the saved context and `<RUN>` extraction stay identical.
 
 ### Building from source
 
@@ -111,8 +162,10 @@ export DEEPSEEK_API_KEY="..."
 export CEREBRAS_API_KEY="..."
 export MOONSHOTAI_API_KEY="..."
 export OPENROUTER_API_KEY="..."
-export META_API_KEY="..."
-export MIMO_API_KEY="..."
+export ALIBABA_API_KEY="..."       # Qwen
+export ZHIPU_API_KEY="..."         # Z.ai GLM
+export META_API_KEY="..."          # Meta Llama API
+export MIMO_API_KEY="..."          # Xiaomi MiMo
 ```
 
 Token files (fallback):
@@ -126,6 +179,8 @@ Token files (fallback):
 ~/.config/cerebras.token
 ~/.config/moonshotai.token
 ~/.config/openrouter.token
+~/.config/alibaba.token
+~/.config/zhipu.token
 ~/.config/meta.token
 ~/.config/mimo.token
 ```
@@ -145,6 +200,8 @@ Run the prompt-injection and command-execution safety checks with:
 ```bash
 npm run test:security
 npm run test:mentions   # @path expansion + outside-cwd read gate
+npm run test:context    # --ctx grammar + --history
+npm run test:stream     # --stream / --think
 ```
 
 License

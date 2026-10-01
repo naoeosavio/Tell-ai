@@ -19,7 +19,7 @@ npm start        # node dist/server.js (production)
 ## CLI
 
 ```sh
-tell-web --cwd <path> --prompt <text> -m <model> --chain --stream --think -y/--no-exec
+tell-web --cwd <path> --prompt <text> -m <model> --chain --stream --think --require-approval -y/--no-exec
 tell-web --help
 ```
 
@@ -34,8 +34,9 @@ tell-web --help
 | `--chain` | off | Continue after output until final answer |
 | `--stream` | off | Seed the Stream toggle (Settings → Agent Runtime) and keep NDJSON as the server fallback |
 | `--think` | off | Start reasoning headers expanded (manual collapse/expand persists) |
-| `-y, --yes` | off | Auto-confirm execution |
-| `--no-exec` | off | Disable automatic execution |
+| `--require-approval` | off | Seed the Require Approval toggle (classification stays client-side) |
+| `-y, --yes` | off | Seed Auto-Run on the first visit (off by default: a fresh browser never auto-executes) |
+| `--no-exec` | off | Server-enforced: `/api/execute` returns `403` and the No-Exec toggle is locked |
 | `-h, --help` | — | Help |
 
 ## Streaming (`--stream`)
@@ -61,7 +62,7 @@ label). Log, context and `<RUN>` extraction are identical in both modes.
 
 The chat header has execution toggles (client-side). Their last choice
 persists in `localStorage` across page reloads; server flags (`--chain`, `-y`,
-`--no-exec`) seed the default on the first visit only:
+`--require-approval`, `--no-exec`) seed the default on the first visit only:
 
 | Toggle | Effect |
 |---|---|
@@ -70,7 +71,10 @@ persists in `localStorage` across page reloads; server flags (`--chain`, `-y`,
 | `Require Approval` | Risky commands show the confirmation card; safe ones follow Auto-Run (run directly when on, confirm card when off) |
 | `No-Exec` | Nothing is ever executed — the confirm card records what would have run |
 
-Precedence: `No-Exec` > per-command risk gate. Enabling No-Exec switches
+Auto-Run is **opt-in**: unless the server was started with `-y`, a fresh browser
+asks before every command. Precedence: `No-Exec` > per-command risk gate, and
+`--no-exec` is a server invariant (`/api/execute` answers `403`), so the locked
+toggle wins over an older stored Auto-Run preference. Enabling No-Exec switches
 Auto-Run off. With `--chain`, each held command still pauses for approval
 (Require Approval) or is recorded as not-run (No-Exec) while the loop continues
 with the feedback. The risk gate is fail-closed: if classification fails, the
@@ -100,9 +104,7 @@ the same log. The choice persists in `theme-config-v3` (`customAgentFeed`).
 
 ## Envs (see `.env.example`)
 
-`PORT`, `TELL_MODEL`, `TELL_TOKEN` (`Bearer` auth on `/api/*` except the public
-`GET /api/auth/status` + `POST /api/auth/verify`, and `?token=` on WS;
-token lives only in browser memory — retyped on every connection) +
+`PORT`, `TELL_MODEL`, `TELL_TOKEN` (enables the secure mode below),
 `TELL_ALLOWED_HOSTS` (comma-separated public hostnames for tunnels/proxies;
 `localhost` and IP literals are always accepted) + vendor keys (`GEMINI_API_KEY`,
 `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XAI_API_KEY`, `DEEPSEEK_API_KEY`,
@@ -120,6 +122,55 @@ process or a foreign foreground process is detected (Linux procfs); explicit
 pane/tab close still kills immediately. Daemonized (double-forked) processes
 are not detected.
 
+## Secure mode (`TELL_TOKEN`)
+
+Without `TELL_TOKEN` the sandbox is open to anything that can reach the port, so
+it is meant for `127.0.0.1` and nothing more. Set a token to put the whole
+surface behind one credential:
+
+```sh
+openssl rand -hex 32                      # keep the output
+export TELL_TOKEN=<paste it here>
+tell-web --cwd ~/project
+# open http://127.0.0.1:3000 and paste the token in the login screen
+```
+
+- **API** — every `/api/*` route requires `Authorization: Bearer <token>`,
+  including `/api/config` (it would otherwise leak `cwd` and the model). The
+  route match is case-insensitive, so `/API/config` needs the same token as
+  `/api/config`, and the comparison is constant-time. Missing or wrong token →
+  `401` plus `WWW-Authenticate: Bearer realm="tell-web"`.
+- **Bootstrap routes** — only `GET /api/auth/status` (tells the client whether a
+  token is required, so it can show the isolated login screen) and
+  `POST /api/auth/verify` are public. The verify endpoint is same-origin only
+  and rate-limited to 5 attempts per 15 min per IP; only failed or malformed
+  attempts count, so a reload with the correct token never locks you out.
+  `429` carries `Retry-After: 900`. The token itself is never logged.
+- **Browser** — the token lives in memory only (never `localStorage`), so every
+  reload asks for it again; file downloads go through the authenticated API
+  fetch path instead of a bare link.
+- **Terminal** — WebSocket upgrades cannot carry headers, so panes pass
+  `?token=<value>` on `/api/terminal` (same constant-time check).
+- **Children** — commands and PTY panes inherit a scrubbed environment without
+  `TELL_TOKEN`, provider keys, or loader-injection variables, so a
+  model-requested `<RUN>` cannot read the credential back out.
+
+### Host and origin checks (DNS rebinding)
+
+Independently of the token, the server only answers to hosts it recognizes:
+
+- `TELL_ALLOWED_HOSTS` lists the public hostnames you serve it under (tunnels,
+  reverse proxies). `localhost` and IP literals are always accepted, as is the
+  address bound with `--host`.
+- An unlisted `Host` is refused with `403 Forbidden: Host is not allowed` on both
+  HTTP and the terminal upgrade; a cross-site `Origin` is rejected on the WS
+  upgrade and on the auth endpoints. Without this, a malicious page on your
+  network could point a browser at the sandbox and ride your session
+  (DNS rebinding).
+
+Bind to `0.0.0.0` only together with both of these: `TELL_TOKEN` and
+`TELL_ALLOWED_HOSTS`.
+
 ## Endpoints `/api/*`
 
 | Method | Route | Notes |
@@ -133,7 +184,7 @@ are not detected.
 | GET | `/api/models` | Models/aliases + `keysStatus` per vendor |
 | GET | `/api/auth/status` | Public: `{authRequired}` only (drives the isolated login screen) |
 | POST | `/api/auth/verify` | Public + rate-limited (5/15min/IP): `{token}` → `200`/`401` generic/`429` + `Retry-After` |
-| GET | `/api/config` | `defaultModel`, `autoExecute`, `noExec`, `chain`, `yes`, `stream`, `think`, `cwd`, `initialPrompt` (requires auth when `TELL_TOKEN` is set) |
+| GET | `/api/config` | `defaultModel`, `autoExecute`, `requireApproval`, `noExec`, `chain`, `yes`, `stream`, `think`, `cwd`, `initialPrompt` (requires auth when `TELL_TOKEN` is set) |
 | GET | `/api/context` | Generated system prompt (tree + README + conventions) |
 | POST | `/api/tell` | `{messages, modelAlias?, systemPrompt?, stream?}` (400 invalid payload, 429); NDJSON event stream when `stream` is `true`, JSON otherwise. Missing `stream` falls back to the server's boot `--stream` |
 | GET/PUT | `/api/session` | Persisted state + server facts + live scrollbacks |
