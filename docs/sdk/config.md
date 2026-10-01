@@ -16,19 +16,19 @@ The SDK has **zero `node:*` imports and zero `process.env` reads**. It never cal
 | Slot | Vendors served |
 |---|---|
 | `openai` | `openai` (aliases `g/p/t/c/e/r`; also `vast`/`local`, which ignore the key) |
-| `anthropic` | `s`/`o`/`f` |
-| `google` | `i`/`j`/`l` |
+| `anthropic` | `s`/`o`/`f`/`h` |
+| `google` | `i`/`b`/`j`/`l` |
 | `xai` | `x` |
 | `deepseek` | `d`/`D` |
-| `cerebras` | Cerebras models (`gpt-oss-120b`, `gemma-4-31b`) |
+| `cerebras` | Cerebras models such as `gpt-oss-120b` |
 | `moonshotai` | `k`/`K` |
 | `openrouter` | raw ids containing `/` (no alias) |
-| `alibaba` | `a`/`at`/`al`/`af` |
+| `alibaba` | `a`/`at`/`af` |
 | `zhipu` | **`zai`** vendor (`z`/`zf`) — note the slot is `zhipu`, not `zai` (`VENDOR_KEY`, `models.ts:233-246`) |
 | `meta` | `m`/`mc` (Bearer auth, Responses API) |
 | `xiaomi` | `mi`/`mif` (sent as the `api-key` header, never as a bearer) |
 
-Keys are looked up only from `config.keys`; a vendor with no key builds a provider without one (e.g. self-hosted `vast`/`local`, or proxies that inject keys server-side).
+Keys are looked up only from `config.keys`. Missing keys use an explicit non-secret sentinel so Node/Bun providers cannot fall back to ambient environment credentials; self-hosted `vast`/`local` remain keyless.
 
 ## URLs (`SDKUrls`, `config.ts:16-30`)
 
@@ -96,6 +96,6 @@ OLLAMA_MODEL=qwen3 bun examples/sdk/custom-endpoint.ts # needs `ollama serve`
 
 ## Design contract (tests)
 
-`test/test-sdk.js` verifies: public export surface, spec parsing (aliases/fast/thinking budgets), the `MODELS` round-trip invariant (every spec re-parses to itself) and its 147-entry size, offline `get_model` handles — including that `vast`/`local` reject an empty config with the `urls.*` error — plus localhost wire tests pinning Meta to `/v1/responses` with a bearer and `forceReasoning`, and Xiaomi to `/v1/chat/completions` with an `api-key` header and no `Authorization`. The exec/no-exec system prompts and tag helpers are covered there as well.
+`test/test-sdk.js` verifies: public export surface, spec parsing (aliases/fast/thinking budgets), the `MODELS` round-trip invariant (every spec re-parses to itself) and its 142-entry size, offline `get_model` handles — including that `vast`/`local` reject an empty config with the `urls.*` error — plus localhost wire tests pinning Meta to `/v1/responses` with a bearer and `forceReasoning`, and Xiaomi to `/v1/chat/completions` with an `api-key` header and no `Authorization`. The exec/no-exec system prompts and tag helpers are covered there as well.
 
 Sources: `config.ts:1-32`, `models.ts:208-219`, `models.ts:528-541`, `tsup.config.ts:1-85`, `src/shims/node.cjs:1-107`.

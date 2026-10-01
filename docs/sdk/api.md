@@ -65,7 +65,7 @@ const result = await generateText({ model: handle.model, prompt: 'hi', reasoning
 
 ## `MODELS`
 
-`models.ts:28`. The 147-entry alias table mapping short aliases to full `vendor:model:thinking` specs (e.g. `g` → `openai:gpt-6-sol:medium`). The table is the source of truth for the CLI's `tell -m --help` output.
+`models.ts:28`. The 142-entry alias table mapping short aliases to full `vendor:model:thinking` specs (e.g. `g` → `openai:gpt-6.1-sol:medium`). The table is the source of truth for the CLI's `tell -m --help` output.
 
 ## `get_system_prompt(options)` → `string`
 
@@ -83,7 +83,8 @@ const result = await generateText({ model: handle.model, prompt: 'hi', reasoning
 | `strip_markdown_code_blocks(text)` | Removes ``` fenced code blocks (so `<RUN>` tags hidden inside them are never parsed). |
 | `strip_think_tags(text)` | Removes ` thinking…</think>` blocks and trims. |
 | `strip_run_tags(text)` | Removes `<RUN>…</RUN>` blocks and trims. |
-| `extract_runs(text)` | `{ scripts, visible }`: strips code blocks first, extracts each `<RUN>` script (trimmed, empties filtered), and returns the visible text with run blocks removed. |
+| `extract_runs(text)` | `{ scripts, visible }`: strips code blocks first, extracts the first `<RUN>` script, and returns visible text with every run block removed. |
+| `sanitize_reasoning(text)` | Neutralizes angle brackets in model reasoning so it cannot forge `<think>`/`<RUN>` boundaries. |
 
 ## `summarize_context(ai, text)` → `Promise<string>`
 

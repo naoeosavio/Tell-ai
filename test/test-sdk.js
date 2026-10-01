@@ -38,7 +38,7 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
   // resolve_model_spec: aliases, fast mode, thinking budgets, full specs.
   assert.deepStrictEqual(sdk.resolve_model_spec('g'), {
     vendor: 'openai',
-    model: 'gpt-6-sol',
+    model: 'gpt-6.1-sol',
     thinking: 'medium',
     fast: false,
   });
@@ -46,12 +46,20 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
   assert.strictEqual(dot.fast, true);
   assert.strictEqual(dot.vendor, 'openai');
   assert.strictEqual(sdk.resolve_model_spec('g+').thinking, 'high');
-  assert.strictEqual(sdk.resolve_model_spec('g--').thinking, 'none');
+  assert.strictEqual(sdk.resolve_model_spec('g--').thinking, 'low');
   for (const [alias, vendor, model] of [
-    ['g', 'openai', 'gpt-6-sol'],
+    ['g', 'openai', 'gpt-6.1-sol'],
+    ['p', 'openai', 'gpt-6.1-sol-pro'],
+    ['e', 'openai', 'gpt-6-astra'],
+    ['r', 'openai', 'gpt-6-astra-pro'],
     ['c', 'openai', 'gpt-6-luna'],
-    ['o', 'anthropic', 'claude-opus-5.5'],
+    ['s', 'anthropic', 'claude-sonnet-5-5'],
+    ['o', 'anthropic', 'claude-opus-5-5'],
+    ['f', 'anthropic', 'claude-fable-5-1'],
+    ['h', 'anthropic', 'claude-haiku-4-5'],
+    ['i', 'google', 'gemini-3.1-pro'],
     ['x', 'xai', 'grok-4.7'],
+    ['at', 'alibaba', 'qwen3.8-27b'],
     ['m', 'meta', 'muse-spark-1.3'],
     ['mc', 'meta', 'muse-spark-1.3-contributor'],
     ['mi', 'xiaomi', 'mimo-v2.6-pro'],
@@ -61,6 +69,7 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
     assert.strictEqual(resolved.vendor, vendor, alias);
     assert.strictEqual(resolved.model, model, alias);
   }
+
   for (const [prefix, expected] of [
     ['m', ['none', 'low', 'medium', 'high', 'max']],
     ['mc', ['none', 'low', 'medium', 'high', 'max']],
@@ -101,12 +110,12 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
   assert.strictEqual(sdk.resolve_model_spec('d').model, 'deepseek-flash');
   assert.strictEqual(sdk.resolve_model_spec('deepseek:deepseek-v4-flash:high').model, 'deepseek-v4-flash');
   assert.strictEqual(sdk.resolve_model_spec('deepseek:deepseek-v4-flash-vision-exp:high').model, 'deepseek-v4-flash-vision-exp');
-  assert.strictEqual(sdk.resolve_model_spec('openai:gpt-6-sol:medium:fast').fast, true);
+  assert.strictEqual(sdk.resolve_model_spec('openai:gpt-6.1-sol:medium:fast').fast, true);
   assert.throws(() => sdk.resolve_model_spec(''), /must be provided/);
   assert.throws(() => sdk.resolve_model_spec('notamodelatall'), /./);
 
   // MODELS table invariant: every alias value parses back through the resolver.
-  assert.strictEqual(Object.keys(sdk.MODELS).length, 147);
+  assert.strictEqual(Object.keys(sdk.MODELS).length, 142);
   for (const [alias, spec] of Object.entries(sdk.MODELS)) {
     if (!spec.includes(':')) continue; // thinking-level/vendor-name helpers, not model specs
     const resolved = sdk.resolve_model_spec(spec);
@@ -137,7 +146,7 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
 
   // Compat vendors (no native provider): handlers build offline via
   // OpenAI-compatible defaults, keys/URLs optional at construction.
-  for (const alias of ['l', 'x', 'd', 'D', 'K', 'k', 'a', 'zf', 'm', 'mc', 'mi', 'mif']) {
+  for (const alias of ['l', 'x', 'd', 'D', 'K', 'k', 'a', 'at', 'af', 'zf', 'h', 'm', 'mc', 'mi', 'mif']) {
     const compat_handle = await sdk.get_model(alias, EMPTY_CONFIG);
     assert.strictEqual(typeof compat_handle.model, 'object');
     assert.strictEqual(compat_handle.fast, false);
@@ -173,9 +182,15 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
   assert.deepStrictEqual((await sdk.get_model('d+', EMPTY_CONFIG)).providerOptions, {
     deepseek: { reasoningEffort: 'max' },
   });
-  assert.deepStrictEqual((await sdk.get_model('K+', EMPTY_CONFIG)).providerOptions, {
-    moonshotai: { reasoningEffort: 'max' },
-  });
+  for (const [alias, effort] of [
+    ['K-', 'low'],
+    ['K', 'high'],
+    ['K+', 'max'],
+  ]) {
+    assert.deepStrictEqual((await sdk.get_model(alias, EMPTY_CONFIG)).providerOptions, {
+      moonshotai: { reasoningEffort: effort },
+    });
+  }
   for (const alias of ['m', 'm+', 'm++', 'mc']) {
     assert.deepStrictEqual((await sdk.get_model(alias, EMPTY_CONFIG)).providerOptions, {
       openai: { forceReasoning: true },
@@ -396,7 +411,7 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
           id: 'msg_mock',
           type: 'message',
           role: 'assistant',
-          model: 'claude-sonnet-5',
+          model: 'claude-sonnet-5-5',
           content: [{ type: 'text', text: 'hi-max' }],
           stop_reason: 'end_turn',
           stop_sequence: null,
@@ -408,7 +423,7 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
   await new Promise((resolve) => anthropic_mock.listen(0, '127.0.0.1', resolve));
   process.on('warning', on_warning);
   try {
-    const claude = await sdk.create_ask_ai('anthropic:claude-sonnet-5:max', {
+    const claude = await sdk.create_ask_ai('anthropic:claude-sonnet-5-5:max', {
       keys: {},
       urls: { anthropic: `http://127.0.0.1:${anthropic_mock.address().port}/v1` },
     });

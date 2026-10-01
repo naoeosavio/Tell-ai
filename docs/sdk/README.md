@@ -5,7 +5,7 @@ Complete reference for the `@tell-ai/sdk` package (`packages/sdk/`): a browser-s
 | Page | Contents |
 |------|----------|
 | [api.md](api.md) | Full API reference: `create_ask_ai` / `ask` / `ask_stream`, `tell`, `get_model`, `resolve_model_spec`, `MODELS`, `get_system_prompt`, tag helpers, `summarize_context` |
-| [models.md](models.md) | Model spec format (`vendor:model:thinking`), 147 aliases, fast/dot mode, thinking budgets, vendor dispatch |
+| [models.md](models.md) | Model spec format (`vendor:model:thinking`), 142 aliases, fast/dot mode, thinking budgets, vendor dispatch |
 | [streaming.md](streaming.md) | `AskStream` events (`reasoning`, `reasoning_end`, `text`), lazy iteration, Node/browser consumption |
 | [config.md](config.md) | `SDKConfig` key/URL injection, browser-safety contract, CORS proxies |
 | [imports.md](imports.md) | Build variants: Node ESM/CJS, browser ESM, browser global (IIFE) |
@@ -20,5 +20,5 @@ Complete reference for the `@tell-ai/sdk` package (`packages/sdk/`): a browser-s
 ## Conventions used in these pages
 
 * `ask.ts:<line>` refers to `packages/sdk/src/ask.ts`, `models.ts:<line>` to `packages/sdk/src/models.ts`, and so on.
-* The alias table lives in `MODELS` (`models.ts:26-181`); the snapshot in `../usage.md` may lag it. Line references are approximate — the exports themselves are authoritative.
+* The alias table lives in `MODELS` (`models.ts:28`); the snapshot in `../usage.md` may lag it. Line references are approximate — the exports themselves are authoritative.
 * The SDK never reads `process.env`; every call takes an injected `SDKConfig` (`config.ts:29`).
