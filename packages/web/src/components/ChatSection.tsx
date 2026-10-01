@@ -123,10 +123,12 @@ const KEYED_VENDORS = new Set([
   'openrouter',
   'moonshotai',
   'cerebras',
+  'alibaba',
+  'zai',
   'meta',
   'xiaomi',
 ]);
-const VENDOR_KEY_ALIASES: Record<string, string> = { google: 'google' };
+const VENDOR_KEY_ALIASES: Record<string, string> = { google: 'google', zai: 'zhipu' };
 
 // Autoscroll only sticks when the user is already this close to the bottom
 const NEAR_BOTTOM_PX = 80;

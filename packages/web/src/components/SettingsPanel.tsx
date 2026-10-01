@@ -94,6 +94,8 @@ const VENDOR_LABELS: Record<string, string> = {
   cerebras: 'Cerebras',
   moonshotai: 'Moonshot AI',
   openrouter: 'OpenRouter',
+  alibaba: 'Alibaba Qwen',
+  zhipu: 'Z.ai GLM',
   meta: 'Meta',
   xiaomi: 'Xiaomi MiMo',
 };

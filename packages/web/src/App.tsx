@@ -88,6 +88,8 @@ const KEYED_VENDORS = new Set([
   'openrouter',
   'moonshotai',
   'cerebras',
+  'alibaba',
+  'zai',
   'meta',
   'xiaomi',
 ]);
@@ -156,7 +158,11 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
     anthropic: false,
     xai: false,
     deepseek: false,
+    cerebras: false,
+    moonshotai: false,
     openrouter: false,
+    alibaba: false,
+    zhipu: false,
     meta: false,
     xiaomi: false,
   });
