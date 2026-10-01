@@ -22,16 +22,16 @@ tell -m deepseek:deepseek-v4-pro:medium "run ls -la"   # full spec
 ```
 Alias  Model
 -----  ------------------------------------------------
-g--    openai:gpt-6-sol:none
-g-     openai:gpt-6-sol:low
-g      openai:gpt-6-sol:medium
-g+     openai:gpt-6-sol:high
-g++    openai:gpt-6-sol:max
-G      openai:gpt-6-sol:high
-p      openai:gpt-5.6-sol-pro:medium
-p+     openai:gpt-5.6-sol-pro:high
-p++    openai:gpt-5.6-sol-pro:max
-P      openai:gpt-5.6-sol-pro:high
+g--    openai:gpt-6.1-sol:low
+g-     openai:gpt-6.1-sol:low
+g      openai:gpt-6.1-sol:medium
+g+     openai:gpt-6.1-sol:high
+g++    openai:gpt-6.1-sol:max
+G      openai:gpt-6.1-sol:high
+p      openai:gpt-6.1-sol-pro:medium
+p+     openai:gpt-6.1-sol-pro:high
+p++    openai:gpt-6.1-sol-pro:max
+P      openai:gpt-6.1-sol-pro:high
 t--    openai:gpt-5.6-terra:none
 t-     openai:gpt-5.6-terra:low
 t      openai:gpt-5.6-terra:medium
@@ -44,40 +44,41 @@ c      openai:gpt-6-luna:medium
 c+     openai:gpt-6-luna:high
 c++    openai:gpt-6-luna:max
 C      openai:gpt-6-luna:high
-e--    openai:gpt-6-astra:none
+e--    openai:gpt-6-astra:low
 e-     openai:gpt-6-astra:low
 e      openai:gpt-6-astra:medium
 e+     openai:gpt-6-astra:high
 e++    openai:gpt-6-astra:max
 E      openai:gpt-6-astra:high
-r--    openai:gpt-6-astra-pro:none
+r--    openai:gpt-6-astra-pro:low
 r-     openai:gpt-6-astra-pro:low
 r      openai:gpt-6-astra-pro:medium
 r+     openai:gpt-6-astra-pro:high
 r++    openai:gpt-6-astra-pro:max
 R      openai:gpt-6-astra-pro:high
-s--    anthropic:claude-sonnet-5:none
-s-     anthropic:claude-sonnet-5:low
-s      anthropic:claude-sonnet-5:medium
-s+     anthropic:claude-sonnet-5:high
-s++    anthropic:claude-sonnet-5:max
-S      anthropic:claude-sonnet-5:high
-o--    anthropic:claude-opus-5.5:none
-o-     anthropic:claude-opus-5.5:low
-o      anthropic:claude-opus-5.5:medium
-o+     anthropic:claude-opus-5.5:high
-o++    anthropic:claude-opus-5.5:max
-O      anthropic:claude-opus-5.5:high
-f--    anthropic:claude-fable-5.1:none
-f-     anthropic:claude-fable-5.1:low
-f      anthropic:claude-fable-5.1:medium
-f+     anthropic:claude-fable-5.1:high
-f++    anthropic:claude-fable-5.1:max
-F      anthropic:claude-fable-5.1:high
-i-     google:gemini-3.1-pro-preview:low
-i      google:gemini-3.1-pro-preview:medium
-i+     google:gemini-3.1-pro-preview:high
-I      google:gemini-3.1-pro-preview:high
+s--    anthropic:claude-sonnet-5-5:none
+s-     anthropic:claude-sonnet-5-5:low
+s      anthropic:claude-sonnet-5-5:medium
+s+     anthropic:claude-sonnet-5-5:high
+s++    anthropic:claude-sonnet-5-5:max
+S      anthropic:claude-sonnet-5-5:high
+o--    anthropic:claude-opus-5-5:none
+o-     anthropic:claude-opus-5-5:low
+o      anthropic:claude-opus-5-5:medium
+o+     anthropic:claude-opus-5-5:high
+o++    anthropic:claude-opus-5-5:max
+O      anthropic:claude-opus-5-5:high
+f--    anthropic:claude-fable-5-1:none
+f-     anthropic:claude-fable-5-1:low
+f      anthropic:claude-fable-5-1:medium
+f+     anthropic:claude-fable-5-1:high
+f++    anthropic:claude-fable-5-1:max
+F      anthropic:claude-fable-5-1:high
+h      anthropic:claude-haiku-4-5:none
+i-     google:gemini-3.1-pro:low
+i      google:gemini-3.1-pro:medium
+i+     google:gemini-3.1-pro:high
+I      google:gemini-3.1-pro:high
 j--    google:gemini-3.5-flash-lite:none
 j-     google:gemini-3.5-flash-lite:low
 j      google:gemini-3.5-flash-lite:medium
@@ -89,6 +90,7 @@ l      google:gemini-3.8-flash:medium
 l+     google:gemini-3.8-flash:high
 l++    google:gemini-3.8-flash:max
 L      google:gemini-3.8-flash:high
+
 x--    xai:grok-4.7:none
 x-     xai:grok-4.7:low
 x      xai:grok-4.7:medium
@@ -103,18 +105,13 @@ a      alibaba:qwen3.8-max:medium
 a+     alibaba:qwen3.8-max:high
 a++    alibaba:qwen3.8-max:xhigh
 A      alibaba:qwen3.8-max:high
-at--   alibaba:qwen3.8-2.4t-a95b:none
-at-    alibaba:qwen3.8-2.4t-a95b:low
-at     alibaba:qwen3.8-2.4t-a95b:medium
-at+    alibaba:qwen3.8-2.4t-a95b:high
-at++   alibaba:qwen3.8-2.4t-a95b:xhigh
-AT     alibaba:qwen3.8-2.4t-a95b:high
-al--   alibaba:qwen3.8-27b:none
-al-    alibaba:qwen3.8-27b:low
-al     alibaba:qwen3.8-27b:medium
-al+    alibaba:qwen3.8-27b:high
-al++   alibaba:qwen3.8-27b:xhigh
-AL     alibaba:qwen3.8-27b:high
+at--   alibaba:qwen3.8-27b:none
+at-    alibaba:qwen3.8-27b:low
+at     alibaba:qwen3.8-27b:medium
+at+    alibaba:qwen3.8-27b:high
+at++   alibaba:qwen3.8-27b:xhigh
+AT     alibaba:qwen3.8-27b:high
+
 af--   alibaba:qwen3.8-flash:none
 af-    alibaba:qwen3.8-flash:low
 af     alibaba:qwen3.8-flash:medium
@@ -142,6 +139,7 @@ zf+    zai:glm-5.3-flash:high
 zf++   zai:glm-5.3-flash:max
 ZF     zai:glm-5.3-flash:high
 k      moonshotai:kimi-k2.7-code:none
+
 K-     moonshotai:kimi-k3:low
 K      moonshotai:kimi-k3:high
 K+     moonshotai:kimi-k3:max
@@ -177,7 +175,7 @@ Full specs are also accepted: vendor:model[:thinking]
 
 **Fast mode**: prefix with `.` (e.g. `.g`) to disable reasoning tokens. Append `:fast` to full specs.
 
-Full specs use the format `vendor:model:thinking` (e.g. `openai:gpt-6-sol:high`).
+Full specs use the format `vendor:model:thinking` (e.g. `openai:gpt-6.1-sol:high`).
 
 List all aliases from the CLI:
 
