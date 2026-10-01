@@ -1,11 +1,11 @@
 {
   "name": "@tell-ai/web",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "type": "module",
   "description": "Tell AI web interface — installs the tell CLI alongside it",
   "license": "GPL-3.0",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "bin": {
     "tell-web": "dist/server.js"
@@ -24,7 +24,7 @@
     "test": "node --test ../../test/test-web-backend.js && node --test ../../test/test-web-sandbox.js"
   },
   "dependencies": {
-    "@tell-ai/sdk": "^0.2.2",
+    "@tell-ai/sdk": "^0.3.0",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
     "commander": "^15.0.0",
