@@ -26,17 +26,17 @@ export interface ModelHandle {
 }
 
 export const MODELS: Record<string, string> = {
-  'g--': 'openai:gpt-6-sol:none',
-  'g-': 'openai:gpt-6-sol:low',
-  g: 'openai:gpt-6-sol:medium',
-  'g+': 'openai:gpt-6-sol:high',
-  'g++': 'openai:gpt-6-sol:max',
-  G: 'openai:gpt-6-sol:high',
+  'g--': 'openai:gpt-6.1-sol:low',
+  'g-': 'openai:gpt-6.1-sol:low',
+  g: 'openai:gpt-6.1-sol:medium',
+  'g+': 'openai:gpt-6.1-sol:high',
+  'g++': 'openai:gpt-6.1-sol:max',
+  G: 'openai:gpt-6.1-sol:high',
 
-  p: 'openai:gpt-5.6-sol-pro:medium',
-  'p+': 'openai:gpt-5.6-sol-pro:high',
-  'p++': 'openai:gpt-5.6-sol-pro:max',
-  P: 'openai:gpt-5.6-sol-pro:high',
+  p: 'openai:gpt-6.1-sol-pro:medium',
+  'p+': 'openai:gpt-6.1-sol-pro:high',
+  'p++': 'openai:gpt-6.1-sol-pro:max',
+  P: 'openai:gpt-6.1-sol-pro:high',
 
   't--': 'openai:gpt-5.6-terra:none',
   't-': 'openai:gpt-5.6-terra:low',
@@ -52,45 +52,47 @@ export const MODELS: Record<string, string> = {
   'c++': 'openai:gpt-6-luna:max',
   C: 'openai:gpt-6-luna:high',
 
-  'e--': 'openai:gpt-6-astra:none',
+  'e--': 'openai:gpt-6-astra:low',
   'e-': 'openai:gpt-6-astra:low',
   e: 'openai:gpt-6-astra:medium',
   'e+': 'openai:gpt-6-astra:high',
   'e++': 'openai:gpt-6-astra:max',
   E: 'openai:gpt-6-astra:high',
 
-  'r--': 'openai:gpt-6-astra-pro:none',
+  'r--': 'openai:gpt-6-astra-pro:low',
   'r-': 'openai:gpt-6-astra-pro:low',
   r: 'openai:gpt-6-astra-pro:medium',
   'r+': 'openai:gpt-6-astra-pro:high',
   'r++': 'openai:gpt-6-astra-pro:max',
   R: 'openai:gpt-6-astra-pro:high',
 
-  's--': 'anthropic:claude-sonnet-5:none',
-  's-': 'anthropic:claude-sonnet-5:low',
-  s: 'anthropic:claude-sonnet-5:medium',
-  's+': 'anthropic:claude-sonnet-5:high',
-  's++': 'anthropic:claude-sonnet-5:max',
-  S: 'anthropic:claude-sonnet-5:high',
+  's--': 'anthropic:claude-sonnet-5-5:none',
+  's-': 'anthropic:claude-sonnet-5-5:low',
+  s: 'anthropic:claude-sonnet-5-5:medium',
+  's+': 'anthropic:claude-sonnet-5-5:high',
+  's++': 'anthropic:claude-sonnet-5-5:max',
+  S: 'anthropic:claude-sonnet-5-5:high',
 
-  'o--': 'anthropic:claude-opus-5.5:none',
-  'o-': 'anthropic:claude-opus-5.5:low',
-  o: 'anthropic:claude-opus-5.5:medium',
-  'o+': 'anthropic:claude-opus-5.5:high',
-  'o++': 'anthropic:claude-opus-5.5:max',
-  O: 'anthropic:claude-opus-5.5:high',
+  'o--': 'anthropic:claude-opus-5-5:none',
+  'o-': 'anthropic:claude-opus-5-5:low',
+  o: 'anthropic:claude-opus-5-5:medium',
+  'o+': 'anthropic:claude-opus-5-5:high',
+  'o++': 'anthropic:claude-opus-5-5:max',
+  O: 'anthropic:claude-opus-5-5:high',
 
-  'f--': 'anthropic:claude-fable-5.1:none',
-  'f-': 'anthropic:claude-fable-5.1:low',
-  f: 'anthropic:claude-fable-5.1:medium',
-  'f+': 'anthropic:claude-fable-5.1:high',
-  'f++': 'anthropic:claude-fable-5.1:max',
-  F: 'anthropic:claude-fable-5.1:high',
+  'f--': 'anthropic:claude-fable-5-1:none',
+  'f-': 'anthropic:claude-fable-5-1:low',
+  f: 'anthropic:claude-fable-5-1:medium',
+  'f+': 'anthropic:claude-fable-5-1:high',
+  'f++': 'anthropic:claude-fable-5-1:max',
+  F: 'anthropic:claude-fable-5-1:high',
 
-  'i-': 'google:gemini-3.1-pro-preview:low',
-  i: 'google:gemini-3.1-pro-preview:medium',
-  'i+': 'google:gemini-3.1-pro-preview:high',
-  I: 'google:gemini-3.1-pro-preview:high',
+  h: 'anthropic:claude-haiku-4-5:none',
+
+  'i-': 'google:gemini-3.1-pro:low',
+  i: 'google:gemini-3.1-pro:medium',
+  'i+': 'google:gemini-3.1-pro:high',
+  I: 'google:gemini-3.1-pro:high',
 
   'j--': 'google:gemini-3.5-flash-lite:none',
   'j-': 'google:gemini-3.5-flash-lite:low',
@@ -123,19 +125,12 @@ export const MODELS: Record<string, string> = {
   'a++': 'alibaba:qwen3.8-max:xhigh',
   A: 'alibaba:qwen3.8-max:high',
 
-  'at--': 'alibaba:qwen3.8-2.4t-a95b:none',
-  'at-': 'alibaba:qwen3.8-2.4t-a95b:low',
-  at: 'alibaba:qwen3.8-2.4t-a95b:medium',
-  'at+': 'alibaba:qwen3.8-2.4t-a95b:high',
-  'at++': 'alibaba:qwen3.8-2.4t-a95b:xhigh',
-  AT: 'alibaba:qwen3.8-2.4t-a95b:high',
-
-  'al--': 'alibaba:qwen3.8-27b:none',
-  'al-': 'alibaba:qwen3.8-27b:low',
-  al: 'alibaba:qwen3.8-27b:medium',
-  'al+': 'alibaba:qwen3.8-27b:high',
-  'al++': 'alibaba:qwen3.8-27b:xhigh',
-  AL: 'alibaba:qwen3.8-27b:high',
+  'at--': 'alibaba:qwen3.8-27b:none',
+  'at-': 'alibaba:qwen3.8-27b:low',
+  at: 'alibaba:qwen3.8-27b:medium',
+  'at+': 'alibaba:qwen3.8-27b:high',
+  'at++': 'alibaba:qwen3.8-27b:xhigh',
+  AT: 'alibaba:qwen3.8-27b:high',
 
   'af--': 'alibaba:qwen3.8-flash:none',
   'af-': 'alibaba:qwen3.8-flash:low',
@@ -245,7 +240,7 @@ const VENDOR_KEY: Record<string, keyof SDKKeys> = {
   xiaomi: 'xiaomi',
 };
 
-const CEREBRAS_MODELS = new Set(['gpt-oss-120b', 'gemma-4-31b']);
+const CEREBRAS_MODELS = new Set(['gpt-oss-120b']);
 
 function get_api_key(vendor: string, config: SDKConfig): string | undefined {
   const key_name = VENDOR_KEY[vendor];
@@ -298,8 +293,8 @@ function infer_vendor(model: string): string {
   throw new Error(`Unsupported vendor for model "${model}"`);
 }
 
-// Provider caches are keyed by effective base URL ('' = provider default),
-// so different endpoints in one process never share a stale provider.
+// Provider caches are keyed by effective base URL and credential token,
+// so different endpoints or credentials never share a stale provider.
 const OPENAI_PROVIDERS: Record<string, any> = {};
 const ANTHROPIC_PROVIDERS: Record<string, any> = {};
 const GOOGLE_PROVIDERS: Record<string, any> = {};
@@ -717,6 +712,9 @@ function resolve_reasoning(
   if ((OPENAI_WIRE_VENDORS as Record<string, OpenAiWireSpec | undefined>)[vendor]?.force_reasoning) {
     return { reasoning: mapped, providerOptions: { openai: { forceReasoning: true } } };
   }
+  if (vendor === 'moonshotai' && ['low', 'high', 'max'].includes(mapped)) {
+    return { reasoning: mapped, providerOptions: { moonshotai: { reasoningEffort: mapped } } };
+  }
   if (mapped !== 'max') return { reasoning: mapped };
   switch (vendor) {
     case 'anthropic':
@@ -726,8 +724,6 @@ function resolve_reasoning(
       };
     case 'deepseek':
       return { reasoning: 'max', providerOptions: { deepseek: { reasoningEffort: 'max' } } };
-    case 'moonshotai':
-      return { reasoning: 'max', providerOptions: { moonshotai: { reasoningEffort: 'max' } } };
     case 'xai':
       // Grok tops out at `xhigh` (kept verbatim on grok-4.7, else `high`).
       return { reasoning: 'xhigh' };
