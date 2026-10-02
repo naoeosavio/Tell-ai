@@ -6,7 +6,8 @@ import { createMoonshotAI } from '@ai-sdk/moonshotai';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createXai } from '@ai-sdk/xai';
-import type { SDKConfig, SDKKeys, SDKUrls } from './config';
+import type { SDKConfig, SDKKeys, SDKUrls, WireApi } from './config';
+import { CUSTOM_VENDOR, custom_headers, resolve_wire } from './custom';
 
 export type ThinkingLevel = 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'auto';
 
@@ -223,6 +224,7 @@ const SUPPORTED_VENDORS = new Set([
   'zai',
   'meta',
   'xiaomi',
+  CUSTOM_VENDOR,
 ]);
 
 const VENDOR_KEY: Record<string, keyof SDKKeys> = {
@@ -238,6 +240,7 @@ const VENDOR_KEY: Record<string, keyof SDKKeys> = {
   zai: 'zhipu',
   meta: 'meta',
   xiaomi: 'xiaomi',
+  custom: 'custom',
 };
 
 const CEREBRAS_MODELS = new Set(['gpt-oss-120b']);
@@ -366,6 +369,9 @@ function normalize_thinking(raw: string): ThinkingLevel | null {
   return VALID_THINKING.has(normalized) ? (normalized as ThinkingLevel) : null;
 }
 
+/** Vendor name accepted as a bare spec (`-m custom`), with the model from config. */
+const VENDOR_ONLY_SPECS = new Set<string>([CUSTOM_VENDOR]);
+
 function resolve_single_part(term: string, fast: boolean): ResolvedModelSpec {
   const alias = MODELS[term];
   if (alias) {
@@ -380,6 +386,11 @@ function resolve_single_part(term: string, fast: boolean): ResolvedModelSpec {
       thinking: 'auto',
       fast,
     };
+  }
+  if (VENDOR_ONLY_SPECS.has(term.toLowerCase())) {
+    // The model id is config-driven (`config.models.custom`); `get_model` fills
+    // it in, since the resolver is pure and has no config to read.
+    return { model: '', vendor: term.toLowerCase(), thinking: 'auto', fast };
   }
   return { model: term, vendor: infer_vendor(term), thinking: 'auto', fast };
 }
@@ -473,42 +484,95 @@ async function get_local_provider(baseUrl: string): Promise<any> {
   return LOCAL_PROVIDERS[baseUrl];
 }
 
+/** Everything needed to build (and cache) one wire-protocol model factory. */
+type WireProviderSpec = {
+  /** Cache/namespace identity — also the provider name reported to the API. */
+  name: string;
+  wire: WireApi;
+  base_url: string;
+  api_key: string | undefined;
+  /** Header carrying the API key when it is not a Bearer token. */
+  key_header?: string;
+  /** Extra headers merged into every request (e.g. a gateway's routing id). */
+  headers?: Record<string, string>;
+};
+
 /**
- * Builds a model factory for vendors that speak an OpenAI wire API but have no
- * dedicated AI SDK package — Chat Completions goes through
- * `@ai-sdk/openai-compatible`, while the Responses API reuses `@ai-sdk/openai`'s
- * `.responses()`. The factory is cached per vendor + API + base URL so different
- * endpoints in one process never share a stale provider. Vendors in
- * `OPENAI_WIRE_VENDORS` are described by that table; any other vendor without a
- * dedicated handler falls back to Chat Completions so future vendors only need
- * a URL to work.
+ * Deterministic signature of the extra headers, so two configs of the same
+ * endpoint that inject different headers get their own provider instead of
+ * silently reusing the first one's.
  */
-async function get_openai_wire_factory(vendor: string, config: SDKConfig): Promise<(model: string) => any> {
-  const wire = (OPENAI_WIRE_VENDORS as Record<string, OpenAiWireSpec | undefined>)[vendor];
-  const api = wire?.api ?? 'chat';
-  const url_key = wire?.url_key;
-  const base_url = (url_key ? config.urls[url_key] : undefined) ?? wire?.default_url ?? '';
-  const api_key = get_api_key(vendor, config);
-  const cache_key = provider_cache_key(vendor, `${api}::${base_url}`, api_key);
-  if (OPENAI_WIRE_PROVIDERS[cache_key]) return OPENAI_WIRE_PROVIDERS[cache_key];
-  if (api === 'responses') {
+function header_signature(headers: Record<string, string> | undefined): string {
+  return Object.entries(headers ?? {})
+    .sort(([left], [right]) => (left < right ? -1 : 1))
+    .map(([name, value]) => `${name}=${value}`)
+    .join(',');
+}
+
+/**
+ * Builds one cached model factory for a wire protocol. Responses reuses
+ * `@ai-sdk/openai`'s `.responses()`, Chat Completions goes through
+ * `@ai-sdk/openai-compatible` (or the vendor's own `api-key` header), and
+ * Messages through `@ai-sdk/anthropic` (which sends `x-api-key`). The cache key
+ * covers wire + URL + credential + headers so two endpoints never share a stale
+ * provider.
+ */
+function get_wire_provider(spec: WireProviderSpec): (model: string) => any {
+  const cache_key = provider_cache_key(
+    spec.name,
+    `${spec.wire}::${spec.base_url}::${header_signature(spec.headers)}`,
+    spec.api_key,
+  );
+  const cached = OPENAI_WIRE_PROVIDERS[cache_key];
+  if (cached) return cached;
+
+  let factory: (model: string) => any;
+  if (spec.wire === 'responses') {
     const provider = createOpenAI({
-      apiKey: injected_api_key(api_key),
-      baseURL: base_url,
-      name: vendor,
+      apiKey: injected_api_key(spec.api_key),
+      baseURL: spec.base_url,
+      name: spec.name,
+      ...(spec.headers ? { headers: spec.headers } : {}),
     });
-    OPENAI_WIRE_PROVIDERS[cache_key] = (model) => provider.responses(model);
+    factory = (model) => provider.responses(model);
+  } else if (spec.wire === 'messages') {
+    const provider = createAnthropic({
+      apiKey: injected_api_key(spec.api_key),
+      baseURL: spec.base_url,
+      ...(spec.headers ? { headers: spec.headers } : {}),
+    });
+    factory = (model) => provider(model);
   } else {
     const provider = createOpenAICompatible({
-      name: vendor,
-      ...(wire?.key_header
-        ? { ...(api_key ? { headers: { [wire.key_header]: api_key } } : {}) }
-        : { apiKey: injected_api_key(api_key) }),
-      baseURL: base_url,
+      name: spec.name,
+      ...(spec.key_header
+        ? { ...(spec.api_key ? { headers: { [spec.key_header]: spec.api_key } } : {}) }
+        : { apiKey: injected_api_key(spec.api_key) }),
+      baseURL: spec.base_url,
+      ...(spec.headers ? { headers: spec.headers } : {}),
     });
-    OPENAI_WIRE_PROVIDERS[cache_key] = (model) => provider(model);
+    factory = (model) => provider(model);
   }
-  return OPENAI_WIRE_PROVIDERS[cache_key];
+  OPENAI_WIRE_PROVIDERS[cache_key] = factory;
+  return factory;
+}
+
+/**
+ * Builds a model factory for vendors that speak an OpenAI wire API but have no
+ * dedicated AI SDK package. Vendors in `OPENAI_WIRE_VENDORS` are described by
+ * that table; any other vendor without a dedicated handler falls back to Chat
+ * Completions so future vendors only need a URL to work.
+ */
+function get_openai_wire_factory(vendor: string, config: SDKConfig): (model: string) => any {
+  const wire = (OPENAI_WIRE_VENDORS as Record<string, OpenAiWireSpec | undefined>)[vendor];
+  const url_key = wire?.url_key;
+  return get_wire_provider({
+    name: vendor,
+    wire: wire?.api ?? 'chat',
+    base_url: (url_key ? config.urls[url_key] : undefined) ?? wire?.default_url ?? '',
+    api_key: get_api_key(vendor, config),
+    ...(wire?.key_header ? { key_header: wire.key_header } : {}),
+  });
 }
 
 async function handle_cerebras(
@@ -642,24 +706,59 @@ async function handle_alibaba(
   fast: boolean,
   config: SDKConfig,
 ): Promise<ModelHandle> {
-  const factory = await get_openai_wire_factory('alibaba', config);
+  const factory = get_openai_wire_factory('alibaba', config);
   // DashScope model ids may carry the `alibaba/` prefix — strip it.
   return { model: factory(model.replace(/^alibaba\//i, '')), reasoning, fast };
 }
 
 async function handle_zhipu(model: string, reasoning: string, fast: boolean, config: SDKConfig): Promise<ModelHandle> {
-  const factory = await get_openai_wire_factory('zai', config);
+  const factory = get_openai_wire_factory('zai', config);
   return { model: factory(model), reasoning, fast };
 }
 
 async function handle_xiaomi(model: string, reasoning: string, fast: boolean, config: SDKConfig): Promise<ModelHandle> {
-  const factory = await get_openai_wire_factory('xiaomi', config);
+  const factory = get_openai_wire_factory('xiaomi', config);
   return { model: factory(model), reasoning, fast };
 }
 
 async function handle_meta(model: string, reasoning: string, fast: boolean, config: SDKConfig): Promise<ModelHandle> {
-  const factory = await get_openai_wire_factory('meta', config);
+  const factory = get_openai_wire_factory('meta', config);
   return { model: factory(model), reasoning, fast };
+}
+
+/**
+ * Wire a custom-endpoint model is called with: `CUSTOM_API` pins it, otherwise
+ * the model id prefix decides and Chat Completions is the default.
+ */
+function custom_wire(model: string, config: SDKConfig): WireApi {
+  return config.wires?.[CUSTOM_VENDOR] ?? resolve_wire(model);
+}
+
+/**
+ * User-supplied endpoint — OpenCode, OpenRouter, vLLM, Ollama, HuggingFace, Fireworks,
+ * LiteLLM, a corporate proxy, anything speaking one of the three OpenAI/Anthropic
+ * shaped protocols. URL, key, model and any extra headers come from config.
+ */
+async function handle_custom(model: string, reasoning: string, fast: boolean, config: SDKConfig): Promise<ModelHandle> {
+  const base_url = config.urls.custom;
+  if (!base_url) throw new Error('vendor "custom" requires urls.custom (CLI env: CUSTOM_BASE_URL)');
+  const api_key = config.keys.custom;
+  if (!api_key) throw new Error('vendor "custom" requires keys.custom (CLI env: CUSTOM_API_KEY)');
+
+  const wire = custom_wire(model, config);
+  const factory = get_wire_provider({
+    name: CUSTOM_VENDOR,
+    wire,
+    base_url,
+    api_key,
+    headers: custom_headers(config),
+  });
+  const handle: ModelHandle = { model: factory(model), reasoning, fast };
+  // Model ids the SDK does not recognise (grok-*, muse-*, a gateway's own names)
+  // make `@ai-sdk/openai` drop the reasoning parameter silently — same reason the
+  // `meta` vendor pins force_reasoning.
+  if (wire === 'responses') return { ...handle, providerOptions: { openai: { forceReasoning: true } } };
+  return handle;
 }
 
 async function handle_vast(model: string, reasoning: string, fast: boolean, config: SDKConfig): Promise<ModelHandle> {
@@ -690,8 +789,20 @@ const VENDOR_HANDLERS: Record<string, (m: string, r: string, f: boolean, config:
   zai: handle_zhipu,
   xiaomi: handle_xiaomi,
   meta: handle_meta,
+  custom: handle_custom,
   vast: handle_vast,
   local: handle_local,
+};
+
+/**
+ * Reasoning dialect each wire speaks, used so a custom endpoint gets the same
+ * treatment as the native vendor behind it (Anthropic `max` needs explicit
+ * effort + adaptive thinking, Gemini tops out at `high`).
+ */
+const WIRE_DIALECT: Record<WireApi, string> = {
+  responses: 'openai',
+  chat: 'chat',
+  messages: 'anthropic',
 };
 
 /**
@@ -704,19 +815,24 @@ const VENDOR_HANDLERS: Record<string, (m: string, r: string, f: boolean, config:
  * reasoning into a no-think request.
  */
 function resolve_reasoning(
-  vendor: string,
+  resolved: ResolvedModelSpec,
+  config: SDKConfig,
   mapped: string,
   fast: boolean,
 ): { reasoning: string; providerOptions?: Record<string, any> } {
   if (fast) return { reasoning: 'none' };
-  if ((OPENAI_WIRE_VENDORS as Record<string, OpenAiWireSpec | undefined>)[vendor]?.force_reasoning) {
+  // A user-supplied endpoint picks its wire per model, so its vendor name says
+  // nothing about which reasoning dialect applies — the wire does.
+  const dialect =
+    resolved.vendor === CUSTOM_VENDOR ? WIRE_DIALECT[custom_wire(resolved.model, config)] : resolved.vendor;
+  if ((OPENAI_WIRE_VENDORS as Record<string, OpenAiWireSpec | undefined>)[dialect]?.force_reasoning) {
     return { reasoning: mapped, providerOptions: { openai: { forceReasoning: true } } };
   }
-  if (vendor === 'moonshotai' && ['low', 'high', 'max'].includes(mapped)) {
+  if (dialect === 'moonshotai' && ['low', 'high', 'max'].includes(mapped)) {
     return { reasoning: mapped, providerOptions: { moonshotai: { reasoningEffort: mapped } } };
   }
   if (mapped !== 'max') return { reasoning: mapped };
-  switch (vendor) {
+  switch (dialect) {
     case 'anthropic':
       return {
         reasoning: 'max',
@@ -738,8 +854,21 @@ function resolve_reasoning(
 
 export async function get_model(spec: string, config: SDKConfig): Promise<ModelHandle> {
   const resolved = resolve_model_spec(spec);
+  // `custom` (and any future vendor-only spec) leaves the model empty; the id
+  // then comes from `config.models` so `-m custom` works off the environment.
+  if (!resolved.model) {
+    const configured = config.models?.[resolved.vendor];
+    if (!configured) {
+      throw new Error(
+        `vendor "${resolved.vendor}" requires a model: use "${resolved.vendor}:<model>" ` +
+          `or set models.${resolved.vendor} (CLI env: CUSTOM_MODEL)`,
+      );
+    }
+    resolved.model = configured;
+  }
   const { reasoning, providerOptions } = resolve_reasoning(
-    resolved.vendor,
+    resolved,
+    config,
     AI_SDK_THINKING[resolved.thinking] ?? 'medium',
     resolved.fast,
   );
@@ -750,9 +879,9 @@ export async function get_model(spec: string, config: SDKConfig): Promise<ModelH
 
   const handler = VENDOR_HANDLERS[resolved.vendor];
   if (!handler) {
-    // No dedicated handler: use the OpenAI wire factory (Chat Completions or
-    // Responses, per OPENAI_WIRE_VENDORS) so future vendors only need a URL.
-    const factory = await get_openai_wire_factory(resolved.vendor, config);
+    // No dedicated handler: use the wire provider (Chat Completions by default)
+    // so future vendors only need a URL.
+    const factory = get_openai_wire_factory(resolved.vendor, config);
     return {
       model: factory(resolved.model),
       reasoning,
