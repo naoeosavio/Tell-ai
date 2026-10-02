@@ -9,6 +9,7 @@ import {
   type AskInstance,
   create_ask_ai,
   extract_runs,
+  list_custom_models,
   MODELS,
   resolve_model_spec,
   sanitize_reasoning,
@@ -16,6 +17,7 @@ import {
   strip_think_tags,
   summarize_context,
   tell,
+  WIRE_APIS,
 } from '@tell-ai/sdk';
 import { Command } from 'commander';
 import { load_sdk_config } from './env';
@@ -77,6 +79,7 @@ type CliOptions = {
   stream?: boolean;
   think?: boolean;
   cwd?: string;
+  models?: boolean;
   requireApproval?: boolean;
 };
 
@@ -164,6 +167,38 @@ function print_model_help(): void {
   console.log(`${'-'.repeat(alias_width)}  ${'-'.repeat(48)}`);
   for (const [alias, spec] of rows) console.log(`${alias.padEnd(alias_width)}  ${spec}`);
   console.log('\nFull specs are also accepted: vendor:model[:thinking]');
+}
+
+/**
+ * Prints every model the configured custom endpoint exposes, grouped by the wire
+ * it would be called with, so `tell -m custom:<model>` can be copied straight
+ * from the listing.
+ */
+async function print_custom_models(): Promise<void> {
+  let models: Awaited<ReturnType<typeof list_custom_models>>;
+  let endpoint = '';
+  try {
+    const config = await load_sdk_config();
+    models = await list_custom_models(config);
+    endpoint = config.urls.custom ?? '';
+  } catch (error) {
+    console.error('\x1b[31m%s\x1b[0m', format_model_error(error));
+    process.exitCode = 1;
+    return;
+  }
+  console.log('Usage: tell -m custom:<model> "message"\n');
+  console.log(`${models.length} models at ${endpoint}\n`);
+  const wire_width = Math.max('Wire'.length, ...WIRE_APIS.map((wire) => wire.length));
+  console.log(`${'Wire'.padEnd(wire_width)}  Model`);
+  console.log(`${'-'.repeat(wire_width)}  ${'-'.repeat(40)}`);
+  for (const wire of WIRE_APIS) {
+    for (const model of models.filter((entry) => entry.wire === wire)) {
+      console.log(`${wire.padEnd(wire_width)}  custom:${model.id}`);
+    }
+  }
+  if (models.length === 0) console.log('(the endpoint returned no models)');
+  console.log('\nSet CUSTOM_MODEL to use "tell -m custom" without a model id.');
+  console.log('Set CUSTOM_API to pin the wire when the endpoint routes one id differently.');
 }
 
 function lock_process_environment(): void {
@@ -840,6 +875,7 @@ function build_program(argv: string[]): Command {
     )
     .option('-n, --name', 'reset a context (--ctx %id -n; starts empty, even if it exists)')
     .option('-l, --history [ref]', 'list contexts + conversations; @N/%N show an entry; any other value searches both')
+    .option('--models', 'list the models the custom endpoint exposes (CUSTOM_BASE_URL)')
     .option('-y, --yes', 'execute requested commands without confirmation')
     .option('--require-approval', 'with -y: safe commands run directly, high-risk ones still ask for confirmation')
     .option('--chain', 'continue after command output until the assistant gives a final answer')
@@ -1119,6 +1155,11 @@ async function main() {
 
   if (opts.history !== undefined) {
     run_history_dispatch(opts.history);
+    return;
+  }
+
+  if (opts.models) {
+    await print_custom_models();
     return;
   }
 
