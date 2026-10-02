@@ -1916,7 +1916,7 @@ describe('web sandbox: api routes', () => {
       assert.strictEqual(by_alias.get('mif+').thinking, 'high');
       assert.strictEqual(by_alias.get('K').thinking, 'high');
       assert.strictEqual(body.keysStatus.minimax, undefined);
-      for (const vendor of ['alibaba', 'zhipu', 'meta', 'xiaomi']) {
+      for (const vendor of ['alibaba', 'zhipu', 'meta', 'xiaomi', 'custom']) {
         assert.strictEqual(typeof body.keysStatus[vendor], 'boolean', vendor);
       }
     });
@@ -2280,5 +2280,124 @@ describe('web sandbox: initial prompt', () => {
       const body = await res.json();
       assert.deepStrictEqual(body.session.messages ?? [], []);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Custom endpoint (`CUSTOM_*`): the server injects the same knobs the CLI does,
+// so a user-supplied gateway works from the sandbox too. The stub records the
+// request so the test proves what actually left the process.
+// ---------------------------------------------------------------------------
+describe('web sandbox: custom endpoint', () => {
+  const CUSTOM_HEADERS = { 'x-tenant': 'acme' };
+
+  let stub;
+  let stub_port;
+  let child;
+  let base;
+  let dir;
+  const seen = [];
+
+  before(async () => {
+    stub = http.createServer((req, res) => {
+      let body = '';
+      req.on('data', (chunk) => {
+        body += chunk;
+      });
+      req.on('end', () => {
+        seen.push({ url: req.url, auth: req.headers.authorization, tenant: req.headers['x-tenant'] });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            id: 'stub',
+            object: 'chat.completion',
+            created: 1,
+            model: 'stub',
+            choices: [{ index: 0, message: { role: 'assistant', content: 'Hello custom' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 },
+          }),
+        );
+      });
+    });
+    stub_port = await new Promise((resolve) => {
+      stub.listen(0, '127.0.0.1', () => resolve(stub.address().port));
+    });
+
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-web-custom-'));
+    const env = {
+      ...process.env,
+      PORT: '0',
+      NODE_ENV: 'production',
+      CUSTOM_BASE_URL: `http://127.0.0.1:${stub_port}/v1`,
+      CUSTOM_API_KEY: 'custom-web-key',
+      CUSTOM_MODEL: 'stub-model',
+      CUSTOM_HEADERS: JSON.stringify(CUSTOM_HEADERS),
+    };
+    delete env.TELL_TOKEN;
+    delete env.TELL_MODEL;
+    child = spawn(process.execPath, [DIST_SERVER, '--cwd', dir, '-m', 'custom'], {
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    base = await waitForServer(child);
+  });
+
+  after(() => {
+    if (child && !child.killed) child.kill('SIGTERM');
+    if (stub) stub.close();
+    if (dir) fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('/api/models reports the custom key as configured', async () => {
+    const res = await fetch(`${base}/api/models`);
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    assert.strictEqual(body.keysStatus.custom, true);
+  });
+
+  it('/api/tell uses CUSTOM_MODEL, the bearer key and CUSTOM_HEADERS', async () => {
+    const res = await fetch(`${base}/api/tell`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }] }),
+    });
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    assert.match(JSON.stringify(body), /Hello custom/);
+    const request = seen[seen.length - 1];
+    assert.strictEqual(request.url, '/v1/chat/completions');
+    assert.strictEqual(request.auth, 'Bearer custom-web-key');
+    assert.strictEqual(request.tenant, 'acme');
+  });
+
+  it('CUSTOM_API rejects an unknown wire at boot', async () => {
+    const env = {
+      ...process.env,
+      PORT: '0',
+      NODE_ENV: 'production',
+      CUSTOM_BASE_URL: `http://127.0.0.1:${stub_port}/v1`,
+      CUSTOM_API_KEY: 'custom-web-key',
+      CUSTOM_API: 'completions',
+    };
+    delete env.TELL_TOKEN;
+    const broken = spawn(process.execPath, [DIST_SERVER, '--cwd', dir, '-m', 'custom'], {
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const exit_code = await new Promise((resolve) => {
+      let output = '';
+      broken.stdout.on('data', (chunk) => {
+        output += String(chunk);
+      });
+      broken.stderr.on('data', (chunk) => {
+        output += String(chunk);
+      });
+      broken.on('exit', (code) => resolve({ code, output }));
+      setTimeout(() => {
+        broken.kill('SIGKILL');
+        resolve({ code: null, output });
+      }, 10000);
+    });
+    assert.match(exit_code.output, /CUSTOM_API must be one of/);
   });
 });
