@@ -1,6 +1,9 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    // DOM types only for `fetch`/`crypto` in opencode.ts (the SDK stays
+    // browser-safe: no node:* imports, no process.env reads).
+    "lib": ["ES2020", "DOM"],
     "types": [],
     "noEmit": true
   },

@@ -32,7 +32,11 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
     'sanitize_reasoning',
     'summarize_context',
   ]) {
-    assert.strictEqual(typeof sdk[name] === 'function' || typeof sdk[name] === 'object', true, `missing export: ${name}`);
+    assert.strictEqual(
+      typeof sdk[name] === 'function' || typeof sdk[name] === 'object',
+      true,
+      `missing export: ${name}`,
+    );
   }
 
   // resolve_model_spec: aliases, fast mode, thinking budgets, full specs.
@@ -109,7 +113,10 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
   });
   assert.strictEqual(sdk.resolve_model_spec('d').model, 'deepseek-flash');
   assert.strictEqual(sdk.resolve_model_spec('deepseek:deepseek-v4-flash:high').model, 'deepseek-v4-flash');
-  assert.strictEqual(sdk.resolve_model_spec('deepseek:deepseek-v4-flash-vision-exp:high').model, 'deepseek-v4-flash-vision-exp');
+  assert.strictEqual(
+    sdk.resolve_model_spec('deepseek:deepseek-v4-flash-vision-exp:high').model,
+    'deepseek-v4-flash-vision-exp',
+  );
   assert.strictEqual(sdk.resolve_model_spec('openai:gpt-6.1-sol:medium:fast').fast, true);
   assert.throws(() => sdk.resolve_model_spec(''), /must be provided/);
   assert.throws(() => sdk.resolve_model_spec('notamodelatall'), /./);
@@ -121,6 +128,254 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
     const resolved = sdk.resolve_model_spec(spec);
     assert.ok(resolved.vendor && resolved.model, `alias ${alias} resolved without vendor/model`);
   }
+
+  // Custom vendor: prefix rules pick the wire, Chat Completions is the default,
+  // and `CUSTOM_API` pins it for endpoints that route otherwise.
+  for (const [model, wire] of [
+    ['gpt-6.1-sol', 'responses'],
+    ['grok-4.7', 'responses'],
+    ['muse-spark-1.3', 'responses'],
+    ['claude-sonnet-4-5', 'messages'],
+    // Everything else a gateway might serve.
+    ['kimi-k3', 'chat'],
+    ['deepseek-v4.1-flash', 'chat'],
+    ['llama-4-70b', 'chat'],
+    ['qwen3.8-max', 'chat'],
+    ['minimax-m3', 'chat'],
+    ['gemini-3.5-flash', 'chat'],
+    ['mistral-large-2411', 'chat'],
+    ['some/self-hosted-model', 'chat'],
+  ]) {
+    assert.strictEqual(sdk.resolve_wire(model), wire, model);
+  }
+  assert.strictEqual(sdk.resolve_wire('  Kimi-K3  '), 'chat', 'ids are trimmed and lowercased');
+  assert.deepStrictEqual(sdk.WIRE_APIS, ['chat', 'responses', 'messages']);
+  for (const [value, is_api] of [
+    ['chat', true],
+    ['responses', true],
+    ['messages', true],
+    ['google', false],
+    ['completions', false],
+    ['', false],
+  ]) {
+    assert.strictEqual(sdk.is_wire_api(value), is_api, value);
+  }
+  assert.deepStrictEqual(sdk.custom_headers({ keys: {}, urls: {} }), {});
+  assert.deepStrictEqual(
+    sdk.custom_headers({ keys: {}, urls: {}, headers: { custom: { 'x-tenant': 'acme' }, openai: { 'x-no': '1' } } }),
+    { 'x-tenant': 'acme' },
+    'headers are per vendor',
+  );
+
+  const models_seen = [];
+  const models_mock = http.createServer((req, res) => {
+    models_seen.push({ url: req.url, auth: req.headers.authorization, tenant: req.headers['x-tenant'] });
+    req.resume();
+    req.on('end', () => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      // Blank/typeless entries must be dropped rather than crash the listing.
+      res.end(
+        JSON.stringify({
+          object: 'list',
+          data: [{ id: 'kimi-k3' }, { id: 'grok-4.7' }, { id: 'some-llm' }, { id: '' }, {}],
+        }),
+      );
+    });
+  });
+  await new Promise((resolve) => models_mock.listen(0, '127.0.0.1', resolve));
+  const models_url = `http://127.0.0.1:${models_mock.address().port}/v1`;
+  try {
+    const offline_listed = await sdk.list_custom_models({
+      keys: { custom: 'KEY' },
+      urls: { custom: models_url },
+      headers: { custom: { 'x-tenant': 'acme' } },
+    });
+    assert.deepStrictEqual(offline_listed, [
+      { id: 'grok-4.7', wire: 'responses' },
+      { id: 'kimi-k3', wire: 'chat' },
+      { id: 'some-llm', wire: 'chat' },
+    ]);
+    assert.strictEqual(models_seen[0].url, '/v1/models');
+    assert.strictEqual(models_seen[0].auth, 'Bearer KEY');
+    assert.strictEqual(models_seen[0].tenant, 'acme', 'CUSTOM_HEADERS reach the model list too');
+    await assert.rejects(sdk.list_custom_models({ keys: { custom: 'KEY' }, urls: {} }), /CUSTOM_BASE_URL/);
+    await assert.rejects(sdk.list_custom_models({ keys: {}, urls: { custom: models_url } }), /CUSTOM_API_KEY/);
+  } finally {
+    models_mock.close();
+  }
+
+  // One model id, four wires: each hits its own path with its own auth header,
+  // and reasoning reaches the wire the same way the native vendors do it.
+  const wire_calls = [];
+  const wire_mock = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => {
+      wire_calls.push({
+        url: req.url,
+        tenant: req.headers['x-tenant'],
+        auth: req.headers.authorization,
+        api_key: req.headers['x-api-key'],
+        goog_key: req.headers['x-goog-api-key'],
+        body: JSON.parse(Buffer.concat(chunks).toString('utf8')),
+      });
+      const text = `answer for ${req.url}`;
+      let payload;
+      if (req.url.startsWith('/v1/responses')) {
+        payload = {
+          id: 'resp_mock',
+          object: 'response',
+          created_at: 0,
+          model: 'mock',
+          output: [
+            {
+              type: 'message',
+              id: 'msg_mock',
+              role: 'assistant',
+              status: 'completed',
+              content: [{ type: 'output_text', text, annotations: [] }],
+            },
+          ],
+          usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+        };
+      } else if (req.url.startsWith('/v1/chat/completions')) {
+        payload = {
+          id: 'chat_mock',
+          object: 'chat.completion',
+          created: 0,
+          model: 'mock',
+          choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        };
+      } else if (req.url.startsWith('/v1/messages')) {
+        payload = {
+          id: 'msg_mock',
+          type: 'message',
+          role: 'assistant',
+          model: 'mock',
+          content: [{ type: 'text', text }],
+          stop_reason: 'end_turn',
+          stop_sequence: null,
+          usage: { input_tokens: 1, output_tokens: 1 },
+        };
+      } else {
+        payload = {
+          candidates: [{ content: { parts: [{ text }], role: 'model' }, finishReason: 'STOP' }],
+          usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1, totalTokenCount: 2 },
+        };
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(payload));
+    });
+  });
+  await new Promise((resolve) => wire_mock.listen(0, '127.0.0.1', resolve));
+  const gateway_url = `http://127.0.0.1:${wire_mock.address().port}/v1`;
+  try {
+    for (const [spec, expected_url, expected_auth] of [
+      ['custom:muse-spark-9:high', '/v1/responses', 'Bearer CUSTOM_KEY'],
+      ['custom:some-llm:high', '/v1/chat/completions', 'Bearer CUSTOM_KEY'],
+      ['custom:claude-sonnet-4-5:high', '/v1/messages', 'CUSTOM_KEY'],
+    ]) {
+      wire_calls.length = 0;
+      const config = { keys: { custom: 'CUSTOM_KEY' }, urls: { custom: gateway_url } };
+      const answer = await (await sdk.create_ask_ai(spec, config)).ask('hi', { system: 'test', stream: false });
+      const call = wire_calls[0];
+      assert.ok(call, `no request for ${spec}`);
+      assert.strictEqual(call.url, expected_url, spec);
+      const auth_values = { authorization: call.auth, 'x-api-key': call.api_key, 'x-goog-api-key': call.goog_key };
+      const sent = Object.entries(auth_values).filter(([, value]) => value === expected_auth);
+      assert.strictEqual(
+        sent.length,
+        1,
+        `${spec} must send the key exactly once as ${expected_auth}, got ${JSON.stringify(auth_values)}`,
+      );
+      const model_id = spec.split(':')[1];
+      assert.ok(
+        call.body.model === model_id || call.url.includes(model_id),
+        `${spec} must send the model id (url=${call.url} body.model=${call.body.model})`,
+      );
+      assert.ok(String(answer).includes('answer for'), `${spec} answer: ${answer}`);
+    }
+    // `max` on the Anthropic wire needs explicit effort + adaptive thinking,
+    // exactly like the native anthropic vendor.
+    wire_calls.length = 0;
+    const maxed = await (
+      await sdk.create_ask_ai('custom:claude-sonnet-4-5:max', {
+        keys: { custom: 'CUSTOM_KEY' },
+        urls: { custom: gateway_url },
+      })
+    ).ask('hi', { system: 'test', stream: false });
+    assert.ok(String(maxed).includes('answer for'));
+    assert.strictEqual(wire_calls[0].body.output_config.effort, 'max');
+    assert.strictEqual(wire_calls[0].body.thinking.type, 'adaptive');
+
+    // `CUSTOM_API` pins the wire regardless of what the id suggests.
+    wire_calls.length = 0;
+    await (
+      await sdk.create_ask_ai('custom:kimi-k3:high', {
+        keys: { custom: 'CUSTOM_KEY' },
+        urls: { custom: gateway_url },
+        wires: { custom: 'messages' },
+      })
+    ).ask('hi', { system: 'test', stream: false });
+    assert.strictEqual(wire_calls[0].url, '/v1/messages');
+
+    // `-m custom` takes the model id from config.models.
+    wire_calls.length = 0;
+    assert.deepStrictEqual(sdk.resolve_model_spec('custom'), {
+      vendor: 'custom',
+      model: '',
+      thinking: 'auto',
+      fast: false,
+    });
+    await (
+      await sdk.create_ask_ai('custom', {
+        keys: { custom: 'CUSTOM_KEY' },
+        urls: { custom: gateway_url },
+        models: { custom: 'kimi-k3' },
+      })
+    ).ask('hi', { system: 'test', stream: false });
+    assert.strictEqual(wire_calls[0].url, '/v1/chat/completions');
+    assert.strictEqual(wire_calls[0].body.model, 'kimi-k3');
+
+    // Extra headers reach the wire (routing ids, tenant tags, gateway auth).
+    wire_calls.length = 0;
+    await (
+      await sdk.create_ask_ai('custom:some-llm:high', {
+        keys: { custom: 'CUSTOM_KEY' },
+        urls: { custom: gateway_url },
+        headers: { custom: { 'x-tenant': 'acme' } },
+      })
+    ).ask('hi', { system: 'test', stream: false });
+    assert.strictEqual(wire_calls[0].tenant, 'acme');
+    assert.strictEqual(wire_calls[0].auth, 'Bearer CUSTOM_KEY', 'the key is not replaced by CUSTOM_HEADERS');
+
+    // The provider cache must not hand a header-less provider to a config that
+    // injects headers (same endpoint, same key, different headers).
+    wire_calls.length = 0;
+    await (
+      await sdk.create_ask_ai('custom:some-llm:high', {
+        keys: { custom: 'CUSTOM_KEY' },
+        urls: { custom: gateway_url },
+      })
+    ).ask('hi', { system: 'test', stream: false });
+    assert.strictEqual(wire_calls[0].tenant, undefined, 'a config without headers must not inherit them');
+  } finally {
+    wire_mock.close();
+  }
+  await assert.rejects(sdk.get_model('custom:kimi-k3', { keys: { custom: 'K' }, urls: {} }), /CUSTOM_BASE_URL/);
+  await assert.rejects(sdk.get_model('custom:kimi-k3', { keys: {}, urls: { custom: gateway_url } }), /CUSTOM_API_KEY/);
+  await assert.rejects(sdk.get_model('custom', { keys: { custom: 'K' }, urls: { custom: gateway_url } }), /model/);
+  const responses_handle = await sdk.get_model('custom:muse-spark-9', {
+    keys: { custom: 'K' },
+    urls: { custom: gateway_url },
+  });
+  assert.deepStrictEqual(responses_handle.providerOptions, { openai: { forceReasoning: true } });
+  assert.strictEqual(
+    (await sdk.get_model('custom:some-llm', { keys: { custom: 'K' }, urls: { custom: gateway_url } })).providerOptions,
+    undefined,
+    'chat wire needs no explicit reasoning options',
+  );
 
   // get_model: builds provider handles offline (providers are only called later).
   const handle = await sdk.get_model('g', EMPTY_CONFIG);
@@ -192,9 +447,13 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
     });
   }
   for (const alias of ['m', 'm+', 'm++', 'mc']) {
-    assert.deepStrictEqual((await sdk.get_model(alias, EMPTY_CONFIG)).providerOptions, {
-      openai: { forceReasoning: true },
-    }, alias);
+    assert.deepStrictEqual(
+      (await sdk.get_model(alias, EMPTY_CONFIG)).providerOptions,
+      {
+        openai: { forceReasoning: true },
+      },
+      alias,
+    );
   }
   for (const alias of ['mi', 'mif', 'mif++']) {
     assert.strictEqual((await sdk.get_model(alias, EMPTY_CONFIG)).providerOptions, undefined, alias);
