@@ -9,9 +9,12 @@ const vm = require('node:vm');
 
 const sdk = require('@tell-ai/sdk');
 
-const tellSource = ts.transpileModule(fs.readFileSync(path.join(__dirname, '..', 'packages', 'cli', 'src', 'Tell.ts'), 'utf8'), {
-  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
-}).outputText;
+const tellSource = ts.transpileModule(
+  fs.readFileSync(path.join(__dirname, '..', 'packages', 'cli', 'src', 'Tell.ts'), 'utf8'),
+  {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+  },
+).outputText;
 
 // `./mentions` is required by Tell.js at load time; compile it into the same
 // vm sandbox on demand so it binds to the faked process/fs view per test.
@@ -118,6 +121,7 @@ async function runTell(args, response, opts = {}) {
     if (name === '@tell-ai/sdk') {
       return {
         ...sdk,
+        ...(opts.sdkOverrides || {}),
         create_ask_ai: async () => ({
           ask: async (message, options = {}) => {
             tellMessages.push(message);
@@ -128,7 +132,7 @@ async function runTell(args, response, opts = {}) {
       };
     }
     if (name === './env') {
-      return { load_sdk_config: async () => ({ keys: {}, urls: {} }) };
+      return { load_sdk_config: async () => opts.sdkConfig || { keys: {}, urls: {} } };
     }
     if (name === './systemPrompt') {
       return { get_system_prompt: (options) => sdk.get_system_prompt(options) };
@@ -262,9 +266,7 @@ function assertPromptInjectionPolicy(result) {
   assert.strictEqual(result.execOptions[0].env.TELL_TOKEN, undefined);
   assert.strictEqual(result.execOptions[0].env.NODE_OPTIONS, undefined);
 
-  for (const [args, script] of [
-    ...riskyScripts.map((script) => [['--yes', 'd', 'run risky command'], script]),
-  ]) {
+  for (const [args, script] of [...riskyScripts.map((script) => [['--yes', 'd', 'run risky command'], script])]) {
     result = await runTell(args, runBlock(script));
     assertSkipped(result);
   }
@@ -421,11 +423,9 @@ function assertPromptInjectionPolicy(result) {
   assert.deepStrictEqual(result.execCalls, []);
   assert.strictEqual(result.stdout, 'final answer\n');
 
-  result = await runTell(
-    ['--yes', 'd', 'only one run block'],
-    '<RUN>echo ONE</RUN><RUN>echo TWO</RUN>',
-    { execStdout: 'OK\n' },
-  );
+  result = await runTell(['--yes', 'd', 'only one run block'], '<RUN>echo ONE</RUN><RUN>echo TWO</RUN>', {
+    execStdout: 'OK\n',
+  });
   assert.deepStrictEqual(result.execCalls, ['echo ONE']);
 
   result = await runTell(
@@ -553,7 +553,7 @@ function assertPromptInjectionPolicy(result) {
   assert.strictEqual(result.exitCode, 3);
 
   // --web without tell-web installed explains how to install it.
-  const enoent = new Error("spawn tell-web ENOENT");
+  const enoent = new Error('spawn tell-web ENOENT');
   enoent.code = 'ENOENT';
   result = await runTell(['-w', '-m', 'd'], 'unused response', { spawnError: enoent });
   assert.strictEqual(result.exitCode, 1);
@@ -566,6 +566,47 @@ function assertPromptInjectionPolicy(result) {
   assert.match(result.stderr, /Failed to launch web interface: Error: denied/);
 
   console.log('web mode tests passed');
+
+  // `--models` lists the custom endpoint's catalog grouped by wire and never
+  // reaches the model; the env gate is what the SDK raises when it is unset.
+  const listed = await runTell(['--models'], 'unused', {
+    sdkConfig: { keys: { custom: 'K' }, urls: { custom: 'https://gateway.internal/v1' } },
+    sdkOverrides: {
+      list_custom_models: async () => [
+        { id: 'kimi-k3', wire: 'chat' },
+        { id: 'grok-4.7', wire: 'responses' },
+      ],
+    },
+  });
+  assert.strictEqual(listed.tellCalls.length, 0, '--models must not call the model');
+  assert.strictEqual(listed.exitCode, undefined);
+  assert.match(listed.stdout, /2 models at https:\/\/gateway\.internal\/v1/);
+  assert.match(listed.stdout, /chat\s+custom:kimi-k3/);
+  assert.match(listed.stdout, /responses\s+custom:grok-4\.7/);
+  assert.ok(
+    listed.stdout.indexOf('chat       custom:kimi-k3') < listed.stdout.indexOf('responses  custom:grok-4.7'),
+    'rows are grouped in WIRE_APIS order',
+  );
+  assert.match(listed.stdout, /Usage: tell -m custom:<model> "message"/);
+  assert.match(listed.stdout, /Set CUSTOM_MODEL to use/);
+
+  const listed_empty = await runTell(['--models'], 'unused', {
+    sdkConfig: { keys: { custom: 'K' }, urls: { custom: 'https://gateway.internal/v1' } },
+    sdkOverrides: { list_custom_models: async () => [] },
+  });
+  assert.match(listed_empty.stdout, /0 models at/);
+  assert.match(listed_empty.stdout, /no models/i);
+
+  const listed_failed = await runTell(['--models'], 'unused', {
+    sdkOverrides: {
+      list_custom_models: async () => {
+        throw new Error('vendor "custom" requires urls.custom (CLI env: CUSTOM_BASE_URL)');
+      },
+    },
+  });
+  assert.strictEqual(listed_failed.exitCode, 1);
+  assert.match(listed_failed.stderr, /CUSTOM_BASE_URL/);
+  assertNoExec(listed_failed);
 
   console.log('tell security tests passed');
 })().catch((error) => {
