@@ -98,6 +98,7 @@ const VENDOR_LABELS: Record<string, string> = {
   zhipu: 'Z.ai GLM',
   meta: 'Meta',
   xiaomi: 'Xiaomi MiMo',
+  custom: 'Custom endpoint',
 };
 
 function formatBytes(bytes: number): string {

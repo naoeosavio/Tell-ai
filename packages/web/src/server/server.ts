@@ -5,7 +5,16 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { create_ask_ai, get_model, MODELS, resolve_model_spec, type SDKConfig } from '@tell-ai/sdk';
+import {
+  create_ask_ai,
+  get_model,
+  is_wire_api,
+  MODELS,
+  resolve_model_spec,
+  type SDKConfig,
+  WIRE_APIS,
+  type WireApi,
+} from '@tell-ai/sdk';
 import { generateText } from 'ai';
 import { config as loadEnv } from 'dotenv';
 import express from 'express';
@@ -89,12 +98,14 @@ const ALLOWED_HOSTS = new Set(
 if (!['0.0.0.0', '::', '[::]'].includes(HOST.toLowerCase())) ALLOWED_HOSTS.add(HOST.toLowerCase());
 configureScrollbackMax(Number(process.env['TELL_SCROLLBACK_MAX']) || undefined);
 
+// Trimmed env value, empty/missing as undefined.
+function env(name: string): string | undefined {
+  const value = (process.env[name] ?? '').trim();
+  return value || undefined;
+}
+
 // API keys / base URLs are injected into the SDK (it never reads process.env).
 function load_sdk_config_from_env(): SDKConfig {
-  const env = (name: string): string | undefined => {
-    const value = (process.env[name] ?? '').trim();
-    return value || undefined;
-  };
   return {
     keys: {
       openai: env('OPENAI_API_KEY'),
@@ -109,6 +120,7 @@ function load_sdk_config_from_env(): SDKConfig {
       zhipu: env('ZHIPU_API_KEY'),
       meta: env('META_API_KEY'),
       xiaomi: env('MIMO_API_KEY'),
+      custom: env('CUSTOM_API_KEY'),
     },
     urls: {
       openai: env('OPENAI_BASE_URL') || 'https://api.openai.com/v1',
@@ -123,6 +135,7 @@ function load_sdk_config_from_env(): SDKConfig {
       zhipu: env('ZHIPU_BASE_URL') || 'https://api.z.ai/api/paas/v4',
       meta: env('META_BASE_URL') || 'https://api.meta.ai/v1',
       xiaomi: env('MIMO_BASE_URL') || 'https://api.xiaomimimo.com/v1',
+      custom: env('CUSTOM_BASE_URL'),
       vast: env('VAST_BASE_URL'),
       local: env('LOCAL_OPENAI_BASE_URL'),
     },
@@ -130,6 +143,39 @@ function load_sdk_config_from_env(): SDKConfig {
 }
 
 const SDK_CONFIG = load_sdk_config_from_env();
+
+// `custom` knobs are optional: each one only reaches the SDK when set, so an
+// invalid value fails loudly on the request instead of silently falling back.
+// Mirrors `load_sdk_config` in the CLI (`packages/cli/src/env.ts`).
+function custom_wire_from_env(): WireApi | undefined {
+  const value = env('CUSTOM_API');
+  if (!value) return undefined;
+  if (!is_wire_api(value)) {
+    throw new Error(`CUSTOM_API must be one of: ${WIRE_APIS.join(', ')} (got "${value}")`);
+  }
+  return value;
+}
+
+function custom_headers_from_env(): Record<string, string> {
+  const value = env('CUSTOM_HEADERS');
+  if (!value) return {};
+  const hint = 'CUSTOM_HEADERS must be a JSON object, e.g. \'{"x-tenant":"acme"}\'';
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error(hint);
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error(hint);
+  return Object.fromEntries(Object.entries(parsed).map(([name, header]) => [name, String(header)]));
+}
+
+const custom_model = env('CUSTOM_MODEL');
+if (custom_model) SDK_CONFIG.models = { custom: custom_model };
+const custom_wire = custom_wire_from_env();
+if (custom_wire) SDK_CONFIG.wires = { custom: custom_wire };
+const custom_headers = custom_headers_from_env();
+if (Object.keys(custom_headers).length > 0) SDK_CONFIG.headers = { custom: custom_headers };
 const RETAINED_SERVER_ENV = new Set([
   'COLORTERM',
   'FORCE_COLOR',
@@ -605,6 +651,7 @@ app.get('/api/models', (_req, res) => {
     zhipu: Boolean(SDK_CONFIG.keys.zhipu),
     meta: Boolean(SDK_CONFIG.keys.meta),
     xiaomi: Boolean(SDK_CONFIG.keys.xiaomi),
+    custom: Boolean(SDK_CONFIG.keys.custom),
   };
 
   res.json({

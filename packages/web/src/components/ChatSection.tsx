@@ -127,6 +127,7 @@ const KEYED_VENDORS = new Set([
   'zai',
   'meta',
   'xiaomi',
+  'custom',
 ]);
 const VENDOR_KEY_ALIASES: Record<string, string> = { google: 'google', zai: 'zhipu' };
 

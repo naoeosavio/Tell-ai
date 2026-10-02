@@ -165,6 +165,7 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
     zhipu: false,
     meta: false,
     xiaomi: false,
+    custom: false,
   });
 
   // Execution toggles persist in localStorage (survive reloads); the server
