@@ -44,11 +44,15 @@ browser tab, no SSH client or local terminal needed.
 
 ```bash
 npm install -g tell-ai
-npm install -g @tell-ai/web      # the web sandbox server (tell-web)
+npm i -g --ignore-scripts=false @tell-ai/web   # the web sandbox server (tell-web)
 
 cd /path/to/your/project
 tell --web                       # open http://localhost:3000
 ```
+
+> `--ignore-scripts=false` is required: `node-pty` is native and its install script
+> builds the binary. With scripts disabled the install still "succeeds" and every
+> PTY terminal fails to load.
 
 > `-w` / `--web` enables the auto-generated project context. You can run the sandbox
 > in another directory with `--cwd <path>` (created with a warning if it does not
@@ -437,7 +441,7 @@ docker run --rm -it -p 3000:3000 \
   -e TELL_TOKEN=$(openssl rand -hex 32) \
   -v $PWD:/workspace \
   -w /workspace \
-  node:22 bash -c "npm i -g tell-ai @tell-ai/web && tell --web"
+  node:22 bash -c "npm i -g --ignore-scripts=false tell-ai @tell-ai/web && tell --web"
 ```
 
 ---
@@ -452,5 +456,5 @@ docker run --rm -it -p 3000:3000 \
 | Port already in use | Set another port: `PORT=3100 tell --web` |
 | Wrong model | Set `TELL_MODEL` (e.g. `TELL_MODEL=g tell --web`) or pick the model in the chat header. |
 | Terminal looks blank / no prompt | Refresh the page; the PTY reconnects. Check the `.tell/` scrollback restore if a session exists. |
-| `tell: command not found` for `tell-web` | Install the web server: `npm install -g @tell-ai/web` |
+| `tell: command not found` for `tell-web` | Install the web server: `npm i -g --ignore-scripts=false @tell-ai/web` (`--ignore-scripts=false` so `node-pty` builds). |
 | Session not restored | The server must run from the same working directory (`.tell/` lives there). |

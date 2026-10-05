@@ -17,10 +17,11 @@ npm run build          # SDK (ESM+CJS+dts + 2 browser bundles) + tell-ai (minifi
 npm run lint           # tsc --noEmit in all three packages (type-check only)
 npm run format         # biome check --write packages/  (auto-fix formatting)
 npm run check          # biome check packages/  (check only)
-npm test               # sdk + security + context + stream + mentions + web suites
+npm test               # sdk + env + security + context + stream + mentions + web suites
 npm run test:security  # build the SDK, then node test/test-tell-security.js
 npm run test:stream    # build the SDK, then node test/test-tell-stream.js (--stream/--think CLI behavior)
 npm run test:mentions  # build the SDK, then node test/test-tell-mentions.js (@path mention expansion + read gate)
+npm run test:env       # build the SDK, then node test/test-tell-env.js (CLI env → SDKConfig wiring)
 npm run test:web       # backend harness + web build, then sandbox suite (live servers boot dist/server.js)
 npm run ci             # build + lint + format check + test (runs in order)
 ```
@@ -40,7 +41,7 @@ The codebase has four layers:
 
 ### LIB: `packages/sdk` (`@tell-ai/sdk` — ~900 lines)
 
-Browser-safe AI provider layer: **zero `node:*` imports, zero `process.env` reads**. All environment concerns are injected via `SDKConfig` (`{ keys, urls }`, both partial). Built by tsup to ESM + CJS + `.d.ts`/`.d.cts`.
+Browser-safe AI provider layer: **zero `node:*` imports, zero `process.env` reads**. All environment concerns are injected via `SDKConfig` (`{ keys, urls }` both partial, plus optional `models`/`wires`/`headers` per vendor for the `custom` vendor). Built by tsup to ESM + CJS + `.d.ts`/`.d.cts`.
 
 Key exports from `packages/sdk/src/index.ts`:
 - **`MODELS`** — Record of 142 short aliases (e.g., `g` → `openai:gpt-6.1-sol:medium`)
@@ -51,6 +52,8 @@ Key exports from `packages/sdk/src/index.ts`:
 - **`get_system_prompt(options)`** — Shared tell system prompt with `PromptOptions { chain?, exec?, cwd?, platform? }`; `exec: false` emits the no-command-execution variant used by `tell()` in the browser
 - **`extract_runs`, `strip_run_tags`, `strip_think_tags`, `strip_markdown_code_blocks`** — `<RUN>`/`<think>`/markdown handling
 - **`summarize_context(ai, text)`** — AI-driven conversation history compression
+- **`resolve_wire(model)` / `WIRE_APIS` / `is_wire_api(value)`** — model id → wire protocol (`responses`/`chat`/`messages`, default `chat`) for the `custom` vendor
+- **`list_custom_models(config)`** — `GET {urls.custom}/models`, each id annotated with its wire; **`custom_headers(config)`** reads `config.headers.custom`
 
 Files:
 - `src/index.ts` — public exports
@@ -59,7 +62,8 @@ Files:
 - `src/shims/node.cjs` — CJS stubs for `path`/`fs`/`os` aliased into the browser bundles (see below)
 - `src/ask.ts` — `create_ask_ai()` factory, `AskInstance` (`ask` + `ask_stream`), `AskStreamEvent`/`AskStreamInput` types
 - `src/models.ts` — `MODELS` table, alias resolution, provider instances, injected key/url lookup (all providers honor `config.urls` via `baseURL`)
-- `src/config.ts` — `SDKConfig`/`SDKKeys`/`SDKUrls` types (partial, injected)
+- `src/config.ts` — `SDKConfig`/`SDKKeys`/`SDKUrls`/`WireApi` types (partial, injected)
+- `src/custom.ts` — `custom` vendor helpers: wire rules (`resolve_wire`, `WIRE_APIS`), header merge, `list_custom_models`. Zero product-specific code — any OpenAI/Anthropic-shaped endpoint
 - `src/systemPrompt.ts` — shared exec/no-exec system prompt (`get_system_prompt()`), `PromptOptions`
 - `src/tell.ts` — `tell()` one-shot no-exec function
 - `src/tags.ts` — pure `<RUN>`/` thinking`/code-block strip & extract functions
@@ -81,6 +85,7 @@ Single-file Node entry point for the `tell` binary (CJS bundle, `#!/usr/bin/env 
 - `-c` persists the default per-directory+model context (SHA-256 hash, `~/.ai/tell_context/`)
 - `--ctx [ref]` context ref + prompt: the first word is the ref when it is `@N` (recency, must exist) or `%id` (use-or-create over the id/file-name namespace — exact id or unique hex prefix resumes, else creates `<id>.txt`); the rest is prompt text for that context. No ref = prompt text for the default context (`-c` synonym, unnamed contexts never saved as `%id`). A bare single token is prompt text when no positional prompt follows, but a bare single token WITH a positional prompt is an error (naming requires `%`); multi-word text is always default-context prompt
 - `-n` reset modifier: `--ctx %id -n` starts empty, even if the id exists
+- `--models` lists the `custom` endpoint's catalog grouped by wire, with copy-pasteable `custom:<model>` specs; no model call
 - `-l` lists saved contexts (`@N`, id, age, preview) and conversations (`%N`, date, model, preview) via `--history`; `--history @N`/`%N` reprints an entry, any other value searches both stores (`src/history.ts`)
 - `-y` auto-executes commands (high-risk commands still require confirmation)
 - `--no-exec` disables all command execution
@@ -92,7 +97,7 @@ Files:
 - `src/mentions.ts` — `expand_mentions()` + `is_outside_cwd()` read gate, called in `run_tell()` before context/log assembly
 - `src/history.ts` — read-only history module: `list_sessions()`, `search_contexts()`/`search_sessions()`, `print_history_list()`, `show_entry()` (backs `-l/--history`)
 - `src/systemPrompt.ts` — the `<RUN>`/injection-policy execution system prompt (`get_system_prompt()`), with `PromptOptions`
-- `src/env.ts` — Node-only: reads `process.env` + `~/.config/<vendor>.token` files, assembles the `SDKConfig` passed to `create_ask_ai()`
+- `src/env.ts` — Node-only: reads `process.env` + `~/.config/<vendor>.token` files, assembles the `SDKConfig` passed to `create_ask_ai()` (including the optional `CUSTOM_*` knobs, validated so a bad value fails the run)
 
 ### WEB: `packages/web` (`@tell-ai/web` — browser sandbox + `tell-web` server)
 
@@ -123,6 +128,7 @@ Files:
 - **Suffix** = thinking budget: `--` none, `-` low, (none) medium, `+` high, `++` xhigh/max; documented vendor exceptions apply
 - **Dot prefix** (`.g`) = fast mode
 - **Self-hosted**: `q` = local `/root/model`, `v` = vast `/root/model`
+- **Custom endpoint**: `custom:<model>` = any user-supplied OpenAI/Anthropic-shaped endpoint (`CUSTOM_BASE_URL`/`CUSTOM_API_KEY`/`CUSTOM_MODEL`/`CUSTOM_API`/`CUSTOM_HEADERS`); no alias, and the wire comes from the model id prefix (`gpt-`/`grok-`/`muse-` → responses, `claude-` → messages, everything else → chat) unless `CUSTOM_API` pins it. `tell --models` lists the endpoint's catalog per wire
 
 Canonical format: `vendor:official_model_name:thinking_budget` (e.g., `openai:gpt-6.1-sol:high`).
 
@@ -136,14 +142,14 @@ Canonical format: `vendor:official_model_name:thinking_budget` (e.g., `openai:gp
 - **[@ai-sdk/deepseek](https://www.npmjs.com/package/@ai-sdk/deepseek)** — DeepSeek provider (native)
 - **[@ai-sdk/cerebras](https://www.npmjs.com/package/@ai-sdk/cerebras)** — Cerebras provider (native)
 - **[@ai-sdk/moonshotai](https://www.npmjs.com/package/@ai-sdk/moonshotai)** — MoonshotAI provider (native)
-- **[@ai-sdk/openai-compatible](https://www.npmjs.com/package/@ai-sdk/openai-compatible)** — OpenAI-compatible Chat Completions provider (`alibaba`/`zai`/`xiaomi` vendors + fallback for vendors without a dedicated handler); `meta` shares the same wire path but uses `@ai-sdk/openai`'s `.responses()` (`OPENAI_WIRE_VENDORS` in `models.ts`)
+- **[@ai-sdk/openai-compatible](https://www.npmjs.com/package/@ai-sdk/openai-compatible)** — OpenAI-compatible Chat Completions provider (`alibaba`/`zai`/`xiaomi` vendors + fallback for vendors without a dedicated handler); `meta` and the `custom` vendor's `chat`/`responses` wires use `@ai-sdk/openai` (`OPENAI_WIRE_VENDORS` and `get_wire_provider` in `models.ts`)
 - **[commander](https://www.npmjs.com/package/commander)** — CLI argument parsing
 
 The provider packages above are dependencies of `@tell-ai/sdk`; `commander` lives in `tell-ai`. The web package adds `express`, `ws`, `node-pty` (native), `vite` + `react`/`@xterm/*` for the frontend.
 
 ## API key configuration
 
-API keys are resolved in the CLI (`packages/cli/src/env.ts`): env vars (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `ALIBABA_API_KEY`, etc.) with fallback to `~/.config/<vendor>.token` files, then injected into the SDK as `SDKConfig`. The web server resolves keys from `process.env` only (`load_sdk_config_from_env` in `packages/web/src/server/server.ts`, no token files). The SDK never touches the environment itself.
+API keys are resolved in the CLI (`packages/cli/src/env.ts`): env vars (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `ALIBABA_API_KEY`, `CUSTOM_API_KEY`, etc.) with fallback to `~/.config/<vendor>.token` files, then injected into the SDK as `SDKConfig`. The `custom` vendor adds five optional knobs that mirror each other in both layers: `CUSTOM_BASE_URL` (`urls.custom`), `CUSTOM_API_KEY` (`keys.custom`), `CUSTOM_MODEL` (`models.custom`), `CUSTOM_API` (`wires.custom`, validated against `WIRE_APIS`) and `CUSTOM_HEADERS` (`headers.custom`, JSON object) — invalid values fail the run instead of degrading to a default. The web server resolves keys from `process.env` only (`load_sdk_config_from_env` in `packages/web/src/server/server.ts`, no token files). The SDK never touches the environment itself.
 
 ## Related docs
 

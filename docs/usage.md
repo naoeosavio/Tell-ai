@@ -325,7 +325,9 @@ The project context (directory tree + README/AGENTS system prompt) is always gen
 by default in the sandbox — no separate flag needed.
 
 The web server runs in the selected working directory. If the `tell-web` binary is
-not installed, install it with `npm install -g @tell-ai/web`.
+not installed, install it with `npm i -g --ignore-scripts=false @tell-ai/web` —
+the flag keeps the install script of the native `node-pty` module enabled, without
+which the terminal panes fail to load.
 
 > Full guide with deployment scenarios, real-world examples and security notes:
 > [Web Sandbox](web-sandbox.md).
@@ -373,6 +375,11 @@ Conversations are logged to `~/.ai/tell_history/` with timestamps.
 |-------------------|--------------------------------|---------|
 | `TELL_MODEL`      | Default model alias            | `g`     |
 | `DEBUG`           | Enable debug output            | unset   |
+| `CUSTOM_BASE_URL` | Base URL for the `custom` vendor | unset |
+| `CUSTOM_API_KEY`  | Key for the `custom` vendor (or `~/.config/custom.token`) | unset |
+| `CUSTOM_MODEL`    | Default model id when the spec is just `custom` | unset |
+| `CUSTOM_API`      | Pin the custom wire: `chat`, `responses` or `messages` | inferred |
+| `CUSTOM_HEADERS`  | JSON object of extra headers for the custom endpoint | `{}` |
 
 ## Self-hosted models
 
@@ -383,3 +390,21 @@ tell v "summarize this file"
 export LOCAL_OPENAI_BASE_URL="http://localhost:8080/v1"
 tell q "explain this code"
 ```
+
+## Custom endpoints
+
+Any OpenAI- or Anthropic-shaped endpoint — OpenRouter, vLLM, Ollama, HuggingFace, Fireworks, LiteLLM, an internal proxy — works through the generic `custom` vendor:
+
+```bash
+export CUSTOM_BASE_URL="https://gateway.internal/v1"
+export CUSTOM_API_KEY="sk-..."
+export CUSTOM_MODEL="kimi-k3"          # optional: lets the spec be just `custom`
+export CUSTOM_API="chat"               # optional: pin the wire
+export CUSTOM_HEADERS='{"x-tenant":"acme"}'   # optional: extra headers
+
+tell --models                          # what the endpoint serves, grouped by wire
+tell -m custom:kimi-k3 "explain this repo"
+CUSTOM_MODEL=kimi-k3 tell -m custom "hi"
+```
+
+The protocol is picked from the model id (`gpt-`/`grok-`/`muse-` → Responses, `claude-` → Messages, everything else → Chat Completions) unless `CUSTOM_API` says otherwise. Full rules: [sdk/models.md](sdk/models.md#custom-vendor-custom) and [cli/env-config.md](cli/env-config.md).
