@@ -97,11 +97,25 @@ Keys and base URLs are injected per vendor, never read from the environment
 | `meta` | Meta Llama API | Responses API (`/v1/responses`) with `Authorization: Bearer` |
 | `xiaomi` | Xiaomi MiMo | OpenAI-compatible chat completions, `api-key` header (no bearer) |
 | `vast`, `local` | self-hosted | `urls` only — bring your own endpoint and key |
+| `custom` | **any** OpenAI/Anthropic-shaped endpoint (OpenRouter, vLLM, Ollama, HuggingFace, Fireworks, LiteLLM, a proxy) | inferred per model id: `gpt-`/`grok-`/`muse-` → Responses, `claude-` → Messages, else Chat Completions; pin with `wires.custom` |
 
 A vendor without a dedicated handler falls back to the generic
 OpenAI-compatible provider, so pointing `urls.<vendor>` at a custom endpoint
 (localhost mock, Ollama, a brand-new vendor) needs no code change beyond the
-spec. The reasoning budget is resolved per vendor (`none`/`low`/`medium`/`high`/
+spec. The `custom` vendor goes further — no code at all:
+
+```ts
+const ai = await create_ask_ai('custom:kimi-k3:high', {
+  keys: { custom: 'sk-...' },
+  urls: { custom: 'https://gateway.internal/v1' },
+  wires: { custom: 'chat' },               // optional: pin the wire
+  headers: { custom: { 'x-tenant': 'acme' } },  // optional: extra headers
+});
+await ai.ask('hi', { system: 'be concise', stream: false });
+```
+
+`list_custom_models(config)` reads `GET {urls.custom}/models` and annotates every
+id with the wire it would use — `tell --models` is the CLI front-end for it. The reasoning budget is resolved per vendor (`none`/`low`/`medium`/`high`/
 `xhigh`/`max`), with `max` mapped to each provider's closest option
 (`effort: 'max'` for Anthropic/DeepSeek/Moonshot, `xhigh` for xAI, `high` for
 Google), and provider caches are keyed by base URL *and* credential, so two
