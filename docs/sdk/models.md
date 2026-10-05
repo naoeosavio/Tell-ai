@@ -34,6 +34,8 @@ Parsing rules (`parse_model_spec_raw`):
 
 `thinking: 'auto'` is the default for vendor:model forms and single-part specs, mapped to AI SDK `medium` through `AI_SDK_THINKING`.
 
+A vendor-only spec is valid for the generic [`custom` vendor](#custom-vendor-custom): `resolve_model_spec('custom')` yields `{ vendor: 'custom', model: '' }` and `get_model` fills the id from `config.models.custom` (CLI env `CUSTOM_MODEL`), raising a pointed error when neither is present.
+
 ## Alias conventions
 
 A suffix encodes the thinking budget; the uppercase letter is the `high` tier:
@@ -68,7 +70,7 @@ Fast mode (`.g` or `:fast`) disables reasoning regardless of the tier.
 | vast | 1 | `v` self-hosted `/root/model` |
 | local | 1 | `q` local `/root/model` |
 
-`cerebras` and `openrouter` remain supported without short aliases. Cerebras is reachable through an explicit `cerebras:…` spec; `gpt-oss-120b` may also route there from an `openai:` spec through `CEREBRAS_MODELS`. OpenRouter is used for explicit specs and raw ids containing `/`.
+`cerebras`, `openrouter` and `custom` remain supported without short aliases. Cerebras is reachable through an explicit `cerebras:…` spec; `gpt-oss-120b` may also route there from an `openai:` spec through `CEREBRAS_MODELS`. OpenRouter is used for explicit specs and raw ids containing `/`. `custom` takes full model ids (`custom:<model>`) — a new endpoint is an env var, not a new alias.
 
 ### Tier quirks
 
@@ -100,7 +102,8 @@ Used for single-part specs and unknown-vendor cases: `alibaba/` prefix → aliba
 2. OpenAI models listed in `CEREBRAS_MODELS` are redirected to the Cerebras handler.
 3. `VENDOR_HANDLERS` builds native providers using the injected key/URL. `zai` uses the `zhipu` key slot; `vast`/`local` require their URL slots.
 4. `OPENAI_WIRE_VENDORS` describes the Chat Completions/Responses wire vendors: alibaba, zai, xiaomi and meta. Vendors without a dedicated handler fall back to the same Chat Completions factory.
-5. Provider caches are keyed by vendor, effective base URL and credential token so two tenants with the same endpoint never reuse a stale key.
+5. `custom` picks its wire per model (see below) and builds through `get_wire_provider`.
+6. Provider caches are keyed by vendor, wire, effective base URL, credential token and injected headers so two tenants with the same endpoint never reuse a stale key or stale headers.
 
 ### Reasoning matrix
 
@@ -109,11 +112,36 @@ Used for single-part specs and unknown-vendor cases: `alibaba/` prefix → aliba
 * Moonshot `low`, `high` and `max` are sent explicitly through `providerOptions.moonshotai.reasoningEffort`.
 * Google maps `max` to `high`; xAI maps it to `xhigh`.
 * Meta adds `providerOptions.openai.forceReasoning` so unknown Muse model ids still emit reasoning.
+* `custom` maps its wire to a dialect instead of its vendor name: `messages` → Anthropic rules, `responses` → OpenAI, `chat` → verbatim. So `custom:claude-…:max` gets `effort: 'max'` + adaptive thinking, and the Responses wire always carries `forceReasoning` (gateway model ids are unknown to `@ai-sdk/openai`, which would drop the effort).
 * Fast mode always resolves to `none` with no explicit vendor options.
+
+## Custom vendor (`custom`)
+
+For any endpoint that is not a known vendor — OpenRouter, vLLM, Ollama, HuggingFace, Fireworks, LiteLLM, a corporate proxy:
+
+```text
+custom:kimi-k3:high   explicit model id, thinking as usual
+custom                model id from config.models.custom (CUSTOM_MODEL)
+custom:.kimi-k3       fast mode still works
+```
+
+**Wire selection.** `resolve_wire(model)` picks the protocol from the model id, defaulting to Chat Completions — the right answer for gateways that speak one protocol:
+
+| Model id starts with | Wire | Endpoint |
+|---|---|---|
+| `gpt-`, `grok-`, `muse-` | `responses` | `{base}/responses` |
+| `claude-` | `messages` | `{base}/messages` |
+| anything else | `chat` | `{base}/chat/completions` |
+
+Auth follows the wire: bearer on `chat`/`responses`, `x-api-key` on `messages` (the Anthropic-shaped endpoint rejects `Authorization: Bearer`). `WIRE_APIS` is `['chat', 'responses', 'messages']`; `config.wires.custom` (`CUSTOM_API`) pins the wire when a gateway routes one id differently. Native Gemini is not one of the wires — a gateway fronts `gemini-*` over Chat Completions, and direct Gemini is the `google` vendor (`-m i`, `-m j`).
+
+**Headers.** `config.headers.custom` (`CUSTOM_HEADERS`, a JSON object) is merged into every request, including `list_custom_models` — the escape hatch for routing ids, tenant tags or gateway auth the SDK does not model.
+
+**Errors.** `urls.custom`, `keys.custom` and (for a bare spec) `models.custom` are required; each raises `vendor "custom" requires …` naming both the config slot and the env var. See [config.md](config.md) for the config shape.
 
 ## URLs and auth
 
-All providers honor `SDKConfig.urls.<vendor>`. Xiaomi authenticates with an `api-key` header rather than `Authorization: Bearer`; other OpenAI-wire vendors use bearer auth. Self-hosted `vast`/`local` have no default and fail clearly when unset.
+All providers honor `SDKConfig.urls.<vendor>`. Xiaomi authenticates with an `api-key` header rather than `Authorization: Bearer`; other OpenAI-wire vendors use bearer auth. Self-hosted `vast`/`local` and the user-supplied `custom` vendor have no default and fail clearly when unset.
 
 Walkthrough: `examples/sdk/custom-endpoint.ts` covers custom URLs, Ollama and adding a vendor.
 

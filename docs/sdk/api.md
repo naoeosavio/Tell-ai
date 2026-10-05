@@ -67,6 +67,26 @@ const result = await generateText({ model: handle.model, prompt: 'hi', reasoning
 
 `models.ts:28`. The 142-entry alias table mapping short aliases to full `vendor:model:thinking` specs (e.g. `g` → `openai:gpt-6.1-sol:medium`). The table is the source of truth for the CLI's `tell -m --help` output.
 
+## Custom endpoint helpers (`custom.ts`)
+
+For the generic [`custom` vendor](models.md#custom-vendor-custom). All of these are pure or offline except `list_custom_models`.
+
+| Export | Signature | Behavior |
+|---|---|---|
+| `CUSTOM_VENDOR` | `'custom'` | Vendor name constant. |
+| `WIRE_APIS` | `readonly WireApi[]` | `['chat', 'responses', 'messages']` — the accepted `config.wires` values. |
+| `WireApi` | `'responses' \| 'chat' \| 'messages'` | Wire protocol type. |
+| `is_wire_api(value)` | `(value: string) => value is WireApi` | Guard for user input (`CUSTOM_API`). |
+| `resolve_wire(model)` | `(model: string) => WireApi` | Model id → wire by prefix, `chat` as default. |
+| `custom_headers(config)` | `(config: SDKConfig) => Record<string, string>` | `config.headers.custom` (empty when unset). |
+| `CUSTOM_USER_AGENT` | `'tell-ai-sdk'` | Client id sent on the model-list request. |
+| `list_custom_models(config)` | `(config: SDKConfig) => Promise<Array<{ id, wire }>>` | `GET {urls.custom}/models`, ids sorted, each annotated with the wire it would be called with. Throws `vendor "custom" requires urls.custom (CLI env: CUSTOM_BASE_URL)` / `… keys.custom …` when unset, and `HTTP <status>` on a non-2xx. |
+
+```ts
+const models = await list_custom_models({ keys: { custom: key }, urls: { custom: 'https://gateway.internal/v1' } });
+// [{ id: 'gpt-5.4-mini', wire: 'responses' }, { id: 'kimi-k3', wire: 'chat' }, …]
+```
+
 ## `get_system_prompt(options)` → `string`
 
 `systemPrompt.ts:8`. Returns the shared tell system prompt in `exec` or `no-exec` form.
@@ -96,5 +116,6 @@ const result = await generateText({ model: handle.model, prompt: 'hi', reasoning
 * `ask_stream` re-throws AI SDK `error` parts verbatim (`ask.ts:48-49`).
 * Bad specs (`Unsupported vendor: …`, empty spec, `vendor:model` shape mismatch) throw synchronously from `resolve_model_spec`/`get_model`.
 * `vast`/`local` without a base URL throw with a clear message pointing at `urls.vast`/`urls.local` (`models.ts:531`, `models.ts:538`).
+* `custom` throws for each missing piece — `urls.custom`, `keys.custom`, or `models.custom` for a bare `custom` spec — always naming the config slot and the matching env var.
 
-Sources: `ask.ts:14-17`, `ask.ts:57-76`, `tell.ts:6-47`, `models.ts:356-569`, `systemPrompt.ts:1-92`, `tags.ts:1-21`, `summarize.ts:27-33`.
+Sources: `ask.ts:14-17`, `ask.ts:57-76`, `tell.ts:6-47`, `models.ts:356-569`, `custom.ts`, `systemPrompt.ts:1-92`, `tags.ts:1-21`, `summarize.ts:27-33`.
