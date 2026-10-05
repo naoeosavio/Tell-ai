@@ -7,7 +7,24 @@ command execution and PTY terminal — all anchored to a working directory (`--c
 
 Node.js `>=22` (see `engines` in `package.json`).
 
-## Run
+## Install
+
+```sh
+npm i -g --ignore-scripts=false @tell-ai/web
+```
+
+`--ignore-scripts=false` is required: `node-pty` is a native module and its install
+script builds the binary. With scripts disabled (npm's default when
+`ignore-scripts=true` is set globally or in `.npmrc`), the install "succeeds" but
+every PTY terminal fails to load.
+
+The sandbox needs a working directory to anchor to:
+
+```sh
+tell-web --cwd ~/projects/my-app
+```
+
+## Run (from source)
 
 ```sh
 npm i
@@ -110,6 +127,12 @@ the same log. The choice persists in `theme-config-v3` (`customAgentFeed`).
 `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XAI_API_KEY`, `DEEPSEEK_API_KEY`,
 `CEREBRAS_API_KEY`, `OPENROUTER_API_KEY`, `ALIBABA_API_KEY`, `ZHIPU_API_KEY`,
 `META_API_KEY`, `MIMO_API_KEY`, …).
+
+A user-supplied endpoint works too, with the same variables the CLI reads:
+`CUSTOM_BASE_URL`, `CUSTOM_API_KEY`, plus the optional `CUSTOM_MODEL`,
+`CUSTOM_API` (`chat`/`responses`/`messages`) and `CUSTOM_HEADERS` (JSON object).
+Start with `tell-web -m custom:<model>`; an invalid `CUSTOM_API`/`CUSTOM_HEADERS`
+fails the boot rather than degrading silently.
 
 A workspace `.env` is ignored by default. Set `TELL_TRUST_WORKSPACE_ENV=true`
 before starting the server only when that workspace is trusted; otherwise a
