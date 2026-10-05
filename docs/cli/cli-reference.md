@@ -8,6 +8,7 @@ Commander program definition: `build_program` (`Tell.ts:525-540`). Name `tell`, 
 tell [model] [prompt...] [options]
 tell -m <model> [prompt...] [options]
 tell -m --help
+tell --models
 ```
 
 Model resolution order (`parse_args`, `Tell.ts:484-498`):
@@ -41,6 +42,7 @@ Full spec format: `vendor:model[:thinking]` with thinking in `none|low|medium|hi
 | `--chain` | boolean | Loop up to 8 command rounds, feeding output back to the model. |
 | `-i, --input` | boolean | Force stdin capture and wrap as `User request:` + `Input:` sections. |
 | `--no-exec` | boolean | Never execute; report `Command execution disabled` per script. Overrides `-y`. |
+| `--models` | boolean | List the models the `custom` endpoint exposes (`GET {CUSTOM_BASE_URL}/models`), grouped by the wire each would use, with a copy-pasteable `custom:<model>` spec. No model call, no prompt needed. Requires `CUSTOM_BASE_URL` + `CUSTOM_API_KEY`. |
 
 `exec` in `CliOptions` is `false` only with `--no-exec` (commander negated boolean); `run_tell` resolves the flags once into `execMode: 'no-exec' | 'confirm-all' | 'auto-risk'` — `--no-exec` wins over everything, `-y` (with or without `--require-approval`) selects `auto-risk`, anything else confirms every command.
 
@@ -115,6 +117,11 @@ tell -l %0                       # cat the most recent conversation
 tell --history "kafka consumer"  # search both stores
 tell --ctx @0 "resume the most recent"
 tell --ctx %a1b2c3 "resume by hash prefix"
+
+export CUSTOM_BASE_URL=https://gateway.internal/v1 CUSTOM_API_KEY=sk-...
+tell --models                              # what the gateway serves, per wire
+tell -m custom:kimi-k3 "explain this repo" # one-shot against that endpoint
+CUSTOM_MODEL=kimi-k3 tell -m custom "hi"   # model id from the environment
 ```
 
 Sources: `Tell.ts:83-107`, `Tell.ts:484-544`, `Tell.ts:655-752`.

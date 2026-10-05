@@ -20,6 +20,7 @@ Keys: env var first, `~/.config/<vendor>.token` file fallback (trimmed, empty ig
 | `zhipu` (vendor `zai`) | `ZHIPU_API_KEY` | `~/.config/zhipu.token` |
 | `meta` | `META_API_KEY` | `~/.config/meta.token` |
 | `xiaomi` | `MIMO_API_KEY` | `~/.config/mimo.token` |
+| `custom` | `CUSTOM_API_KEY` | `~/.config/custom.token` |
 
 ```bash
 export OPENAI_API_KEY="sk-..."
@@ -36,17 +37,45 @@ export VAST_BASE_URL="http://..."
 tell v "summarize this file"
 export LOCAL_OPENAI_BASE_URL="http://localhost:8080/v1"
 tell q "explain this code"
+export CUSTOM_BASE_URL="https://gateway.internal/v1" # required by the custom vendor
 export ZHIPU_BASE_URL="https://proxy.example/v1"      # optional override for vendor zai
 export ALIBABA_BASE_URL="https://proxy.example/v1"    # optional override for vendor alibaba
 export META_BASE_URL="https://proxy.example/v1"      # optional override for vendor meta
 export MIMO_BASE_URL="https://proxy.example/v1"     # optional override for vendor xiaomi
 ```
 
+## Custom endpoint (`custom`)
+
+One generic vendor for any endpoint that is not a known vendor — OpenRouter, vLLM, Ollama, HuggingFace, Fireworks, LiteLLM, an OpenAI-compatible proxy:
+
+```bash
+export CUSTOM_BASE_URL="https://gateway.internal/v1"
+export CUSTOM_API_KEY="sk-..."                          # or ~/.config/custom.token
+export CUSTOM_MODEL="kimi-k3"                           # optional: lets -m custom be model-less
+export CUSTOM_API="chat"                                # optional: pin the wire (chat|responses|messages)
+export CUSTOM_HEADERS='{"x-tenant":"acme"}'             # optional: extra headers on every request
+
+tell --models                            # catalog grouped by wire, copy-pasteable specs
+tell -m custom:kimi-k3 "explain this repo"
+CUSTOM_MODEL=kimi-k3 tell -m custom "hi"
+```
+
+| Env var | Config slot | Meaning |
+|---------|-------------|---------|
+| `CUSTOM_BASE_URL` | `urls.custom` | Required. Base URL ending in `/v1`. |
+| `CUSTOM_API_KEY` | `keys.custom` | Required (env or `~/.config/custom.token`). Sent as `Authorization: Bearer`, except on the `messages` wire, which uses `x-api-key`. |
+| `CUSTOM_MODEL` | `models.custom` | Default model id when the spec is just `custom`. |
+| `CUSTOM_API` | `wires.custom` | Wire override; must be one of `chat`, `responses`, `messages` or boot fails. Without it the model id prefix decides and `chat` is the default. |
+| `CUSTOM_HEADERS` | `headers.custom` | JSON object merged into every request (routing ids, tenant tags, gateway auth). Non-object or invalid JSON fails the run. |
+
+`CUSTOM_API_KEY` matches `SENSITIVE_ENV_SUFFIX` in `Tell.ts`, so it is stripped from the process environment and from the environment of executed commands, exactly like the other vendor keys. The web sandbox reads the same five variables (`load_sdk_config_from_env`), so `tell --web` needs no extra setup. Wire rules and the SDK surface: [../sdk/models.md](../sdk/models.md) and [../sdk/api.md](../sdk/api.md).
+
 ## CLI-only variables
 
 | Variable | Read at | Default | Meaning |
 |----------|---------|---------|---------|
 | `TELL_MODEL` | `Tell.ts:24` (module scope) | `'g'` | Default model when no positional/`-m` given |
+| `CUSTOM_BASE_URL`, `CUSTOM_API_KEY`, `CUSTOM_MODEL`, `CUSTOM_API`, `CUSTOM_HEADERS` | `src/env.ts` (`load_sdk_config`) | unset | Custom vendor: see above |
 | `DEBUG` | `src/env.ts:8` (`'true'`/`'1'`) | unset | Exported SDK-config debug flag (currently no verbose logging wired in `Tell.ts`) |
 
 ## System prompt wiring (`src/systemPrompt.ts:6-12`)
