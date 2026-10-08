@@ -26,21 +26,25 @@ export type CoreLoopOptions = {
 /**
  * Builds the self-healing follow-up prompt from a round command result.
  *
- * Wording reuses the CLI `build_feedback`: a FAILED prefix when the exit
- * code is non-zero, then output plus the continuation instruction. History
- * itself travels through the storage port, so only the new feedback is
- * returned. Raw output never reaches here — the SDK redaction boundary
- * already ran right after the executor returned.
+ * Wording converges with the CLI `build_feedback`/`run_script` result lines
+ * so every consumer (CLI chain, Web chain) sees one protocol: an
+ * `Executed command` (or `Command failed`) header with the redacted script
+ * and output, a FAILED prefix when the exit code is non-zero, then the
+ * continuation instruction. History itself travels through the storage
+ * port, so only the new feedback is returned. Raw output never reaches
+ * here — the SDK redaction boundary already ran right after the executor
+ * returned.
  *
+ * @param script - Redacted command script of the finished round.
  * @param output - Redacted combined command output.
  * @param exit_code - Command exit code (0 means success).
  * @returns The next user message for the model.
  */
-function build_loop_feedback(output: string, exit_code: number): string {
+function build_loop_feedback(script: string, output: string, exit_code: number): string {
   if (exit_code === 0) {
-    return `Command output (exit code 0):\n${output}\n\n${CONTINUE_INSTRUCTION}`;
+    return `Executed command:\n${script}\nOutput:\n${output}\n\n${CONTINUE_INSTRUCTION}`;
   } else {
-    return `The command above FAILED. Analyze the error output and try a corrected approach.\n\nCommand output (exit code ${exit_code}):\n${output}\n\n${CONTINUE_INSTRUCTION}`;
+    return `The command above FAILED. Analyze the error output and try a corrected approach.\n\nCommand failed (exit code ${exit_code}):\n${script}\nOutput:\n${output}\n\n${CONTINUE_INSTRUCTION}`;
   }
 }
 
@@ -122,7 +126,7 @@ export async function run_primitive_loop(message: string, options: CoreLoopOptio
         timeline.push(CHAIN_LIMIT_NOTICE);
         return { status: 'completed', text, timeline, commands };
       } else {
-        current_message = build_loop_feedback(last.output ?? '', last.exit_code ?? 1);
+        current_message = build_loop_feedback(last.script, last.output ?? '', last.exit_code ?? 1);
       }
     } else {
       // Confirm pauses, deny ends: non-executed commands stop the loop and

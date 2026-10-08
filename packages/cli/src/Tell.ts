@@ -1,25 +1,38 @@
-import { exec, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
-import { promisify } from 'node:util';
 import {
   type AskInstance,
   create_ask_ai,
-  extract_runs,
   list_custom_models,
   MODELS,
   resolve_model_spec,
-  sanitize_reasoning,
   strip_run_tags,
   strip_think_tags,
   summarize_context,
-  tell,
   WIRE_APIS,
 } from '@tell-ai/sdk';
 import { Command } from 'commander';
+import {
+  type CoreConfig,
+  cli_risk_port,
+  create_cli_approval,
+  create_cli_executor,
+  create_cli_memory_storage,
+  create_cli_model,
+  create_core_runtime,
+  type ExecMode,
+  is_high_risk_script,
+  LOOP_MAX_ROUNDS,
+  lock_process_environment,
+  READLINE_CONFIRM_TIMEOUT_MS,
+  resolve_cli_core_config,
+  script_touches_outside_cwd,
+  type TellResult,
+} from './core-adapters';
 import { load_sdk_config } from './env';
 import {
   type ContextEntry,
@@ -32,35 +45,11 @@ import {
   short_id,
   show_entry,
 } from './history';
-import { expand_mentions, is_outside_cwd } from './mentions';
-import { get_system_prompt, type PromptOptions } from './systemPrompt';
+import { expand_mentions } from './mentions';
+import { get_system_prompt } from './systemPrompt';
 
-const EXEC_ASYNC = promisify(exec);
 const DEFAULT_MODEL = process.env['TELL_MODEL'] || 'g';
-const MAX_BUFFER = 32 * 1024 * 1024;
-const MAX_CHAIN_STEPS = 8;
-const EXEC_TIMEOUT = 120_000;
 const STDIN_TIMEOUT = 30_000;
-const SENSITIVE_ENV_NAMES = new Set([
-  'BASH_ENV',
-  'DYLD_INSERT_LIBRARIES',
-  'DYLD_LIBRARY_PATH',
-  'ENV',
-  'GPG_AGENT_INFO',
-  'GPG_KEY',
-  'LD_AUDIT',
-  'LD_LIBRARY_PATH',
-  'LD_PRELOAD',
-  'NODE_OPTIONS',
-  'PERL5LIB',
-  'PYTHONPATH',
-  'RUBYLIB',
-  'SSH_AUTH_SOCK',
-  'TELL_KEY',
-  'TELL_TOKEN',
-]);
-const SENSITIVE_ENV_SUFFIX =
-  /(?:^|_)(?:ACCESS_KEY(?:_ID)?|API_KEY|AUTH_TOKEN|CREDENTIALS?|PASSWORD|PASSWD|PRIVATE_KEY|SECRET(?:_KEY)?|TOKEN)$/;
 // Chars of accumulated conversation context; beyond this the oldest part is
 // summarized away (LLM windows are far below 64K chars of raw history).
 const MAX_CONTEXT_CHARS = 64 * 1024;
@@ -100,27 +89,19 @@ type ContextPlan =
   | { $: 'existing'; file: string; label: string; promptFromRef?: string }
   | { $: 'create'; file: string; label: string; promptFromRef?: string };
 
-// Effective execution mode, resolved once from the flags (fail-closed):
-// - 'no-exec': never execute — `--no-exec` wins over everything.
-// - 'confirm-all': every command needs manual confirmation (default, and
-//   `--require-approval` without `-y`).
-// - 'auto-risk': safe commands run directly (`-y`); high-risk ones always ask.
-type ExecMode = 'no-exec' | 'confirm-all' | 'auto-risk';
+// Effective execution mode lives in `./core-adapters` (single owner shared
+// with the approval port); the readline prompt below only renders it.
 
 type ConversationState = {
   firstPrompt: string;
   timeline: string[];
-  commandRounds: number;
-  chainLimitReached: boolean;
   autoContinue: boolean;
   execMode: ExecMode;
   saveContext: boolean;
   stream: boolean;
   think: boolean;
+  coreConfig: CoreConfig;
 };
-
-type CommandResult = { output: string; exitCode: number };
-type ScriptsResult = { text: string; failed: boolean };
 
 const CREATED_DIRS = new Set<string>();
 
@@ -201,50 +182,9 @@ async function print_custom_models(): Promise<void> {
   console.log('Set CUSTOM_API to pin the wire when the endpoint routes one id differently.');
 }
 
-function lock_process_environment(): void {
-  for (const name of Object.keys(process.env)) {
-    if (SENSITIVE_ENV_NAMES.has(name) || SENSITIVE_ENV_SUFFIX.test(name)) delete process.env[name];
-  }
-}
-
-function sanitized_command_env(): NodeJS.ProcessEnv {
-  const sanitized: NodeJS.ProcessEnv = {};
-  for (const [name, value] of Object.entries(process.env)) {
-    if (value === undefined || SENSITIVE_ENV_NAMES.has(name) || SENSITIVE_ENV_SUFFIX.test(name)) continue;
-    sanitized[name] = value;
-  }
-  return sanitized;
-}
-
-async function execute_command(script: string): Promise<CommandResult> {
-  try {
-    const { stdout, stderr } = await EXEC_ASYNC(script, {
-      cwd: process.cwd(),
-      maxBuffer: MAX_BUFFER,
-      shell: '/bin/bash',
-      timeout: EXEC_TIMEOUT,
-      env: sanitized_command_env(),
-    });
-    return { output: stdout + stderr, exitCode: 0 };
-  } catch (error) {
-    const err = error as any;
-    const exit_code = typeof err.code === 'number' ? err.code : 1;
-    if (err.killed && err.signal === 'SIGTERM') {
-      return {
-        output: `Command timed out after ${EXEC_TIMEOUT / 1000}s:\n${script}`,
-        exitCode: 124,
-      };
-    }
-    const output = [
-      typeof err.stdout === 'string' ? err.stdout : '',
-      typeof err.stderr === 'string' ? err.stderr : '',
-      error instanceof Error ? error.message : String(error),
-    ]
-      .filter(Boolean)
-      .join('\n');
-    return { output, exitCode: exit_code };
-  }
-}
+// Risk classification, the scrubbed command environment and the `exec`
+// transport moved to `./core-adapters` (core-owned ports); this file keeps
+// only the readline prompt, history/context UX and the response loop.
 
 async function read_stdin(): Promise<string> {
   if (process.stdin.isTTY) return '';
@@ -541,91 +481,8 @@ function save_incremental_context(contextPath: string, previousContext: string, 
   }
 }
 
-function is_high_risk_script(script: string): boolean {
-  const compact = script.replace(/\\\n/g, ' ').replace(/\s+/g, ' ').trim();
-  const privileged_path = [
-    String.raw`(?:/(?:etc|boot|dev|proc|sys|usr|bin|sbin|lib|lib64)(?:\b|/)|`,
-    String.raw`/(?:var/(?:spool/cron|cron)|etc/cron(?:\.(?:d|daily|hourly|monthly|weekly))?)(?:\b|/)|`,
-    String.raw`(?:~|\$HOME)/(?:\.config/(?:autostart|systemd/user)|\.local/share/systemd/user)(?:\b|/))`,
-  ].join('');
-  return [
-    /\b(?:sudo|doas|pkexec)\b/,
-    /(?:^|[\s;&|(])(?:[^\s;&|()]*\/)?(?:ba|z|da|k)?sh\b[^;&|]*\s-c(?:\s|$)/,
-    /(?:^|[\s;&|(])(?:[^\s;&|()]*\/)?(?:curl|wget|nc|ncat|netcat|telnet|ssh|scp|sftp|ftp)\b/,
-    /(?:^|[\s;&|(])(?:[^\s;&|()]*\/)?printenv\b/,
-    /\/proc(?:\/|\b)/,
-    /\brm\s+(?:-[^\s]*[rRfF][^\s]*)(?:\s|$)/,
-    /\bgit\s+clean\b[^;&|]*(?:--force\b|-[^-][^\s]*[fdx])/,
-    /\b(?:mkfs|shutdown|reboot)\b/,
-    /\bdd\b.*\bof=/,
-    /\b(chmod|chown)\s+-R\b.*\s\/(?:\s|$)/,
-    // Non-recursive permission/ownership changes on privileged paths
-    // (`chmod 777 /etc/passwd`) — recursive -R anywhere is covered above.
-    new RegExp(String.raw`\b(?:chmod|chown)\b[^;&|]*\s["']?${privileged_path}`),
-    // Download piped straight into an interpreter (curl|sh, wget|bash,
-    // curl|python3, base64 -d|sh, …).
-    /(?:curl|wget|base64)\b[^|;&]*\|\s*(?:(?:ba|z|da|k)?sh|python3?|perl|ruby|php|node)\b/,
-    // Process substitution feeding a download into anything: x <(curl …),
-    // or feeding anything into a shell: bash <(…).
-    /<\(\s*(?:curl|wget|base64)\b/,
-    /(?:^|[\s;&|])(?:ba|z|da|k)?sh\b[^;&|]*<\(/,
-    // Interpreters with inline code strings ONLY when they touch the network
-    // or decode payloads (local one-liners stay allowed by design): remote
-    // code fetch via node/python/php -e/-c/-r, semicolon-chained downloads.
-    /(?:^|[\s;&|])(?:node|deno|bun|python3?|perl|ruby|php|lua)\b[^;&|]*\s-{1,2}(?:e|c|r|eval|exec|command)\b[^;&|]*(?:https?:\/\/|require\(\s*['"]https?|import\(\s*['"]https?|urllib|requests\.|ftplib|socket|base64|eval\(|exec\(|system\(|popen\()/,
-    /(?:curl|wget|base64)\b[^;&|]*[;&|]\s*(?:node|python3?|perl|ruby|php)\b/,
-    /(?:^|[\s;&|])(?:crontab|systemctl\s+--user\s+enable)\b/,
-    new RegExp(String.raw`(?:^|[\s;&|])(?:cp|mv|ln)\b[^;&|]*\s["']?${privileged_path}`),
-    new RegExp(String.raw`(?:^|[\s;&|])sed\b[^;&|]*\s-i[^\s;&|]*[^;&|]*\s["']?${privileged_path}`),
-    new RegExp(String.raw`(?:^|[\s;&|])tee\b[^;&|]*\s["']?${privileged_path}`),
-    new RegExp(String.raw`(?:^|[\s;&|])\d*(?:>>?|>\||&>)\s*["']?${privileged_path}`),
-  ].some((pattern) => pattern.test(compact));
-}
-
-// Matches path-like tokens inside a command script: absolute (`/x`), home
-// (`~/x`, `$HOME/x`, bare `$HOME`), relative with traversal (`../x`, `./x`,
-// bare `..`), optionally after `=` (`--output=/x`) and inside quotes. The
-// token body stops at whitespace or shell separators.
-const OUTSIDE_PATH_TOKEN =
-  /(?:^|[\s;&|("'=`])((?:\/|~\/|(?:\$\{HOME\}|\$HOME)\/?|\.{1,2}\/)[^\s;&|'"]*|\$\{HOME\}|\$HOME|[~.]{1,2})(?=$|[\s;&|'")=])/g;
-const FILE_ARGUMENT_TOKEN =
-  /(?:^|[\s;&|])(?:cat|head|tail|less|more|file|stat|cp|mv|rm|ln|chmod|chown|truncate|tar)\b([^;&|]*)/g;
-const SHELL_ARGUMENT_TOKEN = /"([^"]*)"|'([^']*)'|([^\s]+)/g;
-
-// True when the script references any path that resolves outside `cwd` —
-// reads included, mirroring the `@path` mention read gate. Resolution is
-// delegated to `is_outside_cwd` (lexical + symlink/realpath, mentions.ts);
-// `~`/`$HOME` expand via `os.homedir()`, so when cwd IS `$HOME` a `~/x`
-// reference resolves inside and stays allowed.
-function script_touches_outside_cwd(script: string, cwd: string): boolean {
-  const home = os.homedir();
-  const compact = script
-    .replace(/\\\n/g, ' ')
-    .replace(/\\\//g, '/')
-    .replace(/\$\{PWD\}|\$PWD/g, cwd);
-  if (/\$\{(?:PWD|HOME)(?::[-=+?]|\+)/.test(compact)) return true;
-  for (const match of compact.matchAll(OUTSIDE_PATH_TOKEN)) {
-    const token = match[1];
-    if (!token) continue;
-    const expanded = token
-      .replace(/^\$\{HOME\}/, home)
-      .replace(/^\$HOME/, home)
-      .replace(/^~(?=\/|$)/, home);
-    const resolved = path.resolve(cwd, expanded);
-    if (is_outside_cwd(resolved, cwd)) return true;
-  }
-  for (const match of compact.matchAll(FILE_ARGUMENT_TOKEN)) {
-    const args = match[1];
-    if (!args) continue;
-    for (const argument of args.matchAll(SHELL_ARGUMENT_TOKEN)) {
-      const token = argument[1] ?? argument[2] ?? argument[3];
-      if (!token || token.startsWith('-')) continue;
-      const resolved = path.resolve(cwd, token);
-      if (is_outside_cwd(resolved, cwd)) return true;
-    }
-  }
-  return false;
-}
+// Risk classification and outside-cwd path checks moved to
+// `./core-adapters` (core-owned ports); the prompt below only renders them.
 
 async function confirm_command(script: string, mode: ExecMode): Promise<boolean> {
   const high_risk = is_high_risk_script(script);
@@ -651,7 +508,7 @@ async function confirm_command(script: string, mode: ExecMode): Promise<boolean>
       resolve(value);
     };
 
-    const timer = setTimeout(() => done(false), EXEC_TIMEOUT);
+    const timer = setTimeout(() => done(false), READLINE_CONFIRM_TIMEOUT_MS);
 
     rl.question('\x1b[31mExecute this command? [y/N] \x1b[0m', (answer) => {
       clearTimeout(timer);
@@ -660,155 +517,10 @@ async function confirm_command(script: string, mode: ExecMode): Promise<boolean>
   });
 }
 
-async function run_script(script: string, mode: ExecMode): Promise<{ result: string; failed: boolean }> {
-  if (mode === 'no-exec') {
-    process.stderr.write('\x1b[33mCommand execution disabled (--no-exec).\x1b[0m\n');
-    return {
-      result: `Command execution disabled — not run:\n${script}`,
-      failed: false,
-    };
-  }
-  if (!(await confirm_command(script, mode))) {
-    process.stderr.write('\x1b[33mCommand skipped by user.\x1b[0m\n');
-    return { result: `Skipped by user:\n${script}`, failed: false };
-  }
-  const { output, exitCode } = await execute_command(script);
-  const text = output.trim();
-  if (text) process.stderr.write(process.stderr.isTTY ? `\x1b[2m${text}\x1b[0m\n` : `${text}\n`);
-  const failed = exitCode > 0;
-  const result = failed
-    ? `Command failed (exit code ${exitCode}):\n${script}\nOutput:\n${output}`
-    : `Executed command:\n${script}\nOutput:\n${output}`;
-  return { result, failed };
-}
-
-async function run_scripts(scripts: string[], mode: ExecMode, log: string): Promise<ScriptsResult> {
-  const results: string[] = [];
-  let failed = false;
-  for (const script of scripts) {
-    const { result, failed: script_failed } = await run_script(script, mode);
-    failed = failed || script_failed;
-    append_log(log, result);
-    results.push(result);
-  }
-  return { text: results.join('\n\n'), failed };
-}
-
-// Pulls the reasoning text out of a raw `<think>...</think>` response.
-function extract_think(response: string): string {
-  return /<think>([\s\S]*?)<\/think>/i.exec(response)?.[1]?.trim() ?? '';
-}
-
-function sanitize_wrapped_reasoning(response: string): string {
-  const lower = response.toLowerCase();
-  const start = lower.indexOf('<think>');
-  const end = lower.lastIndexOf('</think>');
-  if (start < 0 || end < start + '<think>'.length) return response;
-  const reasoning = response.slice(start + '<think>'.length, end);
-  return `${response.slice(0, start)}<think>${sanitize_reasoning(reasoning)}</think>${response.slice(end + '</think>'.length)}`;
-}
-
-function print_reasoning(reasoning: string): void {
-  if (!reasoning) return;
-  process.stderr.write(`\x1b[2m${reasoning}\x1b[0m\n`);
-}
-
-async function tell_silently(
-  ai: AskInstance,
-  message: string,
-  options: PromptOptions = {},
-  show_think = false,
-): Promise<string> {
-  process.stderr.write('\x1b[2mThinking...\x1b[0m');
-  let response: string;
-  try {
-    response = await tell(message, {
-      ask: ai,
-      raw: true,
-      system: get_system_prompt(options),
-    });
-  } finally {
-    process.stderr.write('\r\x1b[K');
-  }
-  response = sanitize_wrapped_reasoning(response);
-  if (show_think) print_reasoning(extract_think(response));
-  return response;
-}
-
-// Streams the response as it is generated: text goes to stdout as it arrives
-// and reasoning (only with `--think`) is printed dim on stderr. Returns the
-// same raw `<think>...</think>`-wrapped response the non-streaming path
-// returns, so log/context/`<RUN>` extraction stay identical.
-async function tell_streaming(
-  ai: AskInstance,
-  message: string,
-  options: PromptOptions = {},
-  show_think = false,
-): Promise<string> {
-  process.stderr.write('\x1b[2mThinking...\x1b[0m');
-  let is_indicator_active = true;
-  let is_reasoning_open = false;
-  let text = '';
-  let reasoning = '';
-
-  const clear_indicator = (): void => {
-    if (!is_indicator_active) return;
-    process.stderr.write('\r\x1b[K');
-    is_indicator_active = false;
-  };
-
-  // Reasoning is a dim stderr block; close its line before text or at the end.
-  const close_reasoning_line = (): void => {
-    if (!is_reasoning_open) return;
-    if (!reasoning.endsWith('\n')) process.stderr.write('\n');
-    is_reasoning_open = false;
-  };
-
-  try {
-    for await (const event of ai.ask_stream(message, { system: get_system_prompt(options) })) {
-      switch (event.type) {
-        case 'reasoning': {
-          const safe_reasoning = sanitize_reasoning(event.text);
-          reasoning += safe_reasoning;
-          if (show_think) {
-            clear_indicator();
-            process.stderr.write(`\x1b[2m${safe_reasoning}\x1b[0m`);
-            is_reasoning_open = true;
-          }
-          break;
-        }
-        case 'text':
-          clear_indicator();
-          close_reasoning_line();
-          text += event.text;
-          process.stdout.write(event.text);
-          break;
-        default:
-          // reasoning_end: nothing to print, just close the dim block.
-          close_reasoning_line();
-          break;
-      }
-    }
-  } finally {
-    clear_indicator();
-    close_reasoning_line();
-  }
-
-  if (text && !text.endsWith('\n')) process.stdout.write('\n');
-  return reasoning ? `<think>${reasoning}</think>\n${text}` : text;
-}
-
-// Dispatch to the streaming or silent path — `--think` applies to both.
-function respond(
-  ai: AskInstance,
-  state: ConversationState,
-  message: string,
-  options: PromptOptions = {},
-): Promise<string> {
-  return state.stream
-    ? tell_streaming(ai, message, options, state.think)
-    : tell_silently(ai, message, options, state.think);
-}
+// Command authorization and execution moved to the core runtime
+// (`create_cli_approval` + `create_cli_executor` in `./core-adapters`);
+// the readline prompt above only renders the decision, and the loop below
+// only mirrors files from the runtime callbacks.
 
 function format_model_error(error: unknown): string {
   const value = error as any;
@@ -849,13 +561,6 @@ function format_prompt(userText: string, stdinText: string, opts: CliOptions): s
 
 function conversation_text(state: ConversationState): string {
   return state.timeline.join('\n');
-}
-
-function continuation_instruction(state: ConversationState): string {
-  const instruction = state.chainLimitReached
-    ? `The chain limit of ${MAX_CHAIN_STEPS} command rounds has been reached. Answer now without <RUN> tags.`
-    : 'Request another command with <RUN> tags if needed; otherwise answer without <RUN> tags.';
-  return instruction;
 }
 
 function wants_model_help(argv: string[]): boolean {
@@ -901,45 +606,49 @@ function remember_command_result(state: ConversationState, result: string): void
   state.timeline.push(result);
 }
 
-function remember_command_round(state: ConversationState): void {
-  state.commandRounds += 1;
-  state.chainLimitReached = state.commandRounds >= MAX_CHAIN_STEPS;
-  if (state.chainLimitReached) {
-    process.stderr.write(`\x1b[33mChain limit reached (${MAX_CHAIN_STEPS}); asking for final answer.\x1b[0m\n`);
+// Prints trimmed command output dimmed on TTY, plain otherwise (legacy
+// `run_script` rendering, now mirrored from the core output callback).
+function print_command_output(output: string): void {
+  const text = output.trim();
+  if (!text) return;
+  if (process.stderr.isTTY) {
+    process.stderr.write(`\x1b[2m${text}\x1b[0m\n`);
+  } else {
+    process.stderr.write(`${text}\n`);
   }
 }
 
-function should_finish(scripts: string[], state: ConversationState): boolean {
-  return scripts.length === 0 || state.chainLimitReached;
-}
+// Follow-up instruction for resumed chain rounds (legacy wording, kept
+// verbatim: the pinned suites match on it and forbid `Conversation so far:`).
+const RESUME_INSTRUCTION = 'Request another command with <RUN> tags if needed; otherwise answer without <RUN> tags.';
 
-function finish_round(state: ConversationState, visible: string): void {
-  if (state.chainLimitReached) {
-    process.stderr.write(
-      `\x1b[33mChain limit reached (${MAX_CHAIN_STEPS}); ignoring further requested commands.\x1b[0m\n`,
-    );
+// True when a finished run paused on a declined command and chain mode must
+// resume it: the core loop stops on non-executed commands (confirm pauses,
+// deny ends) while the legacy chain treats declines as `failed: false` and
+// asks the model again. Cancelled/failed runs and runs without commands
+// never resume.
+function should_resume_after_decline(result: TellResult): boolean {
+  if (result.status !== 'completed') {
+    return false;
+  } else {
+    const last = result.commands[result.commands.length - 1];
+    if (last === undefined) {
+      return false;
+    } else {
+      return last.status === 'skipped' || last.status === 'denied';
+    }
   }
-  // Streaming already printed the text as it was generated; only the
-  // non-streaming path needs to print the final visible answer.
-  if (visible && !state.stream) console.log(visible);
 }
 
-async function handle_final_answer(ai: AskInstance, state: ConversationState, visible: string): Promise<void> {
-  if (visible) {
-    if (!state.stream) console.log(visible);
-    return;
-  }
-  const final_prompt = `${strip_think_tags(conversation_text(state))}`;
-  const final_response = await respond(ai, state, final_prompt, {
-    chain: false,
-  });
-  const final_text = strip_run_tags(strip_think_tags(final_response));
-  if (final_text && !state.stream) console.log(final_text);
-}
-
-function build_feedback(state: ConversationState, failed: boolean): string {
-  const base = `${strip_think_tags(conversation_text(state))}\n\n${continuation_instruction(state)}`;
-  return failed ? `The command above FAILED. Analyze the error output and try a corrected approach.\n\n${base}` : base;
+// Merges a continuation run into the aggregated result (dropping the
+// repeated `User:` line, like the core loop does per round).
+function merge_run_result(aggregated: TellResult, next: TellResult): TellResult {
+  return {
+    status: next.status,
+    text: next.text,
+    timeline: [...aggregated.timeline, ...next.timeline.slice(1)],
+    commands: [...aggregated.commands, ...next.commands],
+  };
 }
 
 async function run_response_loop(
@@ -949,32 +658,98 @@ async function run_response_loop(
   contextPath: string,
   previousContext: string,
 ): Promise<void> {
-  let response = await respond(ai, state, state.firstPrompt, {
-    chain: state.autoContinue,
+  // The system prompt is fixed for the run (legacy round-one wording for
+  // both modes; feedback rounds only exist in chain mode, where it matches).
+  const system = get_system_prompt({ chain: state.autoContinue });
+  // The raw response of the in-flight round (captured by the model port for
+  // the log/timeline mirror below; the core wiring only forwards stripped
+  // text to its callbacks).
+  let last_raw = '';
+  const model = create_cli_model(ai, {
+    stream: state.stream,
+    think: state.think,
+    on_raw: (response) => {
+      last_raw = response;
+    },
   });
-
-  for (;;) {
-    remember_assistant(state, log, response);
-    if (state.saveContext) save_incremental_context(contextPath, previousContext, state);
-    response = strip_think_tags(response);
-    const { scripts, visible } = extract_runs(response);
-    if (should_finish(scripts, state)) {
-      finish_round(state, visible);
-      break;
-    }
-
-    const { text: result_text, failed } = await run_scripts(scripts, state.execMode, log);
-    remember_command_result(state, result_text);
-    if (state.saveContext) save_incremental_context(contextPath, previousContext, state);
-    if (!state.autoContinue) {
-      await handle_final_answer(ai, state, visible);
-      break;
-    }
-
-    remember_command_round(state);
-    response = await respond(ai, state, build_feedback(state, failed), {
-      chain: true,
-    });
+  const approval = create_cli_approval(state.execMode, (pending) => confirm_command(pending, state.execMode));
+  const runtime = create_core_runtime({
+    config: state.coreConfig,
+    model,
+    storage: create_cli_memory_storage(previousContext),
+    executor: create_cli_executor(),
+    approval,
+    risk: cli_risk_port(),
+    system,
+    callbacks: {
+      onText: () => {
+        remember_assistant(state, log, last_raw);
+        if (state.saveContext) save_incremental_context(contextPath, previousContext, state);
+      },
+      onCommandOutput: (event) => {
+        const result_text =
+          event.exit_code > 0
+            ? `Command failed (exit code ${event.exit_code}):\n${event.script}\nOutput:\n${event.output}`
+            : `Executed command:\n${event.script}\nOutput:\n${event.output}`;
+        print_command_output(event.output);
+        append_log(log, result_text);
+        remember_command_result(state, result_text);
+        if (state.saveContext) save_incremental_context(contextPath, previousContext, state);
+      },
+      onCommandSkip: (event) => {
+        const disabled = event.reason === 'disabled';
+        const result_text = disabled
+          ? `Command execution disabled — not run:\n${event.script}`
+          : `Skipped by user:\n${event.script}`;
+        if (disabled) {
+          process.stderr.write('\x1b[33mCommand execution disabled (--no-exec).\x1b[0m\n');
+        } else {
+          process.stderr.write('\x1b[33mCommand skipped by user.\x1b[0m\n');
+        }
+        append_log(log, result_text);
+        remember_command_result(state, result_text);
+        if (state.saveContext) save_incremental_context(contextPath, previousContext, state);
+      },
+      onExecutorError: (event) => {
+        const result_text = `Command failed:\n${event.script}\nOutput:\n${event.error}`;
+        append_log(log, result_text);
+        remember_command_result(state, result_text);
+        if (state.saveContext) save_incremental_context(contextPath, previousContext, state);
+      },
+    },
+    max_rounds: state.autoContinue ? LOOP_MAX_ROUNDS : 1,
+  });
+  let result = await runtime.run(state.firstPrompt);
+  // Chain mode resumes after declined commands with the legacy feedback
+  // (conversation plus instruction); executed/failed rounds already iterate
+  // inside the core loop. The total stays capped like the legacy counter.
+  // The resume check reads the latest run only: a clean follow-up must stop
+  // even when an earlier round declined.
+  let latest = result;
+  while (state.autoContinue && result.commands.length < LOOP_MAX_ROUNDS && should_resume_after_decline(latest)) {
+    const feedback = `${strip_think_tags(conversation_text(state))}\n\n${RESUME_INSTRUCTION}`;
+    latest = await runtime.run(feedback);
+    result = merge_run_result(result, latest);
+  }
+  if (state.autoContinue && result.commands.length >= LOOP_MAX_ROUNDS) {
+    process.stderr.write(`\x1b[33mChain limit reached (${LOOP_MAX_ROUNDS}); asking for final answer.\x1b[0m\n`);
+    process.stderr.write(
+      `\x1b[33mChain limit reached (${LOOP_MAX_ROUNDS}); ignoring further requested commands.\x1b[0m\n`,
+    );
+  } else {
+    // Limit not reached — nothing to announce.
+  }
+  // Default-mode final answer (legacy `handle_final_answer`): commands ran
+  // but the visible answer is empty — ask once more without `<RUN>`.
+  if (!state.autoContinue && result.commands.length > 0 && !result.text) {
+    const final_prompt = `${strip_think_tags(conversation_text(state))}`;
+    const final_response = await model.ask(final_prompt, { system, stream: false });
+    const final_text = strip_run_tags(strip_think_tags(final_response));
+    if (final_text && !state.stream) console.log(final_text);
+  } else if (result.text && !state.stream) {
+    console.log(result.text);
+  } else {
+    // Streaming already printed live (trailing newline handled in the port).
   }
 }
 
@@ -1101,26 +876,27 @@ async function run_tell(
   // text is what reaches the log, the timeline, and the saved context.
   const full_prompt = await expand_mentions(raw_prompt, process.cwd(), { yes: Boolean(opts.yes) });
   const save_context = plan.$ !== 'none';
+  // Core config resolved once per invocation (exec/chain only — provider
+  // keys and URLs stay in `./env` until the explicit tellkey handoff).
   // `--no-exec` wins over everything; `-y` enables the risk-gated auto mode.
   // `--require-approval` is declarative in the CLI (high-risk always asks even
   // with -y, which is already `auto-risk` behavior) and is forwarded to -w.
-  const exec_mode: ExecMode = opts.exec === false ? 'no-exec' : opts.yes ? 'auto-risk' : 'confirm-all';
+  const core_config = resolve_cli_core_config({ exec: opts.exec, chain: opts.chain });
+  const exec_mode: ExecMode = core_config.exec_enabled === false ? 'no-exec' : opts.yes ? 'auto-risk' : 'confirm-all';
   // 'create' always starts empty, even if it reuses an existing name (an explicit reset).
   const context_path = plan.$ === 'none' ? context_file(model) : plan.file;
   const previous_context = plan.$ === 'default' || plan.$ === 'existing' ? read_text(plan.file) : '';
-  const first_prompt = previous_context
-    ? `Previous context:\n${previous_context}\n\nUser:\n${full_prompt}`
-    : full_prompt;
+  // The prompt stays unwrapped: the core runtime composes the identical
+  // `Previous context:` wrapper from the seeded storage on round one.
   const state: ConversationState = {
-    firstPrompt: first_prompt,
+    firstPrompt: full_prompt,
     timeline: [`User:\n${full_prompt}`],
-    commandRounds: 0,
-    chainLimitReached: false,
-    autoContinue: Boolean(opts.chain),
+    autoContinue: core_config.chain,
     execMode: exec_mode,
     saveContext: save_context,
     stream: Boolean(opts.stream),
     think: Boolean(opts.think),
+    coreConfig: core_config,
   };
   if (plan.$ === 'none') fs.rmSync(context_path, { force: true });
   const log = log_file();
