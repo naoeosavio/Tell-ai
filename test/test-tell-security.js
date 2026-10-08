@@ -30,6 +30,15 @@ const historySource = ts.transpileModule(
   { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } },
 ).outputText;
 
+// `./core-adapters` is required by Tell.js at load time (core-owned risk,
+// env and exec ports); compile it into the same vm sandbox on demand, like
+// `./mentions`. Its `@tell-ai/core` import falls through to the real built
+// package, so the sandboxed CLI exercises the real core classifiers.
+const coreAdaptersSource = ts.transpileModule(
+  fs.readFileSync(path.join(__dirname, '..', 'packages', 'cli', 'src', 'core-adapters.ts'), 'utf8'),
+  { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } },
+).outputText;
+
 function fakeStdin(text) {
   const stdin = new EventEmitter();
   stdin.isTTY = false;
@@ -117,6 +126,15 @@ async function runTell(args, response, opts = {}) {
       const factory = vm.runInContext(`(function(require, module, exports) {${historySource}\n})`, activeContext);
       factory(mockRequire, historyModule, historyModule.exports);
       return historyModule.exports;
+    }
+    if (name === './core-adapters') {
+      const adaptersModule = { exports: {} };
+      const factory = vm.runInContext(
+        `(function(require, module, exports) {${coreAdaptersSource}\n})`,
+        activeContext,
+      );
+      factory(mockRequire, adaptersModule, adaptersModule.exports);
+      return adaptersModule.exports;
     }
     if (name === '@tell-ai/sdk') {
       return {
