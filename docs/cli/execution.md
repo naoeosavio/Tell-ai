@@ -1,30 +1,30 @@
 # Command execution
 
-The model proposes commands by wrapping them in `<RUN>…</RUN>` tags. The CLI extracts them with SDK `extract_runs`, confirms, runs each under `/bin/bash`, and feeds results back according to the mode. `<think>` blocks are stripped before extraction, so commands inside reasoning never execute.
+The model proposes commands by wrapping them in `<RUN>…</RUN>` tags. The core runtime extracts the first block, confirms through the CLI approval port, runs it under `/bin/bash` via the CLI executor port, and iterates per the mode. `<think>` blocks are stripped before extraction, so commands inside reasoning never execute. Risk classification, the scrubbed environment and the ports live in `packages/cli/src/core-adapters.ts` (delegating to `@tell-ai/core`); `Tell.ts` keeps prompting, files and rendering.
 
-## Response handling per round (`run_response_loop`, `Tell.ts:594-628`)
+## Response handling per round (`run_response_loop` over `create_core_runtime`)
 
-1. `tell_silently` (model call, `Thinking...` on stderr).
-2. `remember_assistant` + optional incremental context save.
-3. `strip_think_tags` → `extract_runs(response)` → `{ scripts, visible }`.
-4. `should_finish(scripts, state)`: no scripts or chain limit reached → `finish_round` (warn + print `visible`), break.
-5. `run_scripts` → `remember_command_result` → optional context save.
-6. Non-chain: `handle_final_answer` (print `visible`, else one more model call with tags stripped), break. Chain: `remember_command_round`, `build_feedback`, next model call with `chain: true`.
+1. Model port call (`Thinking...` on stderr; live tokens on stdout with `--stream`).
+2. `onText` → `remember_assistant` (raw response) + optional incremental context save.
+3. The wiring strips tags, extracts the first `<RUN>` script and classifies risk.
+4. No script → run completes; the visible text prints once (non-stream).
+5. `onCommandOutput`/`onCommandSkip` → legacy result lines (`Executed command:` / `Command failed:` / `Skipped by user:` / `Command execution disabled — not run:`) appended to the log, mirrored to the timeline, optional context save.
+6. Non-chain (`max_rounds: 1`): commands ran but visible text is empty → one more model call with tags stripped, break. Chain (`max_rounds: 8`): declined commands resume with conversation-plus-instruction feedback until clean, skipped, or capped.
 
 `visible` is printed to stdout; command output is echoed to stderr (dimmed when TTY) and embedded in the feedback string, never printed to stdout directly.
 
-## `run_script` / `run_scripts` (`Tell.ts:422-458`)
+## Per-command outcomes (mirrored from runtime callbacks)
 
-Per script:
+Per command (single `<RUN>` block per round; only the first block runs):
 
 * `--no-exec`: stderr `Command execution disabled (--no-exec).`, result recorded as `Command execution disabled — not run:\n<script>`, `failed: false`. No confirmation, no process. Overrides `-y`.
 * Confirmation (`confirm_command`): skip → stderr `Command skipped by user.`, result `Skipped by user:\n<script>`, `failed: false`.
-* Execute (`execute_command`, `Tell.ts:109-136`): `/bin/bash`, `cwd: process.cwd()`, `maxBuffer: 32MiB`, `timeout: 120s`. Stdout+stderr echoed to stderr. Success → `Executed command:\n<script>\nOutput:\n<output>`; failure → `Command failed (exit code N):\n<script>\nOutput:\n<output>`, `failed: true`. `SIGTERM`-on-timeout reports exit 124 with `Command timed out after 120s`.
-* `run_scripts` appends each result to the history log file and joins results with blank lines for the next prompt. A failed command prefixes the next prompt with `The command above FAILED. Analyze the error output and try a corrected approach.` (`build_feedback`, `Tell.ts:589-592`).
+* Execute (CLI executor port, `create_cli_executor` in `src/core-adapters.ts`): `/bin/bash`, `cwd: process.cwd()`, `maxBuffer: 32MiB`, `timeout: 120s`, scrubbed env. Stdout+stderr echoed to stderr. Success → `Executed command:\n<script>\nOutput:\n<output>`; failure → `Command failed (exit code N):\n<script>\nOutput:\n<output>`, `failed: true`. `SIGTERM`-on-timeout reports exit 124 with `Command timed out after 120s`.
+* Results append to the history log file; chain feedback carries the converged `Executed command:` header plus the failure directive (`packages/core/src/loop.ts`).
 
-## Confirmation (`confirm_command`, `Tell.ts:394-420`)
+## Confirmation (`confirm_command` + approval port)
 
-* `is_high_risk_script` → label `High-risk command requested`, else `Command requested`; script echoed to stderr.
+* Risk labels come from the core permissive classifier (`is_high_risk_script` in `src/core-adapters.ts`): high-risk → `High-risk command requested`, outside-cwd → `Command touches paths outside the working directory`, else `Command requested`; script echoed to stderr. Authorization flows through `create_cli_approval` (safe auto-risk scripts approve without prompting; declines record `skipped`).
 * `-y` approves only non-high-risk scripts that stay inside the working directory. High-risk with `-y` still prompts.
 * Outside-cwd gate (`script_touches_outside_cwd`): with `-y`, any command referencing a path that resolves outside the working directory (reads included, mirroring the `@path` mention gate) needs confirmation. Tokens matched: absolute `/…`, `~/…`, `$HOME/…`, `../…`, `./…`, bare `..`/`~`, after `=`, inside quotes; resolution reuses `is_outside_cwd` from `mentions.ts` (lexical + symlink/realpath). When cwd IS `$HOME`, `~/x` resolves inside and stays allowed.
 * `--require-approval` makes the approval posture explicit: combined with `-y` the behavior is unchanged (safe commands auto-run, high-risk asks); alone every command asks, same as the default. It never weakens the gate and is forwarded by `-w`/`--web` to seed the sandbox's Require Approval toggle.
@@ -42,14 +42,14 @@ tell --no-exec d "run ls"  # never executes
 
 ## What is blocked
 
-`is_high_risk_script` (`Tell.ts:361-392`) normalizes backslash-newlines and whitespace, then matches: `sudo/doas/pkexec`, `rm -rf` (any `-rf` flag combo), `git clean -[xfd]`, `mkfs/shutdown/reboot`, `dd … of=`, `chmod|chown` on privileged paths (non-recursive included; recursive `-R` anywhere), `curl|wget|base64 … | sh|bash|python|perl|ruby|php|node`, process substitution `<(curl|wget|base64…)` / `sh … <(…)`, network/decode-coupled interpreter one-liners (`node|python|perl|ruby|php -e/-c/-r … http…|urllib|requests|socket|base64|eval|exec|system|popen`), `curl|wget|base64 … ;|&&|| … interpreter`, `crontab` / `systemctl --user enable`, writes/redirects into `/etc /boot /dev /proc /sys /usr /bin /sbin /lib* /var/spool/cron /etc/cron* ~/.config/autostart ~/.local/share/systemd/user` via `cp|mv|ln|sed -i|tee|>`. Full pattern table in [security.md](security.md).
+Core permissive classification (`assess_base_risk`, `packages/core/src/risk.ts`) normalizes backslash-newlines and whitespace, then matches: `sudo/doas/pkexec`, `rm -rf` (any `-rf` flag combo), `git clean -[xfd]`, `mkfs/shutdown/reboot`, `dd … of=`, `chmod|chown` on privileged paths (non-recursive included; recursive `-R` anywhere), `curl|wget|base64 … | sh|bash|python|perl|ruby|php|node`, process substitution `<(curl|wget|base64…)` / `sh … <(…)`, network/decode-coupled interpreter one-liners (`node|python|perl|ruby|php -e/-c/-r … http…|urllib|requests|socket|base64|eval|exec|system|popen`), `curl|wget|base64 … ;|&&|| … interpreter`, `crontab` / `systemctl --user enable`, writes/redirects into `/etc /boot /dev /proc /sys /usr /bin /sbin /lib* /var/spool/cron /etc/cron* ~/.config/autostart ~/.local/share/systemd/user` via `cp|mv|ln|sed -i|tee|>`. Full pattern table in [security.md](security.md).
 
 Deliberately allowed: local-only interpreter one-liners such as `node -e "console.log(1)"` — only network/decode-coupled inline code is high-risk (asserted in `test-tell-security.js:179-183`).
 
 ## Limits
 
-* One command per `<RUN>` block; multiple blocks run sequentially in order.
+* One command per round (first `<RUN>` block only).
 * Each command: 120s timeout, 32MiB output cap.
 * Chain mode: at most 8 command rounds per invocation (see [chain-mode.md](chain-mode.md)).
 
-Sources: `Tell.ts:109-136`, `Tell.ts:361-458`, `Tell.ts:594-628`.
+Sources: `packages/cli/src/core-adapters.ts`, `packages/cli/src/Tell.ts` (`run_response_loop`), `packages/core/src/loop.ts`.

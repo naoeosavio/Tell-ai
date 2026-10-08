@@ -50,6 +50,7 @@
     "gemini"
   ],
   "dependencies": {
+    "@tell-ai/core": "^0.1.0",
     "@tell-ai/sdk": "^0.3.0",
     "commander": "15.0.0"
   }

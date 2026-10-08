@@ -56,5 +56,8 @@ handoff and are not read here.
 | `src/loop.ts` | The single primitive exec/loop (≤8 rounds, exit-code feedback, cancel, fail-closed) |
 | `src/runtime.ts` | `create_core_runtime`: injects resolved config into SDK ports, runs the loop |
 
-Later phases add the CLI/Web adapters that migrate `Tell.ts`
-and the App onto this runtime.
+Later phases add the Web adapters that migrate the App onto this runtime.
+The CLI already consumes risk, env, config and approval through
+`packages/cli/src/core-adapters.ts` (its `exec` transport stays promisified
+`exec` to preserve the pinned CLI boundary; `create_node_executor` remains
+available for future wiring).

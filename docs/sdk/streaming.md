@@ -68,7 +68,7 @@ for await (const event of ai.ask_stream('why does this race?', { system: 'be con
 if (text && !text.endsWith('\n')) process.stdout.write('\n');
 ```
 
-This is exactly what `tell --stream` does (`packages/cli/src/Tell.ts`, `tell_streaming`).
+This is exactly what `tell --stream` does (streaming inside the CLI model port, `create_cli_model` in `packages/cli/src/core-adapters.ts`).
 
 ## Consuming in the browser
 

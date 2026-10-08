@@ -8,37 +8,28 @@ npm run build 2>&1 | tell --chain -i "fix the build errors"
 tell -c --chain "migrate the schema, then verify"   # + persistent context
 ```
 
-## Loop (`run_response_loop`, `Tell.ts:594-628`)
+## Loop (`run_response_loop` delegates to `create_core_runtime`)
 
-State: `ConversationState` (`Tell.ts:61-70`) — `firstPrompt`, `timeline[]`, `commandRounds`, `chainLimitReached`, `autoContinue (= --chain)`, `execEnabled`, `yes`, `saveContext`.
+State: `ConversationState` — `firstPrompt` (unwrapped; the runtime composes `Previous context:` from seeded storage), `timeline[]`, `autoContinue (= --chain)`, `execMode`, `saveContext`, `coreConfig`.
 
 ```
-response = tell_silently(firstPrompt, { chain: autoContinue })
-loop:
-  remember_assistant + maybe save_incremental_context
-  response = strip_think_tags(response)
-  { scripts, visible } = extract_runs(response)
-  if scripts.length == 0 or chainLimitReached:
-    finish_round (print visible; warn if limit) ; break
-  { text, failed } = run_scripts(scripts, yes, execEnabled, log)
-  remember_command_result(text) + maybe save_incremental_context
-  if not autoContinue:
-    handle_final_answer(visible) ; break
-  remember_command_round (++commandRounds; limit = >= 8)
-  response = tell_silently(build_feedback(state, failed), { chain: true })
+runtime = create_core_runtime({ config, model: cli_model_port, storage: seeded,
+  executor: cli_executor, approval: cli_approval, risk: permissive_port,
+  system, callbacks: file_mirrors, max_rounds: chain ? 8 : 1 })
+result = runtime.run(firstPrompt)
+chain && declined && under cap → runtime.run(feedback) again (merged)
+render result.text once (non-stream); default mode with commands but empty
+text asks once more without `<RUN>` (legacy final answer)
 ```
 
-The first call uses `{ chain: autoContinue }` so the system prompt advertises multi-step behavior only in chain mode; follow-ups always use `{ chain: true }`. The system prompt itself comes from `get_system_prompt({ chain, cwd, platform })` (`src/systemPrompt.ts:6-12`).
+The first call uses `{ chain: autoContinue }` so the system prompt advertises multi-step behavior only in chain mode; the single fixed system covers every round. The system prompt itself comes from `get_system_prompt({ chain })` (`src/systemPrompt.ts`). Streaming, reasoning display and raw-response capture live inside the model port (`create_cli_model` in `src/core-adapters.ts`); log/context files are mirrored from the runtime callbacks (`Assistant:` raw, legacy result lines, overwrite saves).
 
 ## Feedback and termination
 
-* `conversation_text` = `timeline.join('\n')` (`Tell.ts:510-512`).
-* `continuation_instruction` (`Tell.ts:514-519`): at limit → `The chain limit of 8 command rounds has been reached. Answer now without <RUN> tags.`; otherwise → `Request another command with <RUN> tags if needed; otherwise answer without <RUN> tags.`
-* `build_feedback` (`Tell.ts:589-592`): `strip_think_tags(conversation) + instruction`, prefixed with a failure-analysis directive when the previous round failed. Chain therefore sees the full conversation, not just the last output.
-* `should_finish` (`Tell.ts:563-565`): stop when no scripts or `chainLimitReached`.
-* `finish_round` (`Tell.ts:567-574`): warn `Chain limit reached (8); ignoring further requested commands.` when capped, print `visible` if any.
-* `handle_final_answer` (`Tell.ts:576-587`, non-chain only): print `visible` if present; else one extra `tell_silently(conversation, { chain: false })` with run+think tags stripped. Guarantees a visible answer even when the model only emitted commands.
-* `remember_command_round` (`Tell.ts:555-561`): increments after each executed round in chain mode and warns `Chain limit reached (8); asking for final answer.` exactly when the 8th round completes. The next model response is then forced into a final answer (`continuation_instruction` at-limit branch); any `<RUN>` it still emits is ignored by `should_finish`.
+* `conversation_text` = `timeline.join('\n')` (mirrored from callbacks for logs, context saves and resume prompts).
+* Chain feedback lives in the core loop (`build_loop_feedback`, `packages/core/src/loop.ts`): `Executed command:\n<script>\nOutput:\n<output>` (or the `Command failed (exit code N)` variant with the `FAILED` self-healing prefix) plus `Request another command with <RUN> tags if needed; otherwise answer without <RUN> tags.` History travels through the storage port; declines resume with the legacy conversation-plus-instruction prompt.
+* Stop when no scripts are requested, approval declines without chain resume, or the 8-round cap is hit (stderr warns `Chain limit reached (8); asking for final answer.` + `ignoring further requested commands.`).
+* Default (non-chain) mode runs at most one command round (`max_rounds: 1`); when commands ran but the visible answer is empty, one extra model call without `<RUN>` guarantees a visible answer. Guarantees a visible answer even when the model only emitted commands.
 
 ## Context interplay
 
@@ -52,4 +43,4 @@ Chain alone does not persist across invocations (`saveContext = false` without `
 
 Timeouts still apply per command (120s). A hanging command reports exit 124 and the loop continues with that output as context.
 
-Sources: `Tell.ts:510-520`, `Tell.ts:546-653`; chain assertions in `test/test-tell-security.js:278-313`.
+Sources: `packages/cli/src/Tell.ts` (`run_response_loop`), `packages/cli/src/core-adapters.ts`, `packages/core/src/loop.ts`; chain assertions in `test/test-tell-security.js:278-313`.

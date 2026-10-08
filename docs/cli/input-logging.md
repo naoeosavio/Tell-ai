@@ -31,7 +31,7 @@ Piped content is untrusted data: it travels inside the user message, and the sys
 
 `log_file` (`Tell.ts:158-163`): `~/.ai/tell_history/conversation_<ISO-timestamp>.txt` (`:` → `-`). Created per invocation via `ensure_dir` (mkdir cached in `CREATED_DIRS`, `Tell.ts:75-81`).
 
-Appended (`append_log`, `Tell.ts`): `Model: <label>\nUser:\n<prompt>`, then `Assistant:\n<response>` per round (`remember_assistant`) and each command result (`run_scripts`). The logged `<prompt>` is the post-expansion text — `@path` mentions already inlined (see [mentions.md](mentions.md)). Logs are append-only and local-only; they are read back exclusively by `--history` (listing, `%N` cat, search — see [history.md](history.md)), never by the conversation loop — context files are memory, logs are observability.
+Appended (`append_log`, `Tell.ts`): `Model: <label>\nUser:\n<prompt>`, then `Assistant:\n<response>` per round (`remember_assistant` via the runtime `onText` callback) and each command result (via `onCommandOutput`/`onCommandSkip`). The logged `<prompt>` is the post-expansion text — `@path` mentions already inlined (see [mentions.md](mentions.md)). Logs are append-only and local-only; they are read back exclusively by `--history` (listing, `%N` cat, search — see [history.md](history.md)), never by the conversation loop — context files are memory, logs are observability.
 
 ## Filesystem summary
 
