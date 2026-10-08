@@ -137,10 +137,37 @@ export type ApprovalDecision = 'approved' | 'denied' | 'skipped';
 /** Authorizes one requested script. Absent approval means never execute. */
 export type ApprovalPort = (request: { script: string; risk?: RiskAssessment }) => Promise<ApprovalDecision>;
 
-/** Advisory risk classification, composed later by the policy engine. */
+/** Advisory severity for one classified script (observed only, never a verdict). */
+export type RiskSeverity = 'low' | 'medium' | 'high';
+
+/** Observable category for one classified script (what matched, not what to do). */
+export type RiskCategory =
+  | 'privilege-escalation'
+  | 'network-download'
+  | 'destructive'
+  | 'persistence'
+  | 'privileged-write'
+  | 'interpreter-eval'
+  | 'payload-decode'
+  | 'shell-expansion'
+  | 'environment-escape'
+  | 'process-info'
+  | 'general';
+
+/**
+ * Advisory risk classification, composed later by the policy engine.
+ *
+ * Only observable facts: whether any base rule matched, the highest
+ * severity, the category of that match, human-readable reasons and stable
+ * machine flags. It never carries an action verdict.
+ */
 export type RiskAssessment = {
   risky: boolean;
   reason?: string;
+  severity?: RiskSeverity;
+  category?: RiskCategory;
+  reasons?: string[];
+  flags?: string[];
 };
 
 /** Classifies one script. The runtime observes it; policy decides. */

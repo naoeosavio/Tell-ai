@@ -1,0 +1,365 @@
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+
+import type { CancellationToken, CommandExecutor, ExecutorOptions, ExecutorResult, Redactor } from './runtime-api';
+
+/** Explicit shell for every executed script (mirrors the CLI executor). */
+export const EXEC_SHELL = '/bin/bash';
+
+/** Default per-command timeout in milliseconds (mirrors the CLI `EXEC_TIMEOUT`). */
+export const EXEC_DEFAULT_TIMEOUT_MS = 120_000;
+
+/** Default per-command output cap in bytes (mirrors the CLI `MAX_BUFFER`). */
+export const EXEC_MAX_OUTPUT_BYTES = 32 * 1024 * 1024;
+
+/** Exit code reported when a command exceeds its timeout (mirrors the CLI). */
+export const EXEC_TIMEOUT_EXIT_CODE = 124;
+
+/** Exit code reported when a command is cancelled mid-run. */
+export const EXEC_CANCELLED_EXIT_CODE = 130;
+
+/** Grace delay before SIGKILL after SIGTERM, in milliseconds. */
+export const EXEC_KILL_GRACE_MS = 2_000;
+
+/** Marker replacing redacted secret values in scripts and outputs. */
+export const EXEC_REDACTED_MARKER = '[redacted]';
+
+/**
+ * Environment names never forwarded to a child process.
+ *
+ * Reuses the CLI/Web denylist verbatim: provider-agnostic loader
+ * variables (`TELL_KEY`, `TELL_TOKEN`), dynamic-loader and interpreter
+ * preload variables (`NODE_OPTIONS`, `BASH_ENV`, `LD_PRELOAD`, ...).
+ */
+export const SENSITIVE_ENV_NAMES: ReadonlySet<string> = new Set([
+  'BASH_ENV',
+  'DYLD_INSERT_LIBRARIES',
+  'DYLD_LIBRARY_PATH',
+  'ENV',
+  'GPG_AGENT_INFO',
+  'GPG_KEY',
+  'LD_AUDIT',
+  'LD_LIBRARY_PATH',
+  'LD_PRELOAD',
+  'NODE_OPTIONS',
+  'PERL5LIB',
+  'PYTHONPATH',
+  'RUBYLIB',
+  'SSH_AUTH_SOCK',
+  'TELL_KEY',
+  'TELL_TOKEN',
+]);
+
+/**
+ * Environment name suffixes never forwarded (vendor keys, package tokens).
+ *
+ * Matches `*_API_KEY`, `*_TOKEN`, `*_SECRET`, `*_PASSWORD`, and friends, so
+ * per-vendor keys and `CUSTOM_API_KEY` never reach an executed command.
+ */
+export const SENSITIVE_ENV_SUFFIX =
+  /(?:^|_)(?:ACCESS_KEY(?:_ID)?|API_KEY|AUTH_TOKEN|CREDENTIALS?|PASSWORD|PASSWD|PRIVATE_KEY|SECRET(?:_KEY)?|TOKEN)$/;
+
+/** Defaults injected into every `create_node_executor` command. */
+export type NodeExecutorDefaults = {
+  /** Override shell (defaults to `EXEC_SHELL`). */
+  shell?: string;
+  /** Fallback working directory (defaults to `process.cwd()`). */
+  cwd?: string;
+  /** Fallback timeout in milliseconds. */
+  timeout_ms?: number;
+  /** Fallback output cap in bytes. */
+  max_output_bytes?: number;
+  /** Extra environment merged under `options.env` before scrubbing. */
+  env?: Record<string, string>;
+};
+
+/**
+ * Returns a scrubbed environment for a child process.
+ *
+ * Every name in `SENSITIVE_ENV_NAMES` or matching
+ * `SENSITIVE_ENV_SUFFIX` is dropped; entries with `undefined` values are
+ * dropped too. Non-secret content is preserved verbatim.
+ *
+ * @param env - Candidate environment (usually `process.env` merged with options).
+ * @returns The sanitized environment forwarded to `spawn`.
+ */
+export function sanitize_exec_env(env: Record<string, string | undefined>): Record<string, string> {
+  const sanitized: Record<string, string> = {};
+  for (const [name, value] of Object.entries(env)) {
+    if (value === undefined) {
+    } else if (SENSITIVE_ENV_NAMES.has(name) || SENSITIVE_ENV_SUFFIX.test(name)) {
+    } else {
+      sanitized[name] = value;
+    }
+  }
+  return sanitized;
+}
+
+/**
+ * Resolves a working directory to its real path, fail-closed.
+ *
+ * @param cwd - Candidate directory (defaults to `process.cwd()`).
+ * @returns The canonical absolute directory.
+ * @throws When the directory is missing or its realpath cannot be proven.
+ */
+export function resolve_exec_cwd(cwd?: string): string {
+  const candidate = cwd ?? process.cwd();
+  const resolved = path.resolve(candidate);
+  try {
+    const stats = fs.statSync(resolved);
+    if (stats.isDirectory()) {
+      return fs.realpathSync(resolved);
+    } else {
+      throw new Error(`exec cwd is not a directory: ${candidate}`);
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('exec cwd is not a directory')) {
+      throw error;
+    } else {
+      throw new Error(`exec cwd is unusable: ${candidate}`);
+    }
+  }
+}
+
+/**
+ * Creates a redactor masking known secret values.
+ *
+ * Each non-empty secret value found verbatim in a script or output is
+ * replaced with `EXEC_REDACTED_MARKER`. Non-secret content is preserved.
+ *
+ * @param secrets - Secret values to mask (empty entries are ignored).
+ * @returns A `Redactor` for the runtime redaction boundary.
+ */
+export function create_secret_redactor(secrets: readonly string[]): Redactor {
+  const values = secrets.filter((secret) => secret !== '');
+  return (value: string): string => {
+    let redacted = value;
+    for (const secret of values) {
+      if (redacted.includes(secret)) {
+        redacted = redacted.split(secret).join(EXEC_REDACTED_MARKER);
+      } else {
+        // Secret absent — nothing to mask.
+      }
+    }
+    return redacted;
+  };
+}
+
+/**
+ * Collects secret values from an environment record for redaction.
+ *
+ * Any variable dropped by `sanitize_exec_env` with a non-empty value is
+ * treated as a secret to mask in outputs.
+ *
+ * @param env - Environment record to harvest secrets from.
+ * @returns The secret values worth redacting.
+ */
+export function collect_exec_secrets(env: Record<string, string | undefined>): string[] {
+  const secrets: string[] = [];
+  for (const [name, value] of Object.entries(env)) {
+    if (value === undefined || value === '') {
+    } else if (SENSITIVE_ENV_NAMES.has(name) || SENSITIVE_ENV_SUFFIX.test(name)) {
+      secrets.push(value);
+    } else {
+      // Non-secret variable — never used as a redaction source.
+    }
+  }
+  return secrets;
+}
+
+/**
+ * Kills a spawned process group (detached `spawn`), then the leader.
+ *
+ * @param pid - Process id of the group leader.
+ */
+function kill_process_group(pid: number | undefined): void {
+  if (pid === undefined) {
+    return;
+  } else {
+    try {
+      process.kill(-pid, 'SIGTERM');
+    } catch {
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch {
+        // Already exited — nothing to kill.
+      }
+    }
+  }
+}
+
+/** Inputs for the internal shell runner (grouped to stay within param limits). */
+type ShellRunInput = {
+  /** Approved script (the caller already authorized it). */
+  script: string;
+  /** Explicit shell binary. */
+  shell: string;
+  /** Canonical working directory. */
+  cwd: string;
+  /** Already sanitized environment. */
+  env: Record<string, string>;
+  /** Timeout budget in milliseconds. */
+  timeout_ms: number;
+  /** Combined stdout/stderr cap in bytes. */
+  max_output_bytes: number;
+  /** Structural cancellation token. */
+  token?: CancellationToken;
+};
+
+/**
+ * Runs one script through the explicit shell with caps and cancellation.
+ *
+ * @param input - Script, shell, cwd, env, caps and token in one object.
+ * @returns The raw process result (redaction happens at the runtime boundary).
+ */
+function run_shell_process(input: ShellRunInput): Promise<ExecutorResult> {
+  const { script, shell, cwd, env, timeout_ms, max_output_bytes, token } = input;
+  return new Promise<ExecutorResult>((resolve, reject) => {
+    const child = spawn(shell, ['-c', script], { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    let stdout_bytes = 0;
+    let stderr_bytes = 0;
+    let settled = false;
+    let timed_out = false;
+
+    const finish = (result: ExecutorResult): void => {
+      if (settled) {
+        return;
+      } else {
+        settled = true;
+        cleanup();
+        resolve(result);
+      }
+    };
+
+    const fail = (error: Error): void => {
+      if (settled) {
+        return;
+      } else {
+        settled = true;
+        cleanup();
+        reject(error);
+      }
+    };
+
+    const cleanup = (): void => {
+      clearTimeout(timeout);
+      unsubscribe_cancel();
+    };
+
+    const kill_late = (): void => {
+      try {
+        if (child.pid !== undefined) {
+          process.kill(-child.pid, 'SIGKILL');
+        } else {
+          // No group leader — the TERM above already covered it.
+        }
+      } catch {
+        // Already gone — nothing to force.
+      }
+    };
+
+    const on_bytes = (chunk: Buffer, kind: 'stdout' | 'stderr'): void => {
+      const text = chunk.toString('utf8');
+      if (kind === 'stdout') {
+        stdout_bytes += chunk.length;
+        stdout += text;
+      } else {
+        stderr_bytes += chunk.length;
+        stderr += text;
+      }
+      if (stdout_bytes + stderr_bytes > max_output_bytes) {
+        kill_process_group(child.pid);
+        setTimeout(kill_late, EXEC_KILL_GRACE_MS);
+        const truncated = `${stdout}\n${stderr}`.slice(0, max_output_bytes);
+        finish({ stdout: truncated, stderr: `output exceeded ${max_output_bytes} bytes`, exit_code: 1 });
+      } else {
+        // Within budget — keep collecting.
+      }
+    };
+
+    const timeout = setTimeout(
+      () => {
+        timed_out = true;
+        kill_process_group(child.pid);
+        setTimeout(kill_late, EXEC_KILL_GRACE_MS);
+        const seconds = Math.round(timeout_ms / 1000);
+        finish({
+          stdout: '',
+          stderr: `Command timed out after ${seconds}s:\n${script}`,
+          exit_code: EXEC_TIMEOUT_EXIT_CODE,
+        });
+      },
+      Math.max(1, Math.floor(timeout_ms)),
+    );
+
+    const unsubscribe_cancel: () => void =
+      token?.on_cancel(() => {
+        kill_process_group(child.pid);
+        setTimeout(kill_late, EXEC_KILL_GRACE_MS);
+        fail(new Error('cancelled'));
+      }) ?? (() => {});
+
+    if (token?.cancelled === true) {
+      fail(new Error('cancelled'));
+    } else {
+      child.stdout?.on('data', (chunk: Buffer) => on_bytes(chunk, 'stdout'));
+      child.stderr?.on('data', (chunk: Buffer) => on_bytes(chunk, 'stderr'));
+      child.on('error', (error: Error) => {
+        fail(error);
+      });
+      child.on('close', (code: number | null) => {
+        if (timed_out) {
+          return;
+        } else if (code === null) {
+          finish({ stdout, stderr, exit_code: EXEC_CANCELLED_EXIT_CODE });
+        } else {
+          finish({ stdout, stderr, exit_code: code });
+        }
+      });
+    }
+  });
+}
+
+/**
+ * Creates the Node command executor (the runtime `CommandExecutor` port).
+ *
+ * The executor runs the approved script through the explicit shell in the
+ * canonical cwd, with timeout, output cap, process-group kill, structural
+ * cancellation and a scrubbed environment. Raw `stdout`/`stderr` are
+ * returned untouched here — the single redaction boundary in
+ * `createTellRuntime` masks them immediately after, before feedback,
+ * callbacks, logs, context, cache, `TellResult` or JSON.
+ *
+ * @param defaults - Fallback shell/cwd/timeout/cap/env (options win per call).
+ * @returns A `CommandExecutor` for `create_core_runtime`/`createTellRuntime`.
+ */
+export function create_node_executor(defaults: NodeExecutorDefaults = {}): CommandExecutor {
+  return async (options: ExecutorOptions): Promise<ExecutorResult> => {
+    const shell = defaults.shell ?? EXEC_SHELL;
+    const cwd = resolve_exec_cwd(options.cwd ?? defaults.cwd);
+    const timeout_ms = options.timeout_ms ?? defaults.timeout_ms ?? EXEC_DEFAULT_TIMEOUT_MS;
+    const max_output_bytes = options.max_output_bytes ?? defaults.max_output_bytes ?? EXEC_MAX_OUTPUT_BYTES;
+    const merged: Record<string, string | undefined> = {
+      ...process.env,
+      ...(defaults.env ?? {}),
+      ...(options.env ?? {}),
+    };
+    const env = sanitize_exec_env(merged);
+    if (options.cancellation?.cancelled === true) {
+      throw new Error('cancelled');
+    } else {
+      return run_shell_process({
+        script: options.script,
+        shell,
+        cwd,
+        env,
+        timeout_ms,
+        max_output_bytes,
+        ...(options.cancellation !== undefined ? { token: options.cancellation } : {}),
+      });
+    }
+  };
+}

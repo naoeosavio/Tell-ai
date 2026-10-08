@@ -51,9 +51,10 @@ handoff and are not read here.
 | `src/paths.ts` | `canonical_path` / `canonical_write_path` (realpath, symlink fail-closed) |
 | `src/project-context.ts` | Bounded project tree + README/AGENTS docs, ported from the Web `context-builder` |
 | `src/chain-decision.ts` | Pure `validate_chain_decision_payload` for `/api/chain` confirm (no server state) |
+| `src/risk.ts` | Base `assess_base_risk` + `create_base_risk_port` (`permissive` CLI / `strict` Web, `RiskAssessment` only) |
+| `src/exec.ts` | Node `create_node_executor` (`/bin/bash`, real cwd, 120s/exit 124, 32 MB cap, process group, structural token, scrubbed env) |
 | `src/loop.ts` | The single primitive exec/loop (≤8 rounds, exit-code feedback, cancel, fail-closed) |
 | `src/runtime.ts` | `create_core_runtime`: injects resolved config into SDK ports, runs the loop |
 
-Later phases add `src/risk.ts` (`RiskAssessment` only), `src/exec.ts`
-(allowlisted environment) and the CLI/Web adapters that migrate `Tell.ts`
+Later phases add the CLI/Web adapters that migrate `Tell.ts`
 and the App onto this runtime.

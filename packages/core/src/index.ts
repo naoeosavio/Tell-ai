@@ -10,11 +10,30 @@ export {
   MIN_EXEC_TIMEOUT_MS,
   resolve_core_config,
 } from './config';
+export type { NodeExecutorDefaults } from './exec';
+export {
+  collect_exec_secrets,
+  create_node_executor,
+  create_secret_redactor,
+  EXEC_CANCELLED_EXIT_CODE,
+  EXEC_DEFAULT_TIMEOUT_MS,
+  EXEC_KILL_GRACE_MS,
+  EXEC_MAX_OUTPUT_BYTES,
+  EXEC_REDACTED_MARKER,
+  EXEC_SHELL,
+  EXEC_TIMEOUT_EXIT_CODE,
+  resolve_exec_cwd,
+  SENSITIVE_ENV_NAMES,
+  SENSITIVE_ENV_SUFFIX,
+  sanitize_exec_env,
+} from './exec';
 export type { CoreLoopOptions } from './loop';
 export { CHAIN_LIMIT_NOTICE, LOOP_MAX_ROUNDS, run_primitive_loop } from './loop';
 export { canonical_path, canonical_write_path } from './paths';
 export type { ProjectContext } from './project-context';
 export { build_project_context } from './project-context';
+export type { RiskProfile, RiskRule } from './risk';
+export { assess_base_risk, create_base_risk_port, DEFAULT_RISK_PROFILE } from './risk';
 export type { CoreRuntime, CoreRuntimeInput } from './runtime';
 export { CORE_MAX_OUTPUT_BYTES, create_core_runtime } from './runtime';
 export {
@@ -36,7 +55,9 @@ export {
   never_cancelled,
   type Redactor,
   type RiskAssessment,
+  type RiskCategory,
   type RiskPort,
+  type RiskSeverity,
   type RuntimeCallbacks,
   type RuntimeCommand,
   type RuntimeStatus,
