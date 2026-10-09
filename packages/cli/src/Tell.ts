@@ -47,6 +47,15 @@ import {
 } from './history';
 import { expand_mentions } from './mentions';
 import { get_system_prompt } from './systemPrompt';
+import {
+  compose_system_prompt,
+  load_system_file_text,
+  load_tellrc,
+  resolve_model_input,
+  resolve_tellrc,
+  tellrc_custom_text,
+  validate_temperature,
+} from './tellrc';
 
 const DEFAULT_MODEL = process.env['TELL_MODEL'] || 'g';
 const STDIN_TIMEOUT = 30_000;
@@ -70,6 +79,10 @@ type CliOptions = {
   cwd?: string;
   models?: boolean;
   requireApproval?: boolean;
+  profile?: string;
+  system?: string;
+  systemFile?: string;
+  temperature?: string;
 };
 
 type ParsedInput = { model: string; parts: string[]; readStdin: boolean };
@@ -101,6 +114,8 @@ type ConversationState = {
   stream: boolean;
   think: boolean;
   coreConfig: CoreConfig;
+  customSystemText?: string;
+  temperature?: number;
 };
 
 const CREATED_DIRS = new Set<string>();
@@ -129,8 +144,10 @@ function model_label(model: string): string {
   return `${spec.vendor}:${spec.model}:${spec.thinking}${spec.fast ? ':fast' : ''}`;
 }
 
-function is_model_spec(value: string): boolean {
+function is_model_spec(value: string, custom_aliases?: Record<string, string>): boolean {
+  if (custom_aliases?.[value] !== undefined) return true;
   const bare = value.startsWith('.') ? value.slice(1) : value;
+  if (custom_aliases?.[bare] !== undefined) return true;
   if (MODELS[bare]) return true;
   if (!bare.includes(':')) return false;
   try {
@@ -533,11 +550,16 @@ function format_model_error(error: unknown): string {
   return status ? `Model error (${status}): ${message}` : `Model error: ${message}`;
 }
 
-function parse_args(args: string[], optModel: string | undefined, readPipedInput = false): ParsedInput {
+function parse_args(
+  args: string[],
+  optModel: string | undefined,
+  readPipedInput = false,
+  custom_aliases: Record<string, string> = {},
+): ParsedInput {
   let model = optModel || DEFAULT_MODEL;
   let parts = args;
   const first_arg = args[0];
-  const first_is_model = !optModel && typeof first_arg === 'string' && is_model_spec(first_arg);
+  const first_is_model = !optModel && typeof first_arg === 'string' && is_model_spec(first_arg, custom_aliases);
   if (first_is_model) {
     model = first_arg;
     parts = args.slice(1);
@@ -589,6 +611,10 @@ function build_program(argv: string[]): Command {
     .option('-i, --input', 'read stdin and include it with the prompt')
     .option('-w, --web', 'launch the interactive Tell Web sandbox')
     .option('--cwd <path>', 'working directory for the sandbox (created if missing)')
+    .option('--profile <name>', 'tellrc profile (node, security, devops)')
+    .option('--system <text>', 'custom instructions prepended before the safety prompt')
+    .option('--system-file <path>', 'file with custom instructions (64 KB cap)')
+    .option('--temperature <n>', 'sampling temperature 0..2')
     .option('--no-exec', 'do not execute requested commands')
     .parse(argv);
 }
@@ -660,7 +686,9 @@ async function run_response_loop(
 ): Promise<void> {
   // The system prompt is fixed for the run (legacy round-one wording for
   // both modes; feedback rounds only exist in chain mode, where it matches).
-  const system = get_system_prompt({ chain: state.autoContinue });
+  // Tellrc custom instructions prepend context only — safety stays last and
+  // config can never replace <RUN>, approval, injection or deny rules.
+  const system = compose_system_prompt(get_system_prompt({ chain: state.autoContinue }), state.customSystemText);
   // The raw response of the in-flight round (captured by the model port for
   // the log/timeline mirror below; the core wiring only forwards stripped
   // text to its callbacks).
@@ -668,6 +696,7 @@ async function run_response_loop(
   const model = create_cli_model(ai, {
     stream: state.stream,
     think: state.think,
+    ...(state.temperature !== undefined ? { temperature: state.temperature } : {}),
     on_raw: (response) => {
       last_raw = response;
     },
@@ -788,6 +817,13 @@ async function launch_web(opts: {
   yes?: boolean | undefined;
   stream?: boolean | undefined;
   think?: boolean | undefined;
+  profile?: string | undefined;
+  systemFile?: string | undefined;
+  systemText?: string | undefined;
+  maxChainSteps?: number | undefined;
+  maxBufferBytes?: number | undefined;
+  contextChars?: number | undefined;
+  stdinTimeoutMs?: number | undefined;
 }): Promise<void> {
   let cwd = process.cwd();
   if (opts.cwd) {
@@ -815,30 +851,113 @@ async function launch_web(opts: {
   if (opts.stream) child_args.push('--stream');
   if (opts.think) child_args.push('--think');
   if (opts.prompt) child_args.push('--prompt', opts.prompt);
-
-  const child = spawn('tell-web', child_args, {
-    stdio: 'inherit',
-    env: { ...process.env, TELL_MODEL: opts.model, NODE_ENV: 'production' },
-    cwd,
-  });
-  child.on('error', (err: unknown) => {
-    const code = (err as { code?: string })?.code;
-    if (code === 'ENOENT') {
-      console.error('\x1b[31mWeb interface not installed. Install it with:\x1b[0m\n  npm install -g @tell-ai/web\n');
-      process.exitCode = 1;
+  // Tellrc forwarding: model via -m (above), profile via its own flag,
+  // system via --system-file and limits via numeric flags. Keys, URLs and
+  // secrets are never forwarded.
+  if (opts.profile) child_args.push('--profile', opts.profile);
+  let temp_system_file: string | null = null;
+  try {
+    if (opts.systemFile) {
+      child_args.push('--system-file', opts.systemFile);
+    } else if (opts.systemText) {
+      temp_system_file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tell-system-')), 'system.txt');
+      fs.writeFileSync(temp_system_file, opts.systemText, { mode: 0o600 });
+      try {
+        fs.chmodSync(temp_system_file, 0o600);
+      } catch {
+        // Exotic filesystems may reject chmod — the 0600 open mode already applied.
+      }
+      child_args.push('--system-file', temp_system_file);
     } else {
-      console.error(
-        `\x1b[31mFailed to launch web interface: ${err instanceof Error ? err.message : String(err)}\x1b[0m`,
-      );
-      process.exitCode = 1;
+      // No custom system to forward.
     }
-  });
-  await new Promise<void>((resolve) => {
-    child.on('exit', (exit_code: number | null) => {
-      if (exit_code !== null) process.exitCode = exit_code;
-      resolve();
+    if (opts.maxChainSteps !== undefined) child_args.push('--max-chain-steps', String(opts.maxChainSteps));
+    if (opts.maxBufferBytes !== undefined) child_args.push('--max-buffer-bytes', String(opts.maxBufferBytes));
+    if (opts.contextChars !== undefined) child_args.push('--context-chars', String(opts.contextChars));
+    if (opts.stdinTimeoutMs !== undefined) child_args.push('--stdin-timeout-ms', String(opts.stdinTimeoutMs));
+
+    const child = spawn('tell-web', child_args, {
+      stdio: 'inherit',
+      env: { ...process.env, TELL_MODEL: opts.model, NODE_ENV: 'production' },
+      cwd,
     });
-  });
+    child.on('error', (err: unknown) => {
+      const code = (err as { code?: string })?.code;
+      if (code === 'ENOENT') {
+        console.error('\x1b[31mWeb interface not installed. Install it with:\x1b[0m\n  npm install -g @tell-ai/web\n');
+        process.exitCode = 1;
+      } else {
+        console.error(
+          `\x1b[31mFailed to launch web interface: ${err instanceof Error ? err.message : String(err)}\x1b[0m`,
+        );
+        process.exitCode = 1;
+      }
+    });
+    await new Promise<void>((resolve) => {
+      child.on('exit', (exit_code: number | null) => {
+        if (exit_code !== null) process.exitCode = exit_code;
+        resolve();
+      });
+    });
+  } finally {
+    if (temp_system_file) {
+      try {
+        fs.rmSync(path.dirname(temp_system_file), { recursive: true, force: true });
+      } catch {
+        // Best-effort temp cleanup — never fail the run.
+      }
+    } else {
+      // No temp file was created.
+    }
+  }
+}
+
+/**
+ * Reads the tellrc env layer (TELL_* scalars only, never secrets).
+ *
+ * @returns The env subset for `resolve_tellrc`.
+ */
+function tellrc_env_from_process(): {
+  TELL_MODEL?: string;
+  TELL_SYSTEM?: string;
+  TELL_SYSTEM_FILE?: string;
+  TELL_TEMPERATURE?: string;
+  TELL_PROFILE?: string;
+} {
+  const env: Record<string, string> = {};
+  const take = (name: string): void => {
+    const value = process.env[name];
+    if (value?.trim()) env[name] = value;
+  };
+  take('TELL_MODEL');
+  take('TELL_SYSTEM');
+  take('TELL_SYSTEM_FILE');
+  take('TELL_TEMPERATURE');
+  take('TELL_PROFILE');
+  return env;
+}
+
+/**
+ * Resolves the invocation tellrc (files + env + flags) for the CLI.
+ *
+ * @param opts - Commander options carrying flag overrides.
+ * @param cwd - Working directory for the project layer.
+ * @returns The resolved tellrc with provenance and warnings.
+ */
+function resolve_invocation_tellrc(opts: CliOptions, cwd: string): ReturnType<typeof resolve_tellrc> {
+  const layers = load_tellrc(cwd, os.homedir());
+  const flags: { model?: string; system?: string; system_file?: string; temperature?: number; profile?: string } = {};
+  if (opts.model) flags.model = opts.model;
+  if (opts.system) flags.system = opts.system;
+  if (opts.systemFile) flags.system_file = opts.systemFile;
+  if (opts.profile) flags.profile = opts.profile;
+  if (opts.temperature !== undefined) {
+    const value = validate_temperature(Number(opts.temperature));
+    if (value !== undefined) flags.temperature = value;
+  }
+  const resolved = resolve_tellrc(layers, flags, tellrc_env_from_process());
+  for (const warning of resolved.warnings) process.stderr.write(`\x1b[33mWarning: ${warning}\x1b[0m\n`);
+  return resolved;
 }
 
 async function run_tell(
@@ -847,12 +966,17 @@ async function run_tell(
   opts: CliOptions,
   has_positional_prompt: boolean,
 ): Promise<void> {
+  // Tellrc resolution (files + env + flags): aliases resolve without
+  // mutating MODELS; temperature and custom system flow into the run;
+  // deny/limits stay validated data (enforcement lives elsewhere).
+  const tellrc = resolve_invocation_tellrc(opts, process.cwd());
+  const effective_model = resolve_model_input(tellrc.model ?? model, tellrc.aliases, MODELS);
   let label = '';
   let plan: ContextPlan;
   try {
-    label = model_label(model);
+    label = model_label(effective_model);
     const entries = typeof opts.ctx === 'string' ? list_context_entries() : [];
-    plan = build_context_plan(opts, model, entries, has_positional_prompt);
+    plan = build_context_plan(opts, effective_model, entries, has_positional_prompt);
   } catch (error) {
     console.error('\x1b[31m%s\x1b[0m', error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
@@ -884,8 +1008,21 @@ async function run_tell(
   const core_config = resolve_cli_core_config({ exec: opts.exec, chain: opts.chain });
   const exec_mode: ExecMode = core_config.exec_enabled === false ? 'no-exec' : opts.yes ? 'auto-risk' : 'confirm-all';
   // 'create' always starts empty, even if it reuses an existing name (an explicit reset).
-  const context_path = plan.$ === 'none' ? context_file(model) : plan.file;
+  const context_path = plan.$ === 'none' ? context_file(effective_model) : plan.file;
   const previous_context = plan.$ === 'default' || plan.$ === 'existing' ? read_text(plan.file) : '';
+  // Tellrc system-file (64 KB cap, regular file, project gate) plus inline
+  // system and profile data compose as custom instructions before safety.
+  let system_file_text: string | undefined;
+  if (tellrc.system_file) {
+    const from_project = (tellrc.provenance['system_file'] ?? '').endsWith(path.join(process.cwd(), '.tellrc'));
+    system_file_text = load_system_file_text(tellrc.system_file, process.cwd(), os.homedir(), from_project);
+  } else {
+    // No system-file configured.
+  }
+  const custom_system_text = tellrc_custom_text({
+    ...tellrc,
+    ...(system_file_text !== undefined ? { system_text: system_file_text } : {}),
+  });
   // The prompt stays unwrapped: the core runtime composes the identical
   // `Previous context:` wrapper from the seeded storage on round one.
   const state: ConversationState = {
@@ -897,6 +1034,8 @@ async function run_tell(
     stream: Boolean(opts.stream),
     think: Boolean(opts.think),
     coreConfig: core_config,
+    ...(custom_system_text ? { customSystemText: custom_system_text } : {}),
+    ...(tellrc.temperature !== undefined ? { temperature: tellrc.temperature } : {}),
   };
   if (plan.$ === 'none') fs.rmSync(context_path, { force: true });
   const log = log_file();
@@ -905,7 +1044,7 @@ async function run_tell(
   let ai: AskInstance | null = null;
   try {
     const config = await load_sdk_config();
-    ai = await create_ask_ai(model, config);
+    ai = await create_ask_ai(effective_model, config);
     lock_process_environment();
     await run_response_loop(ai, state, log, context_path, previous_context);
   } catch (error) {
@@ -946,12 +1085,20 @@ async function main() {
     return;
   }
 
-  const input = parse_args(positional_args, opts.model, Boolean(opts.input));
+  // Tellrc-aware model default: flag > env > project > user > positional >
+  // built-in. Aliases resolve without mutating MODELS; a positional custom
+  // alias is accepted in the same slot the parser accepts for models.
+  const early_tellrc = resolve_invocation_tellrc(opts, process.cwd());
+  const opt_model = opts.model ?? early_tellrc.model;
+  const input = parse_args(positional_args, opt_model, Boolean(opts.input), early_tellrc.aliases);
+  const effective_model = resolve_model_input(input.model, early_tellrc.aliases, MODELS);
   const stdin_text = input.readStdin ? await read_stdin().catch(() => '') : '';
   const prompt = format_prompt(input.parts.join(' '), stdin_text, opts);
   if (opts.web) {
+    const web_system_file = opts.systemFile ?? early_tellrc.system_file;
+    const web_system_text = opts.system ?? early_tellrc.system;
     await launch_web({
-      model: input.model,
+      model: effective_model,
       prompt,
       cwd: opts.cwd,
       noExec: opts.exec === false,
@@ -960,6 +1107,19 @@ async function main() {
       yes: opts.yes,
       stream: opts.stream,
       think: opts.think,
+      profile: opts.profile ?? early_tellrc.profile,
+      systemFile: web_system_file,
+      systemText: web_system_file ? undefined : web_system_text,
+      ...(early_tellrc.limits.max_chain_steps !== undefined
+        ? { maxChainSteps: early_tellrc.limits.max_chain_steps }
+        : {}),
+      ...(early_tellrc.limits.max_buffer_bytes !== undefined
+        ? { maxBufferBytes: early_tellrc.limits.max_buffer_bytes }
+        : {}),
+      ...(early_tellrc.limits.context_chars !== undefined ? { contextChars: early_tellrc.limits.context_chars } : {}),
+      ...(early_tellrc.limits.stdin_timeout_ms !== undefined
+        ? { stdinTimeoutMs: early_tellrc.limits.stdin_timeout_ms }
+        : {}),
     });
     return;
   }
@@ -973,7 +1133,7 @@ async function main() {
   // stripped, so a positional model (`tell g --ctx ola`) does not count as a
   // prompt. A bare `--ctx` token (no `%`/`@`) is prompt text only when there
   // is no positional prompt; naming a context requires `%`.
-  await run_tell(input.model, prompt, opts, input.parts.length > 0);
+  await run_tell(effective_model, prompt, opts, input.parts.length > 0);
 }
 
 main().catch((error: unknown) => {

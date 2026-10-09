@@ -359,6 +359,8 @@ export type CliModelIO = {
   think: boolean;
   /** Receives the full raw response of every round (feeds log/timeline). */
   on_raw?: (response: string) => void;
+  /** Sampling temperature 0..2, forwarded only when present. */
+  temperature?: number;
 };
 
 /**
@@ -415,7 +417,10 @@ async function ask_silently(ai: AskInstance, message: string, system: string, io
   process.stderr.write('\x1b[2mThinking...\x1b[0m');
   let response: string;
   try {
-    response = await ai.ask(message, { system, stream: false });
+    response = await ai.ask(
+      message,
+      io.temperature !== undefined ? { system, stream: false, temperature: io.temperature } : { system, stream: false },
+    );
   } finally {
     process.stderr.write('\r\x1b[K');
   }
@@ -474,7 +479,8 @@ async function ask_streaming(ai: AskInstance, message: string, system: string, i
   };
 
   try {
-    for await (const event of ai.ask_stream(message, { system })) {
+    const stream_options = io.temperature !== undefined ? { system, temperature: io.temperature } : { system };
+    for await (const event of ai.ask_stream(message, stream_options)) {
       if (event.type === 'reasoning') {
         const safe_reasoning = sanitize_reasoning(event.text);
         reasoning += safe_reasoning;
