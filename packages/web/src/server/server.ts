@@ -88,6 +88,40 @@ const THINK = cliArgs.think;
 const PORT = cliArgs.port ?? Number(process.env['PORT'] || 3000);
 const HOST = cliArgs.host || '127.0.0.1';
 const EXEC_TIMEOUT_MS = cliArgs.execTimeout ?? 120_000;
+const FORWARDED_PROFILE = cliArgs.profile?.trim() || undefined;
+const FORWARDED_LIMITS = {
+  ...(cliArgs.maxChainSteps !== undefined ? { maxChainSteps: cliArgs.maxChainSteps } : {}),
+  ...(cliArgs.maxBufferBytes !== undefined ? { maxBufferBytes: cliArgs.maxBufferBytes } : {}),
+  ...(cliArgs.contextChars !== undefined ? { contextChars: cliArgs.contextChars } : {}),
+  ...(cliArgs.stdinTimeoutMs !== undefined ? { stdinTimeoutMs: cliArgs.stdinTimeoutMs } : {}),
+} as {
+  maxChainSteps?: number;
+  maxBufferBytes?: number;
+  contextChars?: number;
+  stdinTimeoutMs?: number;
+};
+
+/** Forwarded custom instructions (CLI-resolved tellrc system, 64 KB cap, non-secret). */
+function load_forwarded_system_text(file: string | undefined): string | undefined {
+  if (!file) return undefined;
+  try {
+    const stat = fs.statSync(file);
+    if (!stat.isFile() || stat.size > 64 * 1024) return undefined;
+    const text = fs.readFileSync(file, 'utf8');
+    if (text.includes('\0')) return undefined;
+    const trimmed = text.trim();
+    return trimmed || undefined;
+  } catch {
+    return undefined;
+  }
+}
+const FORWARDED_SYSTEM_TEXT = load_forwarded_system_text(cliArgs.systemFile);
+
+/** Composes forwarded custom instructions before the built project prompt (safety stays last in the base). */
+function compose_forwarded_system(base: string): string {
+  if (!FORWARDED_SYSTEM_TEXT) return base;
+  return `Custom instructions:\n${FORWARDED_SYSTEM_TEXT}\n\n${base}`;
+}
 const TELL_TOKEN = process.env['TELL_TOKEN'] || '';
 const ALLOWED_HOSTS = new Set(
   (process.env['TELL_ALLOWED_HOSTS'] || '')
@@ -740,13 +774,16 @@ app.get('/api/config', (_req, res) => {
     think: THINK,
     cwd: CWD,
     initialPrompt: INITIAL_PROMPT || null,
+    profile: FORWARDED_PROFILE ?? null,
+    limits: FORWARDED_LIMITS,
+    hasCustomSystem: FORWARDED_SYSTEM_TEXT !== undefined,
   });
 });
 
 // API: Auto-generated project context (tree 4 levels + README + AGENTS + protocol)
 app.get('/api/context', (_req, res) => {
   try {
-    const systemPrompt = buildSystemPrompt(CWD);
+    const systemPrompt = compose_forwarded_system(buildSystemPrompt(CWD));
     res.json({ systemPrompt, cwd: CWD });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -853,7 +890,7 @@ app.post('/api/tell', async (req, res) => {
       content: m.content,
     }));
 
-    const effectiveSystem = systemPrompt?.trim() ? systemPrompt : buildSystemPrompt(CWD);
+    const effectiveSystem = systemPrompt?.trim() ? systemPrompt : compose_forwarded_system(buildSystemPrompt(CWD));
 
     // Streaming mode: per-request `stream` override wins over the boot `--stream`.
     // Streaming replies are NDJSON events; the model is resolved before headers are sent.

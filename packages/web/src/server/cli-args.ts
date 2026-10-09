@@ -11,6 +11,18 @@ export interface CliArgs {
   noExec: boolean;
   /** Model shortcode or full spec (`-m/--model`). */
   model: string;
+  /** Tellrc profile name forwarded by the CLI (`--profile`). */
+  profile?: string | undefined;
+  /** File with custom instructions forwarded by the CLI (`--system-file`). */
+  systemFile?: string | undefined;
+  /** Validated max chain steps forwarded by the CLI (`--max-chain-steps`). */
+  maxChainSteps?: number | undefined;
+  /** Validated max buffer bytes forwarded by the CLI (`--max-buffer-bytes`). */
+  maxBufferBytes?: number | undefined;
+  /** Validated context chars forwarded by the CLI (`--context-chars`). */
+  contextChars?: number | undefined;
+  /** Validated stdin timeout ms forwarded by the CLI (`--stdin-timeout-ms`). */
+  stdinTimeoutMs?: number | undefined;
   /** Whether to continue after command output until the AI gives a final answer. */
   chain: boolean;
   /** Whether command execution is auto-confirmed (autoExecute on). */
@@ -66,12 +78,29 @@ export function parseCliArgs(argv: string[], defaultCwd: string): CliArgs {
   const host = argValue(argv, '--host');
   const execTimeoutRaw = argValue(argv, '--exec-timeout');
   const execTimeout = execTimeoutRaw !== undefined ? Number(execTimeoutRaw) : undefined;
+  const profile = argValue(argv, '--profile');
+  const systemFile = argValue(argv, '--system-file');
+  const maxChainStepsRaw = argValue(argv, '--max-chain-steps');
+  const maxBufferBytesRaw = argValue(argv, '--max-buffer-bytes');
+  const contextCharsRaw = argValue(argv, '--context-chars');
+  const stdinTimeoutMsRaw = argValue(argv, '--stdin-timeout-ms');
+  const toPositiveInt = (raw: string | undefined): number | undefined => {
+    if (raw === undefined) return undefined;
+    const value = Math.floor(Number(raw));
+    return Number.isFinite(value) && value > 0 ? value : undefined;
+  };
   return {
     cwd: path.resolve(argCwd || defaultCwd),
     initialPrompt,
     autoExecute: yes && !noExec,
     noExec,
     model,
+    profile,
+    systemFile,
+    maxChainSteps: toPositiveInt(maxChainStepsRaw),
+    maxBufferBytes: toPositiveInt(maxBufferBytesRaw),
+    contextChars: toPositiveInt(contextCharsRaw),
+    stdinTimeoutMs: toPositiveInt(stdinTimeoutMsRaw),
     chain,
     yes,
     requireApproval,
@@ -94,6 +123,17 @@ Options:
   --cwd <path>      Working directory for the sandbox (default: current dir)
   --prompt <text>   Initial chat prompt
   -m, --model <id>  Model shortcode or full spec (default: TELL_MODEL env or "l")
+  --profile <name>  Tellrc profile forwarded by the CLI (node, security, devops)
+  --system-file <path>
+                    File with custom instructions forwarded by the CLI (64 KB cap)
+  --max-chain-steps <n>
+                    Limit override forwarded by the CLI
+  --max-buffer-bytes <n>
+                    Limit override forwarded by the CLI
+  --context-chars <n>
+                    Limit override forwarded by the CLI
+  --stdin-timeout-ms <n>
+                    Limit override forwarded by the CLI
   --port <number>   TCP port for the web server (default: PORT env or 3000)
   --host <address>  Bind address (default: 127.0.0.1; use 0.0.0.0 to expose on LAN)
   --exec-timeout <ms>
