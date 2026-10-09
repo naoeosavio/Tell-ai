@@ -25,7 +25,22 @@ max_chain_steps = 4
 # <cwd>/.tellrc (project layer — wins scalar conflicts)
 model = work
 system-file = ./docs/ESTILO.md
+
+[profiles.backend]
+prompt = Backend reviewer: check handlers, migrations and tests.
+model = s
+temperature = 0.3
+deny = mkfs
+
+[profiles.backend.aliases]
+rev = s+
 ```
+
+## Custom profiles (`profiles.<name>`)
+
+Any section `profiles.<name>` with `<name>` matching `^[a-z0-9][a-z0-9_-]*$` (`PROFILE_NAME_PATTERN`, sections are lowercased before parsing) is a valid profile — `node`, `security` and `devops` are just the built-ins that ship default prompt/style data. Custom names start empty; selecting one that is defined in no layer warns `profile <name> selected but not defined` (typo protection), and an invalid selection warns `invalid profile name`. Unknown sections such as `[profiles.Bad Name!]` or `[policy.x]` still warn `unknown section` and are skipped.
+
+Profile bodies accept `prompt`, `style`, `model`, `temperature`, `system`, `system-file` (`system_file`), deny keys (`deny` / `denycommands` / `deny_commands`, comma-separated, repeatable) and the four limit keys. The aliases subsection `profiles.<name>.aliases` holds that profile's own aliases (`rev = s+` above). Anything else warns `unknown profile key`.
 
 ## Sources and precedence (`resolve_tellrc`)
 
@@ -37,9 +52,13 @@ Env layer (scalars only, never secrets): `TELL_MODEL`, `TELL_SYSTEM`, `TELL_SYST
 
 ## INI grammar (`parse_tellrc`)
 
-`key = value` lines; whole-line `#` / `;` comments; sections `[aliases]`, `[profiles.node]`, `[profiles.security]`, `[profiles.devops]`, `[policy]`, `[limits]`. Inline `#` / `;` stays in values. Unknown sections/keys and lines without `=` produce a yellow stderr warning (no secrets in warnings) and are skipped. A repeated scalar keeps the last assignment; repeated deny entries accumulate. A NUL byte anywhere rejects the parse.
+`key = value` lines; whole-line `#` / `;` comments; sections `[aliases]`, `[profiles.<name>]` (any valid name, plus an aliases subsection `profiles.<name>.aliases`), `[policy]`, `[limits]`. Inline `#` / `;` stays in values. Unknown sections/keys and lines without `=` produce a yellow stderr warning (no secrets in warnings) and are skipped. A repeated scalar keeps the last assignment; repeated deny entries accumulate. A NUL byte anywhere rejects the parse.
 
-Top level accepts `model`, `system`, `system-file` (`system_file`), `temperature`, `profile`. `[policy]` accepts `deny_commands` / `denycommands` / `deny` (comma-separated). `[limits]` and profile bodies accept `max_chain_steps`, `max_buffer_bytes`, `context_chars`, `stdin_timeout_ms`. Profile bodies additionally accept `prompt`, `style`, `model`, `temperature`, deny keys. Files over 256 KB (`TELLRC_MAX_BYTES`) are ignored with a warning.
+Top level accepts `model`, `system`, `system-file` (`system_file`), `temperature`, `profile`. `[policy]` accepts `deny_commands` / `denycommands` / `deny` (comma-separated). `[limits]` and profile bodies accept `max_chain_steps`, `max_buffer_bytes`, `context_chars`, `stdin_timeout_ms`. Profile bodies additionally accept `prompt`, `style`, `model`, `temperature`, `system`, `system-file`, deny keys, and carry their own aliases via the `profiles.<name>.aliases` subsection. Files over 256 KB (`TELLRC_MAX_BYTES`) are ignored with a warning.
+
+## Profile resolution (fill-if-empty defaults)
+
+A profile is an opinionated default, never an override: `model`, `temperature`, limits, `system` and `system-file` from the active profile fill their slots **only when no explicit layer set them** (flag > env > file). Profile `system-file` beats profile inline `system`, mirroring the top-level rule. Profile aliases merge **below** file-level `[aliases]` (project > user > profile): gaps are filled, never overridden. Profile deny entries always join the monotonic union. `provenance` records `profile:<name>` sources (`system`, `system_file`, `model`, `temperature`, `limits.*`, `aliases` when only the profile provided them).
 
 ## Model aliases (`resolve_model_input`)
 
@@ -47,9 +66,9 @@ Custom aliases live in a per-invocation table — `MODELS` is never mutated (dee
 
 ## System composition and safety (`compose_system_prompt`)
 
-`tellrc_custom_text` collects file text (or inline `system`) plus profile `prompt`/`style`, and `compose_system_prompt` prepends it as `Custom instructions:` **before** the safety prompt — config can never replace `<RUN>`, approval, injection or deny rules, which stay last. `TellOptions.system` remains an explicit library override for direct callers; the tellrc path only ever prepends.
+`tellrc_custom_text` collects top-level file text (or inline `system`), then profile file/inline system, then profile `prompt`/`style`, and `compose_system_prompt` prepends the result as `Custom instructions:` **before** the safety prompt — config can never replace `<RUN>`, approval, injection or deny rules, which stay last. Profile system is a fill-if-empty default: it appears only when no top-level system text exists (never duplicated with a filled slot, never stacked over an explicit choice). `TellOptions.system` remains an explicit library override for direct callers; the tellrc path only ever prepends.
 
-`system-file` gates (`load_system_file_text`): 64 KB cap (`SYSTEM_FILE_MAX_BYTES`), regular file only, NUL rejected, `~` expanded in paths only. A project-layer file must stay inside the cwd — lexical check plus `realpath` symlink-target check — otherwise it is ignored with a warning. User/flag/env files are the caller's explicit choice, so only the project gate applies to them.
+`system-file` gates (`load_system_file_text`): 64 KB cap (`SYSTEM_FILE_MAX_BYTES`), regular file only, NUL rejected, `~` expanded in paths only. A project-layer file must stay inside the cwd — lexical check plus `realpath` symlink-target check — otherwise it is ignored with a warning. The same gates apply to a profile `system-file` (origin tracked per field in `system_file_from`). User/flag/env files are the caller's explicit choice, so only the project gate applies to them.
 
 ## Temperature and limits
 
@@ -59,19 +78,19 @@ Limits are validated data delegated to runtime-limits (no second policy imported
 
 ## `tell --web` forwarding (`launch_web`)
 
-The Web never reads `.tellrc` directly — the CLI resolves and forwards only non-secret fields: model via `-m`, profile via `--profile`, system via `--system-file`, limits via numeric flags (`--max-chain-steps`, `--max-buffer-bytes`, `--context-chars`, `--stdin-timeout-ms`). Existing flags (`--port`, `--host`, `--prompt`, `--exec-timeout`) are preserved. Inline system travels in a `0600` temp file removed in `finally`; keys, URLs, `TELL_KEY` and `TELL_TOKEN` never appear in args, files or `/api/config` (which exposes only `profile`, `limits`, `hasCustomSystem`). Unforwarded model falls back to the web default `l`.
+The Web never reads `.tellrc` directly — the CLI resolves and forwards only non-secret fields: model via `-m`, profile via `--profile`, system via `--system-file`, limits via numeric flags (`--max-chain-steps`, `--max-buffer-bytes`, `--context-chars`, `--stdin-timeout-ms`). Existing flags (`--port`, `--host`, `--prompt`, `--exec-timeout`) are preserved. Inline system travels in a `0600` temp file removed in `finally`; keys, URLs, `TELL_KEY` and `TELL_TOKEN` never appear in args, files or `/api/config` (which exposes only `profile`, `limits`, `hasCustomSystem`). Unforwarded model falls back to the web default `l`. Known limitation: profile aliases do **not** cross to the Web (the server resolves models against its own table); the composed system text (including profile system/prompt/style) does.
 
 ## Use cases
 
 - **Personal default**: `model` + `temperature` in `~/.tellrc` instead of repeating `-m` every call.
 - **Per-project convention**: repo `.tellrc` with `system-file = ./AGENTS.md` and a reviewer alias; every checkout inherits the behavior.
-- **Posture profiles**: `--profile security` for audits, `devops` for idempotent operations, `node` for the bun/TS stack.
+- **Posture profiles**: `--profile security` for audits, `devops` for idempotent operations, `node` for the bun/TS stack — or a custom `[profiles.backend]` per team workflow.
 - **Team guardrail**: project `[policy] denyCommands` that no `-y` or lower layer can relax (enforced by the policy sandbox).
 - **Web continuity**: `tell -w` carries profile/system/limits into the sandbox automatically.
 
 ## Tests
 
-`test/test-tell-tellrc.js` (18 tests, `test:tellrc` — offline, no secrets; currently outside the `test`/`ci` aggregate as an explicit future gate): missing file, comments, duplicates, unknown section, `#`/`;` preservation, tilde, NUL, 256 KB cap, system-file gates (dir/cap/symlink/ok), precedence matrix, deny union, profile data incl. unknown profile, alias resolution with `MODELS` deep-equal, temperature validation + SDK `RangeError`, limits validation, safety-last composition, web `cli-args` parsing.
+`test/test-tell-tellrc.js` (24 tests, `test:tellrc` — offline, no secrets; currently outside the `test`/`ci` aggregate as an explicit future gate): missing file, comments, duplicates, unknown section, `#`/`;` preservation, tilde, NUL, 256 KB cap, system-file gates (dir/cap/symlink/ok), precedence matrix, deny union, profile data incl. selected-but-undefined and invalid names, custom profile names, profile system fill/precedence (no duplication), profile system-file resolution, profile aliases subsection + merge order, alias resolution with `MODELS` deep-equal, temperature validation + SDK `RangeError`, limits validation, safety-last composition, web `cli-args` parsing.
 
 ## Key constants (`tellrc.ts:6-13`)
 
@@ -80,6 +99,7 @@ The Web never reads `.tellrc` directly — the CLI resolves and forwards only no
 | `TELLRC_MAX_BYTES` | `256 * 1024` | `.tellrc` size cap before ignore-with-warning |
 | `SYSTEM_FILE_MAX_BYTES` | `64 * 1024` | `system-file` payload cap |
 | `TEMPERATURE_MIN` / `TEMPERATURE_MAX` | `0` / `2` | Valid temperature interval |
-| `BUILTIN_PROFILES` | `node`, `security`, `devops` | Profiles shipped as data |
+| `BUILTIN_PROFILES` | `node`, `security`, `devops` | Profiles shipped with default data |
+| `PROFILE_NAME_PATTERN` | `/^[a-z0-9][a-z0-9_-]*$/` | Valid custom profile names |
 
-Sources: `packages/cli/src/tellrc.ts`, `Tell.ts:147-151`, `Tell.ts:553-562`, `Tell.ts:947-975`, `Tell.ts:1091-1145`, `packages/cli/src/core-adapters.ts`, `packages/sdk/src/ask.ts`, `packages/sdk/src/tell.ts`, `packages/web/src/server/cli-args.ts`, `packages/web/src/server/server.ts`, `test/test-tell-tellrc.js`.
+Sources: `packages/cli/src/tellrc.ts`, `Tell.ts:147-151`, `Tell.ts:553-562`, `Tell.ts:947-975`, `Tell.ts:1015-1045`, `Tell.ts:1106-1152`, `packages/cli/src/core-adapters.ts`, `packages/sdk/src/ask.ts`, `packages/sdk/src/tell.ts`, `packages/web/src/server/cli-args.ts`, `packages/web/src/server/server.ts`, `test/test-tell-tellrc.js`.

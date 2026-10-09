@@ -89,11 +89,16 @@ out (JSON is data output only). Sources `~/.tellrc` (user) and `<cwd>/.tellrc`
 (project), owned by `packages/cli/src/tellrc.ts`. Scalar precedence:
 `flag > env > project .tellrc > user ~/.tellrc > default`; `denyCommands` is
 union-only and can never be removed by a flag or lower layer. Sections:
-`[aliases]`, `[profiles.node|security|devops]`, `[policy]`, `[limits]`; top
+`[aliases]`, `[profiles.<name>]` (any valid name — `node`, `security`,
+`devops` ship defaults — plus an aliases subsection
+`profiles.<name>.aliases`), `[policy]`, `[limits]`; top
 level takes `model`, `system`, `system-file`, `temperature`, `profile`.
 Custom aliases resolve per invocation without mutating `MODELS`. Tellrc
 `system`/`system-file` compose as custom instructions before the safety
 prompt and can never replace `<RUN>`, approval, injection or deny rules.
+Profiles add `system`/`system-file`/own aliases as fill-if-empty defaults
+(file aliases win: project > user > profile); selecting an undefined
+profile warns. Full reference: [tellrc.md](tellrc.md).
 `TellOptions.system` stays an explicit library override. `tell --web`
 receives only non-secret forwarded fields (model, profile, system-file,
 numeric limits); keys/URLs/secrets never cross the boundary.

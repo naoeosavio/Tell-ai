@@ -374,6 +374,10 @@ Conversations are logged to `~/.ai/tell_history/` with timestamps.
 | Variable          | Description                    | Default |
 |-------------------|--------------------------------|---------|
 | `TELL_MODEL`      | Default model alias            | `g`     |
+| `TELL_SYSTEM`     | Custom instructions (tellrc env layer) | unset |
+| `TELL_SYSTEM_FILE` | File with custom instructions (tellrc env layer) | unset |
+| `TELL_TEMPERATURE` | Sampling temperature 0..2 (tellrc env layer) | unset |
+| `TELL_PROFILE`    | Tellrc profile: `node`, `security`, `devops` | unset |
 | `DEBUG`           | Enable debug output            | unset   |
 | `CUSTOM_BASE_URL` | Base URL for the `custom` vendor | unset |
 | `CUSTOM_API_KEY`  | Key for the `custom` vendor (or `~/.config/custom.token`) | unset |
