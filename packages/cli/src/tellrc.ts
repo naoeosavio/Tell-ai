@@ -29,6 +29,14 @@ export type TellrcProfile = {
   style?: string | undefined;
   model?: string | undefined;
   temperature?: number | undefined;
+  system?: string | undefined;
+  system_file?: string | undefined;
+  /** Origin of `system_file` (file path), for the project path gate. */
+  system_file_from?: string | undefined;
+  /** Loaded `system_file` payload (set by the caller, never parsed). */
+  system_text?: string | undefined;
+  /** Aliases scoped to this profile (below file-level `[aliases]`). */
+  aliases: Record<string, string>;
   deny_commands: string[];
   limits: TellrcLimits;
 };
@@ -93,6 +101,9 @@ const KNOWN_PROFILE_KEYS = new Set([
   'style',
   'model',
   'temperature',
+  'system',
+  'system-file',
+  'system_file',
   'deny_commands',
   'denycommands',
   'deny',
@@ -102,6 +113,39 @@ const KNOWN_PROFILE_KEYS = new Set([
   'stdin_timeout_ms',
 ]);
 const KNOWN_LIMIT_KEYS = new Set(['max_chain_steps', 'max_buffer_bytes', 'context_chars', 'stdin_timeout_ms']);
+/** Charset for custom profile names (`profiles.<name>` sections). */
+export const PROFILE_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
+
+/**
+ * Splits a `profiles.*` section name into its profile and kind.
+ *
+ * Accepts `profiles.<name>` and the aliases subsection
+ * `profiles.<name>.aliases` for any name matching
+ * `PROFILE_NAME_PATTERN` (sections are lowercased before parsing).
+ *
+ * @param name - Lowercased section name starting with `profiles.`.
+ * @returns The profile name and subsection kind, or null when invalid.
+ */
+export function parse_profile_section(name: string): { profile: string; aliases_only: boolean } | null {
+  const rest = name.slice('profiles.'.length);
+  if (!rest) {
+    return null;
+  } else {
+    const alias_suffix = '.aliases';
+    if (rest.endsWith(alias_suffix)) {
+      const profile = rest.slice(0, -alias_suffix.length);
+      if (!PROFILE_NAME_PATTERN.test(profile)) {
+        return null;
+      } else {
+        return { profile, aliases_only: true };
+      }
+    } else if (!PROFILE_NAME_PATTERN.test(rest)) {
+      return null;
+    } else {
+      return { profile: rest, aliases_only: false };
+    }
+  }
+}
 
 /**
  * Emits a yellow CLI-style warning to stderr without leaking values.
@@ -216,8 +260,8 @@ export function empty_parsed_tellrc(source: string): ParsedTellrc {
  * Parses INI text into a `ParsedTellrc` without dependencies.
  *
  * Rules: `key = value` lines, whole-line `#`/`;` comments, sections
- * `[aliases]`, `[profiles.node|security|devops]`, `[policy]` and
- * `[limits]`. Inline `#`/`;` stays in values. Repeated scalars keep the
+ * `[aliases]`, `[profiles.<name>]` (any valid name, plus an aliases
+ * subsection `profiles.<name>.aliases`), `[policy]` and `[limits]`. Inline `#`/`;` stays in values. Repeated scalars keep the
  * last assignment; deny entries accumulate.
  *
  * @param text - Raw INI file content.
@@ -243,15 +287,15 @@ export function parse_tellrc(text: string, source: string): ParsedTellrc {
       continue;
     } else if (line.startsWith('[') && line.endsWith(']')) {
       const name = line.slice(1, -1).trim().toLowerCase();
-      if (
-        name === 'aliases' ||
-        name === 'policy' ||
-        name === 'limits' ||
-        name === 'profiles.node' ||
-        name === 'profiles.security' ||
-        name === 'profiles.devops'
-      ) {
+      if (name === 'aliases' || name === 'policy' || name === 'limits') {
         section = name;
+      } else if (name === 'profiles' || name.startsWith('profiles.')) {
+        if (parse_profile_section(name) === null) {
+          parsed.warnings.push(`${source}:${index + 1}: unknown section [${name}]`);
+          section = '';
+        } else {
+          section = name;
+        }
       } else {
         parsed.warnings.push(`${source}:${index + 1}: unknown section [${name}]`);
         section = '';
@@ -321,13 +365,27 @@ export function parse_tellrc(text: string, source: string): ParsedTellrc {
         }
       }
     } else if (section.startsWith('profiles.')) {
-      const profile_name = section.slice('profiles.'.length);
-      const existing: TellrcProfile = parsed.profiles[profile_name] ?? {
-        name: profile_name,
+      const part = parse_profile_section(section);
+      if (part === null) {
+        parsed.warnings.push(`${source}:${index + 1}: key outside a known section`);
+        continue;
+      } else {
+        // Section header was validated; route the key below.
+      }
+      const existing: TellrcProfile = parsed.profiles[part.profile] ?? {
+        name: part.profile,
+        aliases: {},
         deny_commands: [],
         limits: {},
       };
-      if (!KNOWN_PROFILE_KEYS.has(key)) {
+      if (part.aliases_only) {
+        const alias_name = raw_key.trim();
+        if (!alias_name) {
+          parsed.warnings.push(`${source}:${index + 1}: invalid alias`);
+        } else {
+          existing.aliases[alias_name] = raw_value;
+        }
+      } else if (!KNOWN_PROFILE_KEYS.has(key)) {
         parsed.warnings.push(`${source}:${index + 1}: unknown profile key ${raw_key}`);
         continue;
       } else if (key === 'prompt') {
@@ -343,6 +401,11 @@ export function parse_tellrc(text: string, source: string): ParsedTellrc {
         } else {
           existing.temperature = value;
         }
+      } else if (key === 'system') {
+        existing.system = raw_value;
+      } else if (key === 'system-file' || key === 'system_file') {
+        existing.system_file = raw_value;
+        existing.system_file_from = source;
       } else if (key === 'deny_commands' || key === 'denycommands' || key === 'deny') {
         existing.deny_commands.push(...split_deny_value(raw_value));
       } else if (KNOWN_LIMIT_KEYS.has(key)) {
@@ -356,7 +419,7 @@ export function parse_tellrc(text: string, source: string): ParsedTellrc {
         parsed.warnings.push(`${source}:${index + 1}: unknown profile key ${raw_key}`);
         continue;
       }
-      parsed.profiles[profile_name] = existing;
+      parsed.profiles[part.profile] = existing;
     } else {
       parsed.warnings.push(`${source}:${index + 1}: key outside a known section`);
     }
@@ -437,7 +500,10 @@ export function load_tellrc(cwd: string, home: string): TellrcLayer[] {
 /**
  * Builds the built-in profile record for one name.
  *
- * @param name - Profile name (node, security or devops).
+ * Known names carry default prompt/style data; any other valid name starts
+ * empty (custom profiles have no built-in defaults).
+ *
+ * @param name - Profile name (built-in or custom).
  * @returns The built-in profile data.
  */
 export function builtin_profile(name: string): TellrcProfile {
@@ -446,6 +512,7 @@ export function builtin_profile(name: string): TellrcProfile {
       name,
       prompt: 'You are a security-focused assistant. Prefer least privilege and call out risks.',
       style: 'cautious',
+      aliases: {},
       deny_commands: [],
       limits: {},
     };
@@ -454,17 +521,21 @@ export function builtin_profile(name: string): TellrcProfile {
       name,
       prompt: 'You are a DevOps assistant. Prefer idempotent commands and explicit verification.',
       style: 'operational',
+      aliases: {},
+      deny_commands: [],
+      limits: {},
+    };
+  } else if (name === 'node') {
+    return {
+      name,
+      prompt: 'You are a Node.js assistant. Prefer bun, TypeScript and minimal dependencies.',
+      style: 'concise',
+      aliases: {},
       deny_commands: [],
       limits: {},
     };
   } else {
-    return {
-      name: 'node',
-      prompt: 'You are a Node.js assistant. Prefer bun, TypeScript and minimal dependencies.',
-      style: 'concise',
-      deny_commands: [],
-      limits: {},
-    };
+    return { name, aliases: {}, deny_commands: [], limits: {} };
   }
 }
 
@@ -512,11 +583,19 @@ export function resolve_tellrc(layers: TellrcLayer[], flags: TellrcFlags = {}, e
       provenance[`limits.${key}`] = layer.source;
     }
     for (const [name, entry] of Object.entries(layer.profiles)) {
-      const merged: TellrcProfile = profiles[name] ?? { name, deny_commands: [], limits: {} };
+      const merged: TellrcProfile = profiles[name] ?? { name, aliases: {}, deny_commands: [], limits: {} };
       if (entry.prompt !== undefined) merged.prompt = entry.prompt;
       if (entry.style !== undefined) merged.style = entry.style;
       if (entry.model !== undefined) merged.model = entry.model;
       if (entry.temperature !== undefined) merged.temperature = entry.temperature;
+      if (entry.system !== undefined) merged.system = entry.system;
+      if (entry.system_file !== undefined) {
+        merged.system_file = entry.system_file;
+        merged.system_file_from = layer.source;
+      } else {
+        // No system-file for this profile in this layer.
+      }
+      Object.assign(merged.aliases, entry.aliases);
       for (const deny of entry.deny_commands) {
         if (!merged.deny_commands.includes(deny)) merged.deny_commands.push(deny);
       }
@@ -633,36 +712,42 @@ export function resolve_tellrc(layers: TellrcLayer[], flags: TellrcFlags = {}, e
   if (temperature_from) provenance['temperature'] = temperature_from;
   if (profile_from) provenance['profile'] = profile_from;
 
-  // System and system-file: last occurrence wins in the winning layer —
-  // the resolver already kept only the topmost scalar, and an explicit
-  // system-file suppresses inline system from the same resolution.
-  let resolved_system = system;
-  const resolved_system_file = system_file;
-  if (resolved_system_file !== undefined && resolved_system !== undefined) {
-    resolved_system = system;
-  } else {
-    // Single system source — nothing to disambiguate.
-  }
-
   let profile_data: TellrcProfile | undefined;
   if (profile) {
-    const base = builtin_profile(profile);
-    const overlay = profiles[profile];
-    if (overlay) {
-      profile_data = {
-        name: profile,
-        prompt: overlay.prompt ?? base.prompt,
-        style: overlay.style ?? base.style,
-        model: overlay.model ?? base.model,
-        temperature: overlay.temperature ?? base.temperature,
-        deny_commands: [...base.deny_commands, ...overlay.deny_commands.filter((d) => !base.deny_commands.includes(d))],
-        limits: { ...base.limits, ...overlay.limits },
-      };
-    } else if ((BUILTIN_PROFILES as readonly string[]).includes(profile)) {
-      profile_data = { ...base, deny_commands: [...base.deny_commands], limits: { ...base.limits } };
-    } else {
-      warnings.push(`unknown profile ${profile}`);
+    if (!PROFILE_NAME_PATTERN.test(profile)) {
+      warnings.push(`invalid profile name ${profile}`);
       profile_data = undefined;
+    } else {
+      const base = builtin_profile(profile);
+      const overlay = profiles[profile];
+      if (overlay) {
+        profile_data = {
+          name: profile,
+          prompt: overlay.prompt ?? base.prompt,
+          style: overlay.style ?? base.style,
+          model: overlay.model ?? base.model,
+          temperature: overlay.temperature ?? base.temperature,
+          system: overlay.system ?? base.system,
+          system_file: overlay.system_file ?? base.system_file,
+          system_file_from: overlay.system_file_from ?? base.system_file_from,
+          aliases: { ...base.aliases, ...overlay.aliases },
+          deny_commands: [
+            ...base.deny_commands,
+            ...overlay.deny_commands.filter((d) => !base.deny_commands.includes(d)),
+          ],
+          limits: { ...base.limits, ...overlay.limits },
+        };
+      } else if ((BUILTIN_PROFILES as readonly string[]).includes(profile)) {
+        profile_data = {
+          ...base,
+          aliases: { ...base.aliases },
+          deny_commands: [...base.deny_commands],
+          limits: { ...base.limits },
+        };
+      } else {
+        warnings.push(`profile ${profile} selected but not defined`);
+        profile_data = undefined;
+      }
     }
     if (profile_data) {
       for (const entry of profile_data.deny_commands) {
@@ -688,11 +773,53 @@ export function resolve_tellrc(layers: TellrcLayer[], flags: TellrcFlags = {}, e
       } else {
         // Explicit temperature wins over the profile default.
       }
+      if (profile_data.system_file !== undefined && system_file === undefined && system === undefined) {
+        system_file = profile_data.system_file;
+        system_file_from = profile_data.system_file_from ?? `profile:${profile}`;
+        provenance['system_file'] = system_file_from;
+      } else {
+        // Explicit system wins over the profile default.
+      }
+      if (profile_data.system !== undefined && system_file === undefined && system === undefined) {
+        system = profile_data.system;
+        system_from = `profile:${profile}`;
+        provenance['system'] = system_from;
+      } else {
+        // Explicit system wins over the profile default.
+      }
+      // Profile aliases sit below file-level `[aliases]` (project > user >
+      // profile): only gaps are filled, never overrides.
+      let profile_alias_count = 0;
+      for (const [alias, spec] of Object.entries(profile_data.aliases)) {
+        if (aliases[alias] === undefined) {
+          aliases[alias] = spec;
+          profile_alias_count += 1;
+        } else {
+          // File-level alias wins over the profile default.
+        }
+      }
+      if (profile_alias_count > 0 && provenance['aliases'] === undefined) {
+        provenance['aliases'] = `profile:${profile}`;
+      } else {
+        // File aliases already carry the provenance.
+      }
     } else {
-      // Unknown profile — no data to merge.
+      // Invalid or undefined profile — no data to merge.
     }
   } else {
     // No profile selected.
+  }
+
+  // System and system-file: last occurrence wins in the winning layer —
+  // the resolver already kept only the topmost scalar, and an explicit
+  // system-file suppresses inline system from the same resolution.
+  // Profile system fills the same slots only when both are empty (above).
+  let resolved_system = system;
+  const resolved_system_file = system_file;
+  if (resolved_system_file !== undefined && resolved_system !== undefined) {
+    resolved_system = system;
+  } else {
+    // Single system source — nothing to disambiguate.
   }
 
   const resolved: ResolvedTellrc = {
@@ -879,20 +1006,30 @@ export function compose_system_prompt(safety_prompt: string, custom_text?: strin
 /**
  * Collects the custom instruction text for a resolved tellrc.
  *
+ * Order: top-level file/inline system, then profile file/inline system,
+ * then profile prompt/style. Profile system is a fill-if-empty default:
+ * it is included only when no top-level system text exists (never
+ * duplicated with a filled slot, never stacked over an explicit choice).
+ * Empty blocks are skipped.
+ *
  * @param resolved - Resolved tellrc (system/system_text/profile_data).
  * @returns The combined custom text (empty when none).
  */
 export function tellrc_custom_text(resolved: ResolvedTellrc): string {
   const parts: string[] = [];
-  if (resolved.system_text?.trim()) {
-    parts.push(resolved.system_text.trim());
-  } else if (resolved.system?.trim()) {
-    parts.push(resolved.system.trim());
+  const top_text = (resolved.system_text ?? resolved.system ?? '').trim();
+  if (top_text) {
+    parts.push(top_text);
   } else {
-    // No inline or file system text.
+    // No top-level inline or file system text.
   }
-  const profile_prompt = resolved.profile_data?.prompt?.trim();
-  const profile_style = resolved.profile_data?.style?.trim();
+  const profile_data = resolved.profile_data;
+  if (!top_text) {
+    const profile_text = (profile_data?.system_text ?? profile_data?.system ?? '').trim();
+    if (profile_text) parts.push(profile_text);
+  }
+  const profile_prompt = profile_data?.prompt?.trim();
+  const profile_style = profile_data?.style?.trim();
   if (profile_prompt) parts.push(profile_prompt);
   if (profile_style) parts.push(`Style: ${profile_style}`);
   return parts.join('\n\n');

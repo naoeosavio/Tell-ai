@@ -160,7 +160,11 @@ fast and full `vendor:model:thinking` specs keep working). `system` /
 config can never replace `<RUN>`, approval, injection or deny rules.
 `system-file` is capped at 64 KB, must be a regular file, and a project file
 may not escape the cwd via symlink. Profiles `node`, `security` and `devops`
-carry prompt/style/model/temperature/deny/limits data; enforcement stays in
+carry prompt/style/model/temperature/deny/limits data, and any
+`[profiles.<name>]` is a valid custom profile (own `system`/`system-file`,
+own aliases via `[profiles.<name>.aliases]`, fill-if-empty semantics —
+explicit layers always win, file aliases beat profile aliases); enforcement
+stays in
 the policy sandbox. `tell --web` forwards only non-secret fields (model via
 `-m`, profile, system via `--system-file`, numeric limits); keys, URLs and
 secrets never enter args, files or `/api/config`. Env layer: `TELL_MODEL`,
@@ -244,7 +248,7 @@ npm run test:security
 npm run test:mentions   # @path expansion + outside-cwd read gate
 npm run test:context    # --ctx grammar + --history
 npm run test:stream     # --stream / --think
-npm run test:tellrc     # .tellrc parser, precedence, profiles, aliases, temperature (not in `npm test` aggregate yet — future gate)
+npm run test:tellrc     # .tellrc parser, precedence, profiles, aliases, temperature (24 tests; not in `npm test` aggregate yet — future gate)
 ```
 
 License
