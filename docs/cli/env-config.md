@@ -74,9 +74,29 @@ CUSTOM_MODEL=kimi-k3 tell -m custom "hi"
 
 | Variable | Read at | Default | Meaning |
 |----------|---------|---------|---------|
-| `TELL_MODEL` | `Tell.ts:24` (module scope) | `'g'` | Default model when no positional/`-m` given |
+| `TELL_MODEL` | `Tell.ts` (module scope) + tellrc env layer | `'g'` | Default model when no positional/`-m`/tellrc model given |
+| `TELL_SYSTEM` | tellrc env layer | unset | Custom instructions (compose before the safety prompt) |
+| `TELL_SYSTEM_FILE` | tellrc env layer | unset | File with custom instructions (64 KB cap) |
+| `TELL_TEMPERATURE` | tellrc env layer | unset | Sampling temperature 0..2 |
+| `TELL_PROFILE` | tellrc env layer | unset | Tellrc profile (`node`, `security`, `devops`) |
 | `CUSTOM_BASE_URL`, `CUSTOM_API_KEY`, `CUSTOM_MODEL`, `CUSTOM_API`, `CUSTOM_HEADERS` | `src/env.ts` (`load_sdk_config`) | unset | Custom vendor: see above |
 | `DEBUG` | `src/env.ts:8` (`'true'`/`'1'`) | unset | Exported SDK-config debug flag (currently no verbose logging wired in `Tell.ts`) |
+
+## `.tellrc` (INI-only config)
+
+The only persisted config file is INI — `tell.config.json` is deliberately
+out (JSON is data output only). Sources `~/.tellrc` (user) and `<cwd>/.tellrc`
+(project), owned by `packages/cli/src/tellrc.ts`. Scalar precedence:
+`flag > env > project .tellrc > user ~/.tellrc > default`; `denyCommands` is
+union-only and can never be removed by a flag or lower layer. Sections:
+`[aliases]`, `[profiles.node|security|devops]`, `[policy]`, `[limits]`; top
+level takes `model`, `system`, `system-file`, `temperature`, `profile`.
+Custom aliases resolve per invocation without mutating `MODELS`. Tellrc
+`system`/`system-file` compose as custom instructions before the safety
+prompt and can never replace `<RUN>`, approval, injection or deny rules.
+`TellOptions.system` stays an explicit library override. `tell --web`
+receives only non-secret forwarded fields (model, profile, system-file,
+numeric limits); keys/URLs/secrets never cross the boundary.
 
 ## System prompt wiring (`src/systemPrompt.ts:6-12`)
 

@@ -125,6 +125,48 @@ tell -w --cwd ~/project -m s --stream
 `--stream`, `--think`, `--chain`, `-y`, `--no-exec` and `--require-approval` are
 forwarded to it. See [`@tell-ai/web`](../web/README.md).
 
+### `.tellrc` — profiles, aliases, temperature and limits
+
+The only persisted config file is INI (there is deliberately no
+`tell.config.json`; JSON appears only as `--json` data output, a different
+contract). Two sources merge: `~/.tellrc` (user) and `<cwd>/.tellrc`
+(project). Scalar precedence is
+`flag > env > project .tellrc > user ~/.tellrc > default`; deny entries are
+union-only — the most restrictive set always wins and no flag or lower layer
+can remove an entry.
+
+```ini
+model = s
+temperature = 0.7
+profile = node
+
+[aliases]
+work = openai:gpt-6.1-sol:high
+
+[profiles.node]
+prompt = Prefer bun and TypeScript.
+
+[policy]
+denyCommands = rm -rf /, mkfs
+
+[limits]
+max_chain_steps = 4
+```
+
+Custom aliases resolve per invocation without mutating the built-in table
+(`-m`, `--model` and a valid positional model all accept them; dot-prefix
+fast and full `vendor:model:thinking` specs keep working). `system` /
+`system-file` compose as custom instructions *before* the safety prompt —
+config can never replace `<RUN>`, approval, injection or deny rules.
+`system-file` is capped at 64 KB, must be a regular file, and a project file
+may not escape the cwd via symlink. Profiles `node`, `security` and `devops`
+carry prompt/style/model/temperature/deny/limits data; enforcement stays in
+the policy sandbox. `tell --web` forwards only non-secret fields (model via
+`-m`, profile, system via `--system-file`, numeric limits); keys, URLs and
+secrets never enter args, files or `/api/config`. Env layer: `TELL_MODEL`,
+`TELL_SYSTEM`, `TELL_SYSTEM_FILE`, `TELL_TEMPERATURE`, `TELL_PROFILE`.
+New flags: `--profile`, `--system`, `--system-file`, `--temperature` (0..2).
+
 ### Flag interactions
 
 | Flags | Reads context? | Deletes? | Writes? | Loop? |
@@ -202,6 +244,7 @@ npm run test:security
 npm run test:mentions   # @path expansion + outside-cwd read gate
 npm run test:context    # --ctx grammar + --history
 npm run test:stream     # --stream / --think
+npm run test:tellrc     # .tellrc parser, precedence, profiles, aliases, temperature (not in `npm test` aggregate yet — future gate)
 ```
 
 License
