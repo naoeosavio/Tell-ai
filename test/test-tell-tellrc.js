@@ -155,7 +155,87 @@ function test_profiles_data() {
   assert.strictEqual(security.profile_data.name, 'security');
   const unknown = tellrc.resolve_tellrc([], { profile: 'nope' }, {});
   assert.strictEqual(unknown.profile_data, undefined);
-  assert.ok(unknown.warnings.some((w) => w.includes('unknown profile')));
+  assert.ok(unknown.warnings.some((w) => w.includes('selected but not defined')));
+  const invalid = tellrc.resolve_tellrc([], { profile: 'Bad Name!' }, {});
+  assert.strictEqual(invalid.profile_data, undefined);
+  assert.ok(invalid.warnings.some((w) => w.includes('invalid profile name')));
+}
+
+function test_custom_profile_name_accepted() {
+  const parsed = tellrc.parse_tellrc(
+    '[profiles.backend]\nprompt = Backend reviewer.\nstyle = thorough\nmodel = s\ntemperature = 0.3\ndeny = mkfs\nmax_chain_steps = 3\n',
+    'test',
+  );
+  assert.ok(parsed.warnings.length === 0);
+  assert.strictEqual(parsed.profiles['backend'].prompt, 'Backend reviewer.');
+  const resolved = tellrc.resolve_tellrc([{ ...parsed, source: 'user', rank: 1 }], {}, {});
+  assert.strictEqual(resolved.profile, undefined);
+  const selected = tellrc.resolve_tellrc([{ ...parsed, source: 'user', rank: 1 }], { profile: 'backend' }, {});
+  assert.strictEqual(selected.profile, 'backend');
+  assert.strictEqual(selected.profile_data.prompt, 'Backend reviewer.');
+  assert.strictEqual(selected.profile_data.style, 'thorough');
+  assert.strictEqual(selected.model, 's');
+  assert.strictEqual(selected.temperature, 0.3);
+  assert.deepStrictEqual(selected.deny_commands, ['mkfs']);
+  assert.strictEqual(selected.limits.max_chain_steps, 3);
+}
+
+function test_invalid_profile_section_name() {
+  const parsed = tellrc.parse_tellrc('[profiles.Bad Name!]\nprompt = x\n[profiles.]\nprompt = y\n[profiles]\nprompt = z\n', 'test');
+  assert.ok(parsed.warnings.some((w) => w.includes('unknown section [profiles.bad name!]')));
+  assert.ok(parsed.warnings.some((w) => w.includes('unknown section [profiles.]')));
+  assert.ok(parsed.warnings.some((w) => w.includes('unknown section [profiles]')));
+  assert.deepStrictEqual(Object.keys(parsed.profiles), []);
+}
+
+function test_profile_system_fill_and_precedence() {
+  const parsed = tellrc.parse_tellrc('[profiles.backend]\nsystem = Profile system.\n', 'test');
+  const filled = tellrc.resolve_tellrc([{ ...parsed, source: 'user', rank: 1 }], { profile: 'backend' }, {});
+  assert.strictEqual(filled.system, 'Profile system.');
+  assert.strictEqual(filled.provenance['system'], 'profile:backend');
+  const filled_text = tellrc.tellrc_custom_text({ ...filled, system_text: undefined });
+  assert.strictEqual(filled_text.split('Profile system.').length - 1, 1);
+  const explicit = tellrc.resolve_tellrc([{ ...parsed, source: 'user', rank: 1 }], { profile: 'backend', system: 'Flag system.' }, {});
+  assert.strictEqual(explicit.system, 'Flag system.');
+  assert.strictEqual(explicit.provenance['system'], 'flag');
+  const custom = tellrc.tellrc_custom_text({ ...explicit, system_text: undefined });
+  assert.ok(custom.includes('Flag system.'));
+  assert.ok(!custom.includes('Profile system.'));
+}
+
+function test_profile_system_file_resolved() {
+  const parsed = tellrc.parse_tellrc('[profiles.backend]\nsystem-file = ./docs/SYS.md\n', 'test');
+  const resolved = tellrc.resolve_tellrc([{ ...parsed, source: '/home/u/.tellrc', rank: 1 }], { profile: 'backend' }, {});
+  assert.strictEqual(resolved.system_file, './docs/SYS.md');
+  assert.strictEqual(resolved.profile_data.system_file_from, '/home/u/.tellrc');
+  const with_text = tellrc.tellrc_custom_text({
+    ...resolved,
+    profile_data: { ...resolved.profile_data, system_text: 'File payload.' },
+  });
+  assert.ok(with_text.startsWith('File payload.'));
+}
+
+function test_profile_aliases_subsection_and_order() {
+  const before = JSON.parse(JSON.stringify(sdk.MODELS));
+  const user = tellrc.parse_tellrc('[profiles.backend.aliases]\nrev = s+\n', 'user');
+  assert.strictEqual(user.profiles['backend'].aliases['rev'], 's+');
+  const project = tellrc.parse_tellrc('[aliases]\nrev = o\n[profiles.backend.aliases]\nship = g\n', 'project');
+  const resolved = tellrc.resolve_tellrc(
+    [{ ...user, source: 'user', rank: 1 }, { ...project, source: 'project', rank: 2 }],
+    { profile: 'backend' },
+    {},
+  );
+  // File-level aliases win over profile aliases (project > user > profile).
+  assert.strictEqual(resolved.aliases['rev'], 'o');
+  assert.strictEqual(resolved.aliases['ship'], 'g');
+  assert.strictEqual(tellrc.resolve_model_input('ship', resolved.aliases, sdk.MODELS), 'g');
+  assert.deepStrictEqual(sdk.MODELS, before);
+}
+
+function test_profile_alias_subsection_invalid_name() {
+  const parsed = tellrc.parse_tellrc('[profiles.??.aliases]\nrev = s+\n', 'test');
+  assert.ok(parsed.warnings.some((w) => w.includes('unknown section')));
+  assert.deepStrictEqual(Object.keys(parsed.profiles), []);
 }
 
 function test_alias_resolution_no_mutation() {
@@ -236,6 +316,12 @@ const TESTS = [
   test_precedence_matrix,
   test_deny_union_monotonic,
   test_profiles_data,
+  test_custom_profile_name_accepted,
+  test_invalid_profile_section_name,
+  test_profile_system_fill_and_precedence,
+  test_profile_system_file_resolved,
+  test_profile_aliases_subsection_and_order,
+  test_profile_alias_subsection_invalid_name,
   test_alias_resolution_no_mutation,
   test_temperature_validation,
   test_limits_validated,

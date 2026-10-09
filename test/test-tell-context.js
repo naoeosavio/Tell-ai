@@ -1102,6 +1102,36 @@ async function test_incremental_context_saves_do_not_duplicate_turns_on_chain() 
 }
 
 // ---------------------------------------------------------------------
+// Tellrc warning hygiene (single print, invalid flag temperature warns)
+// ---------------------------------------------------------------------
+
+async function test_tellrc_warnings_print_exactly_once() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-tellrc-'));
+  fs.mkdirSync(path.join(dir, 'work'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'work', '.tellrc'), 'profile = ghost\n');
+  try {
+    const result = await run_tell(['hello'], 'final answer\n', { dir });
+    assert.strictEqual(result.stdout, 'final answer\n');
+    const occurrences = result.stderr.split('selected but not defined').length - 1;
+    assert.strictEqual(occurrences, 1, `tellrc warning must print exactly once, got ${occurrences}:\n${result.stderr}`);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+async function test_invalid_temperature_flag_warns_once() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-context-temp-'));
+  try {
+    const result = await run_tell(['--temperature', 'hot', 'hello'], 'final answer\n', { dir });
+    assert.strictEqual(result.stdout, 'final answer\n');
+    const occurrences = result.stderr.split('--temperature hot invalid').length - 1;
+    assert.strictEqual(occurrences, 1, `invalid --temperature must warn exactly once, got ${occurrences}:\n${result.stderr}`);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------
 
@@ -1148,6 +1178,8 @@ const TESTS = [
   test_no_exec_overrides_yes_flag,
   test_poisoned_named_context_does_not_autoexecute,
   test_incremental_context_saves_do_not_duplicate_turns_on_chain,
+  test_tellrc_warnings_print_exactly_once,
+  test_invalid_temperature_flag_warns_once,
 ];
 
 (async () => {

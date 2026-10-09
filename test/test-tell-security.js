@@ -497,6 +497,27 @@ function assertPromptInjectionPolicy(result) {
   assert.match(result.stderr, /Chain limit reached \(8\); ignoring further requested commands/);
   assert.strictEqual(result.stdout, '');
 
+  result = await runTell(
+    ['--yes', '--chain', 'd', 'resume respects the total cap'],
+    [
+      ...Array.from({ length: 6 }, (_, index) => runBlock(`echo EARLY_${index}`)),
+      runBlock('sudo ls /'),
+      runBlock('echo LATE_7'),
+      runBlock('echo LATE_8'),
+      'final answer',
+    ],
+    { execStdout: 'OK\n' },
+  );
+  // 6 executed + 1 skipped = 7 commands: the resume gets a budget of 1, so
+  // only LATE_7 runs and the total stays capped at 8 like the legacy counter.
+  assert.deepStrictEqual(result.execCalls, [
+    ...Array.from({ length: 6 }, (_, index) => `echo EARLY_${index}`),
+    'echo LATE_7',
+  ]);
+  assert.match(result.stderr, /Command skipped by user\./);
+  assert.match(result.stderr, /Chain limit reached \(8\); ignoring further requested commands/);
+  assert.strictEqual(result.stdout, '');
+
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-security-'));
   try {
     await runTell(['d', '-c', 'first'], 'first answer', { dir });
