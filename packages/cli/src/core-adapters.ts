@@ -19,6 +19,7 @@ import {
   type ModelPort,
   type RiskAssessment,
   type RiskPort,
+  type RuntimeCallbacks,
   resolve_core_config,
   SENSITIVE_ENV_NAMES,
   SENSITIVE_ENV_SUFFIX,
@@ -31,7 +32,7 @@ import { is_outside_cwd } from './mentions';
 
 /** Re-exported core runtime factory so the CLI consumes a single seam. */
 export { create_core_runtime, LOOP_MAX_ROUNDS };
-export type { CoreConfig, TellResult };
+export type { CoreConfig, RuntimeCallbacks, TellResult };
 
 const EXEC_ASYNC = promisify(exec);
 

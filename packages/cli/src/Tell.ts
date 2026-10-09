@@ -29,6 +29,7 @@ import {
   LOOP_MAX_ROUNDS,
   lock_process_environment,
   READLINE_CONFIRM_TIMEOUT_MS,
+  type RuntimeCallbacks,
   resolve_cli_core_config,
   script_touches_outside_cwd,
   type TellResult,
@@ -702,52 +703,63 @@ async function run_response_loop(
     },
   });
   const approval = create_cli_approval(state.execMode, (pending) => confirm_command(pending, state.execMode));
-  const runtime = create_core_runtime({
-    config: state.coreConfig,
-    model,
-    storage: create_cli_memory_storage(previousContext),
-    executor: create_cli_executor(),
-    approval,
-    risk: cli_risk_port(),
-    system,
-    callbacks: {
-      onText: () => {
-        remember_assistant(state, log, last_raw);
-        if (state.saveContext) save_incremental_context(contextPath, previousContext, state);
-      },
-      onCommandOutput: (event) => {
-        const result_text =
-          event.exit_code > 0
-            ? `Command failed (exit code ${event.exit_code}):\n${event.script}\nOutput:\n${event.output}`
-            : `Executed command:\n${event.script}\nOutput:\n${event.output}`;
-        print_command_output(event.output);
-        append_log(log, result_text);
-        remember_command_result(state, result_text);
-        if (state.saveContext) save_incremental_context(contextPath, previousContext, state);
-      },
-      onCommandSkip: (event) => {
-        const disabled = event.reason === 'disabled';
-        const result_text = disabled
-          ? `Command execution disabled — not run:\n${event.script}`
-          : `Skipped by user:\n${event.script}`;
-        if (disabled) {
-          process.stderr.write('\x1b[33mCommand execution disabled (--no-exec).\x1b[0m\n');
-        } else {
-          process.stderr.write('\x1b[33mCommand skipped by user.\x1b[0m\n');
-        }
-        append_log(log, result_text);
-        remember_command_result(state, result_text);
-        if (state.saveContext) save_incremental_context(contextPath, previousContext, state);
-      },
-      onExecutorError: (event) => {
-        const result_text = `Command failed:\n${event.script}\nOutput:\n${event.error}`;
-        append_log(log, result_text);
-        remember_command_result(state, result_text);
-        if (state.saveContext) save_incremental_context(contextPath, previousContext, state);
-      },
+  // Shared ports across runs: storage accumulates the conversation so resumed
+  // runs compose follow-ups continuously; everything else is stateless.
+  const storage = create_cli_memory_storage(previousContext);
+  const executor = create_cli_executor();
+  const runtime_callbacks: RuntimeCallbacks = {
+    onText: () => {
+      remember_assistant(state, log, last_raw);
+      if (state.saveContext) save_incremental_context(contextPath, previousContext, state);
     },
-    max_rounds: state.autoContinue ? LOOP_MAX_ROUNDS : 1,
-  });
+    onCommandOutput: (event) => {
+      const result_text =
+        event.exit_code > 0
+          ? `Command failed (exit code ${event.exit_code}):\n${event.script}\nOutput:\n${event.output}`
+          : `Executed command:\n${event.script}\nOutput:\n${event.output}`;
+      print_command_output(event.output);
+      append_log(log, result_text);
+      remember_command_result(state, result_text);
+      if (state.saveContext) save_incremental_context(contextPath, previousContext, state);
+    },
+    onCommandSkip: (event) => {
+      const disabled = event.reason === 'disabled';
+      const result_text = disabled
+        ? `Command execution disabled — not run:\n${event.script}`
+        : `Skipped by user:\n${event.script}`;
+      if (disabled) {
+        process.stderr.write('\x1b[33mCommand execution disabled (--no-exec).\x1b[0m\n');
+      } else {
+        process.stderr.write('\x1b[33mCommand skipped by user.\x1b[0m\n');
+      }
+      append_log(log, result_text);
+      remember_command_result(state, result_text);
+      if (state.saveContext) save_incremental_context(contextPath, previousContext, state);
+    },
+    onExecutorError: (event) => {
+      const result_text = `Command failed:\n${event.script}\nOutput:\n${event.error}`;
+      append_log(log, result_text);
+      remember_command_result(state, result_text);
+      if (state.saveContext) save_incremental_context(contextPath, previousContext, state);
+    },
+  };
+  // One runtime per budget: resumed runs get only the rounds the legacy
+  // 8-command counter still allows, so chained declines can never overshoot
+  // the cap the way a fresh full-budget run would.
+  function create_runtime(max_rounds: number) {
+    return create_core_runtime({
+      config: state.coreConfig,
+      model,
+      storage,
+      executor,
+      approval,
+      risk: cli_risk_port(),
+      system,
+      callbacks: runtime_callbacks,
+      max_rounds,
+    });
+  }
+  let runtime = create_runtime(state.autoContinue ? LOOP_MAX_ROUNDS : 1);
   let result = await runtime.run(state.firstPrompt);
   // Chain mode resumes after declined commands with the legacy feedback
   // (conversation plus instruction); executed/failed rounds already iterate
@@ -757,6 +769,7 @@ async function run_response_loop(
   let latest = result;
   while (state.autoContinue && result.commands.length < LOOP_MAX_ROUNDS && should_resume_after_decline(latest)) {
     const feedback = `${strip_think_tags(conversation_text(state))}\n\n${RESUME_INSTRUCTION}`;
+    runtime = create_runtime(LOOP_MAX_ROUNDS - result.commands.length);
     latest = await runtime.run(feedback);
     result = merge_run_result(result, latest);
   }
@@ -942,21 +955,34 @@ function tellrc_env_from_process(): {
  *
  * @param opts - Commander options carrying flag overrides.
  * @param cwd - Working directory for the project layer.
+ * @param quiet - Skip stderr warnings (the caller re-resolves and prints).
  * @returns The resolved tellrc with provenance and warnings.
  */
-function resolve_invocation_tellrc(opts: CliOptions, cwd: string): ReturnType<typeof resolve_tellrc> {
+function resolve_invocation_tellrc(opts: CliOptions, cwd: string, quiet = false): ReturnType<typeof resolve_tellrc> {
   const layers = load_tellrc(cwd, os.homedir());
   const flags: { model?: string; system?: string; system_file?: string; temperature?: number; profile?: string } = {};
+  const flag_warnings: string[] = [];
   if (opts.model) flags.model = opts.model;
   if (opts.system) flags.system = opts.system;
   if (opts.systemFile) flags.system_file = opts.systemFile;
   if (opts.profile) flags.profile = opts.profile;
   if (opts.temperature !== undefined) {
     const value = validate_temperature(Number(opts.temperature));
-    if (value !== undefined) flags.temperature = value;
+    if (value !== undefined) {
+      flags.temperature = value;
+    } else {
+      flag_warnings.push(`--temperature ${opts.temperature} invalid (expected 0..2), ignored`);
+    }
+  } else {
+    // No flag temperature.
   }
   const resolved = resolve_tellrc(layers, flags, tellrc_env_from_process());
-  for (const warning of resolved.warnings) process.stderr.write(`\x1b[33mWarning: ${warning}\x1b[0m\n`);
+  for (const warning of flag_warnings) resolved.warnings.push(warning);
+  if (!quiet) {
+    for (const warning of resolved.warnings) process.stderr.write(`\x1b[33mWarning: ${warning}\x1b[0m\n`);
+  } else {
+    // Quiet: the caller re-resolves and prints warnings itself.
+  }
   return resolved;
 }
 
@@ -1012,6 +1038,7 @@ async function run_tell(
   const previous_context = plan.$ === 'default' || plan.$ === 'existing' ? read_text(plan.file) : '';
   // Tellrc system-file (64 KB cap, regular file, project gate) plus inline
   // system and profile data compose as custom instructions before safety.
+  // Profile system-file follows the same gates; its origin decides the gate.
   let system_file_text: string | undefined;
   if (tellrc.system_file) {
     const from_project = (tellrc.provenance['system_file'] ?? '').endsWith(path.join(process.cwd(), '.tellrc'));
@@ -1019,10 +1046,24 @@ async function run_tell(
   } else {
     // No system-file configured.
   }
-  const custom_system_text = tellrc_custom_text({
+  let profile_system_text: string | undefined;
+  const profile_system_file = tellrc.profile_data?.system_file;
+  if (profile_system_file) {
+    const from_project = (tellrc.profile_data?.system_file_from ?? '').endsWith(path.join(process.cwd(), '.tellrc'));
+    profile_system_text = load_system_file_text(profile_system_file, process.cwd(), os.homedir(), from_project);
+  } else {
+    // No profile system-file configured.
+  }
+  const resolved_for_text = {
     ...tellrc,
     ...(system_file_text !== undefined ? { system_text: system_file_text } : {}),
-  });
+  };
+  if (resolved_for_text.profile_data && profile_system_text !== undefined) {
+    resolved_for_text.profile_data = { ...resolved_for_text.profile_data, system_text: profile_system_text };
+  } else {
+    // No profile file text to attach.
+  }
+  const custom_system_text = tellrc_custom_text(resolved_for_text);
   // The prompt stays unwrapped: the core runtime composes the identical
   // `Previous context:` wrapper from the seeded storage on round one.
   const state: ConversationState = {
@@ -1088,7 +1129,8 @@ async function main() {
   // Tellrc-aware model default: flag > env > project > user > positional >
   // built-in. Aliases resolve without mutating MODELS; a positional custom
   // alias is accepted in the same slot the parser accepts for models.
-  const early_tellrc = resolve_invocation_tellrc(opts, process.cwd());
+  // Quiet unless this is a web launch (run_tell re-resolves and prints).
+  const early_tellrc = resolve_invocation_tellrc(opts, process.cwd(), !opts.web);
   const opt_model = opts.model ?? early_tellrc.model;
   const input = parse_args(positional_args, opt_model, Boolean(opts.input), early_tellrc.aliases);
   const effective_model = resolve_model_input(input.model, early_tellrc.aliases, MODELS);
