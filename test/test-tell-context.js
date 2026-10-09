@@ -55,6 +55,14 @@ const core_adapters_source = ts.transpileModule(
   { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } },
 ).outputText;
 
+// `./tellrc` is required by Tell.js at load time (INI-only owner of schema,
+// precedence and profile data); compile it into the same vm sandbox on
+// demand, like `./mentions`.
+const tellrc_source = ts.transpileModule(
+  fs.readFileSync(path.join(__dirname, '..', 'packages', 'cli', 'src', 'tellrc.ts'), 'utf8'),
+  { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } },
+).outputText;
+
 function fake_stdin(text) {
   const stdin = new EventEmitter();
   stdin.isTTY = false;
@@ -177,6 +185,12 @@ async function run_tell(args, response, opts = {}) {
       );
       factory(mock_require, adapters_module, adapters_module.exports);
       return adapters_module.exports;
+    }
+    if (name === './tellrc') {
+      const tellrc_module = { exports: {} };
+      const factory = vm.runInContext(`(function(require, module, exports) {${tellrc_source}\n})`, active_context);
+      factory(mock_require, tellrc_module, tellrc_module.exports);
+      return tellrc_module.exports;
     }
     if (name === '@tell-ai/sdk') {
       // Records the prompt and returns the next canned answer. Shared by the
