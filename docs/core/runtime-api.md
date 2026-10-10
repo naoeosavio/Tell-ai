@@ -64,7 +64,9 @@ returns a verdict for the exact requested script.
 
 `CommandStatus` is exactly
 `requested | awaiting_approval | approved | skipped | denied | executed | cancelled | failed`
-— no status outside this union is produced.
+— no status outside this union is produced. The Web chain store
+(`packages/web/src/server/chain-store.ts`) reuses this union for its run
+commands; it never invents a new status.
 
 | Situation | Command status | `TellResult.status` |
 |---|---|---|
@@ -87,6 +89,20 @@ stdout/stderr, before model feedback, callbacks, logs, context/history,
 cache, `TellResult` or JSON. Raw output exists only in the transient executor
 scope; non-secret content is preserved by the injector. `script` goes through
 the same redactor. The default is identity (preserve everything).
+
+## Chain confirm payloads (Web)
+
+`validate_chain_decision_payload` (`src/chain-decision.ts`) is the pure,
+fail-closed gate in front of every Web chain transition: it accepts exactly
+one identifier (`decisionId` or `approvalId`), a non-negative integer
+`expectedVersion` and `decision: 'approve'|'skip'`. Any `script`, `command`,
+`path` or other extra field is rejected — the client never supplies free
+scripts. Stateful concerns (version compare, command-hash TOCTOU,
+idempotency, conflicts, cancel, TTL) live in the Web-owned
+`packages/web/src/server/chain-store.ts`, which the server always drives
+through this validator first. Covered by `test/test-core-chain-decision.js`
+(validator) plus the chain blocks in `test/test-web-backend.js` (store) and
+`test/test-web-sandbox.js` (live routes).
 
 ## Structural contracts (no DOM, no globals)
 

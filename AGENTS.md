@@ -6,18 +6,21 @@ This file provides guidance to AI when working with code in this repository.
 
 - Use `bun` as the package manager (not npm/pnpm/yarn for installing dependencies).
 - Formatting and linting are handled by Biome v2.2.6 (config in `biome.json`): single quotes, 2-space indent, 120-char line width.
-- Monorepo workspace (bun): `packages/sdk` (`@tell-ai/sdk`, browser-safe LIB), `packages/cli` (`tell-ai`, bin `tell`) and `packages/web` (`@tell-ai/web`, bin `tell-web`).
+- Monorepo workspace (bun): `packages/sdk` (`@tell-ai/sdk`, browser-safe LIB), `packages/core` (`@tell-ai/core`, shared Node runtime), `packages/cli` (`tell-ai`, bin `tell`) and `packages/web` (`@tell-ai/web`, bin `tell-web`).
 
 ## Build / test / lint / format
 
 All commands run from the root and delegate to the packages:
 
 ```bash
-npm run build          # SDK (ESM+CJS+dts + 2 browser bundles) + tell-ai (minified .mjs) + web sandbox (tsup server + vite assets → packages/web/dist/)
-npm run lint           # tsc --noEmit in all three packages (type-check only)
+npm run build          # SDK (ESM+CJS+dts + 2 browser bundles) + core (ESM+CJS+dts) + tell-ai (minified .mjs) + web sandbox (tsup server + vite assets → packages/web/dist/)
+npm run lint           # tsc --noEmit in all four packages (type-check only)
 npm run format         # biome check --write packages/  (auto-fix formatting)
 npm run check          # biome check packages/  (check only)
-npm test               # sdk + env + security + context + stream + mentions + web suites
+npm test               # sdk + core-api + env + security + context + stream + mentions + cli-adapters + core + web suites
+npm run test:core      # contract + config/paths/context/decision/runtime/risk/exec suites (builds SDK + core first)
+npm run test:core-api  # library-contract conformance (builds SDK + core first)
+npm run test:cli-adapters  # CLI core-adapter ports (builds SDK + core first)
 npm run test:security  # build the SDK, then node test/test-tell-security.js
 npm run test:stream    # build the SDK, then node test/test-tell-stream.js (--stream/--think CLI behavior)
 npm run test:mentions  # build the SDK, then node test/test-tell-mentions.js (@path mention expansion + read gate)
@@ -26,18 +29,18 @@ npm run test:web       # backend harness + web build, then sandbox suite (live s
 npm run ci             # build + lint + format check + test (runs in order)
 ```
 
-TypeScript is checked with `tsc` but bundled with `tsup` (ESBuild). Entry points: `packages/sdk/src/index.ts` → `packages/sdk/dist/` and `packages/cli/src/Tell.ts` → `packages/cli/dist/Tell.js`. The SDK build also emits two browser bundles from `src/browser.ts` + `src/browser-global.ts`. After building, sanity-check them with `grep -cE '^import ' packages/sdk/dist/browser*.js` — must be `0` (self-contained; bare imports/dynamic `require` break the browser).
+TypeScript is checked with `tsc` but bundled with `tsup` (ESBuild). Entry points: `packages/sdk/src/index.ts` → `packages/sdk/dist/`, `packages/core/src/index.ts` → `packages/core/dist/` and `packages/cli/src/Tell.ts` → `packages/cli/dist/Tell.mjs`. The SDK build also emits two browser bundles from `src/browser.ts` + `src/browser-global.ts`. After building, sanity-check them with `grep -cE '^import ' packages/sdk/dist/browser*.js` — must be `0` (self-contained; bare imports/dynamic `require` break the browser).
 
 ## Architecture
 
 `tell-ai` is a one-shot terminal assistant — a CLI that sends a prompt to an LLM and optionally executes bash commands the model returns inside `<RUN>...</RUN>` tags. It supports 10+ AI vendors through short model aliases, persistent conversation context, and a chain mode for iterative command sequences.
 
-The codebase has four layers:
+The codebase has five layers:
 
 ### Monorepo root (bun workspace)
 
-- `package.json` — private, `"workspaces": ["packages/*"]`, orchestration scripts via `bun run --filter @tell-ai/sdk …` / `--filter tell-ai` / `--filter @tell-ai/web`.
-- `tsconfig.base.json` — strict shared TS config (noUncheckedIndexedAccess, exactOptionalPropertyTypes, erasableSyntaxOnly…), extended by all three packages.
+- `package.json` — private, `"workspaces": ["packages/*"]`, orchestration scripts via `bun run --filter @tell-ai/sdk …` / `--filter @tell-ai/core …` / `--filter tell-ai` / `--filter @tell-ai/web`.
+- `tsconfig.base.json` — strict shared TS config (noUncheckedIndexedAccess, exactOptionalPropertyTypes, erasableSyntaxOnly…), extended by all four packages.
 
 ### LIB: `packages/sdk` (`@tell-ai/sdk` — ~900 lines)
 
@@ -73,6 +76,10 @@ Builds: tsup emits ESM + CJS + dts (`dist/`) plus two self-contained browser bun
 
 To keep the browser bundles self-contained, `tsup.config.ts` lists `ai` + the eight `@ai-sdk/*` providers (`openai`, `anthropic`, `google`, `xai`, `deepseek`, `cerebras`, `moonshotai`, `openai-compatible`) in `noExternal` **explicitly** — a `'@ai-sdk/*'` glob does not match scoped packages and silently leaves bare imports. `@vercel/oidc` (a transitive dep of `ai`) requires `path`/`fs`/`os` and touches `process` at module scope, so those builtins are aliased to `src/shims/node.cjs` and a `var process = { version:'', env:{}, platform:'browser' }` banner is prepended. Full variant comparison: `docs/sdk/imports.md`.
 
+### CORE: `packages/core` (`@tell-ai/core` — shared Node runtime, MIT)
+
+Single owner of the injectable contract, exec and loop. Owns `createTellRuntime`/`TellResult`/ports/callbacks (`src/runtime-api.ts`, moved from the SDK), the primitive ≤8-round loop (`src/loop.ts`), the executable `create_core_runtime` (`src/runtime.ts`), base risk classification (`src/risk.ts` → `RiskAssessment` only, never a verdict; `permissive` for CLI, `strict` for Web), the Node executor + env allowlist + secret redactor (`src/exec.ts`), host config (`src/config.ts`: CLI default `g`, Web default `l`, `flag > env > project .tellrc > user ~/.tellrc > default` with deny-wins, `TELL_MODEL`-only env layer), fail-closed realpath paths (`src/paths.ts`), the system-prompt-free project context port (`src/project-context.ts`) and the pure chain-confirm validator (`src/chain-decision.ts`). No `PolicyDecision` while the policy task is BLOCKED; no `TELL_KEY`/`TELL_BASE_URL` (tellkey handoff owns them). `mentions.ts`/`history.ts` stay CLI-owned (`@path` expansion, `@N`/`%N` history); Web flags stay parsed in the Web `cli-args.ts`.
+
 ### CLI: `packages/cli` (`tell-ai` — ~930 lines + `mentions.ts`)
 
 Single-file Node entry point for the `tell` binary (CJS bundle, `#!/usr/bin/env node`). Uses `commander` for CLI parsing. Key behaviors:
@@ -89,11 +96,13 @@ Single-file Node entry point for the `tell` binary (CJS bundle, `#!/usr/bin/env 
 - `-l` lists saved contexts (`@N`, id, age, preview) and conversations (`%N`, date, model, preview) via `--history`; `--history @N`/`%N` reprints an entry, any other value searches both stores (`src/history.ts`)
 - `-y` auto-executes commands (high-risk commands still require confirmation)
 - `--no-exec` disables all command execution
+- Chain/exec run on `@tell-ai/core`: `run_response_loop` delegates to `create_core_runtime().run()` (`max_rounds: 1`, 8 with `--chain`) through the ports in `src/core-adapters.ts` (permissive risk, scrubbed env, promisified-`exec` transport, approval port, host-`cli` config default `g`, streaming model port, seeded storage). `mentions.ts`/`history.ts` stay CLI-owned; `env.ts` keeps keys/URLs until the tellkey handoff
 
 **Security**: `isHighRiskScript()` blocks patterns like `sudo`, `rm -rf`, `dd of=`, `curl|sh` (and pipes into any interpreter: `python3`, `node`, …), process substitution (`bash <(curl …)`, `x <(wget …)`), network-coupled interpreter one-liners (`node -e "require('https')…"`, `python3 -c "…urllib…"`), `mkfs`, writes to system paths (`/etc`, `/boot`, `/usr`, systemd units), crontab manipulation, etc. Local-only interpreter one-liners (e.g. `node -e "console.log(1)"`) are allowed by design. Execution timeout is 120s.
 
 Files:
 - `src/Tell.ts` — CLI: commander, stdin, exec, confirm/high-risk, context/logs, loop chain, main
+- `src/core-adapters.ts` — core ports for the CLI (risk/env/exec/approval/config/model/storage); the only bridge to `@tell-ai/core`
 - `src/mentions.ts` — `expand_mentions()` + `is_outside_cwd()` read gate, called in `run_tell()` before context/log assembly
 - `src/history.ts` — read-only history module: `list_sessions()`, `search_contexts()`/`search_sessions()`, `print_history_list()`, `show_entry()` (backs `-l/--history`)
 - `src/systemPrompt.ts` — the `<RUN>`/injection-policy execution system prompt (`get_system_prompt()`), with `PromptOptions`
@@ -101,7 +110,7 @@ Files:
 
 ### WEB: `packages/web` (`@tell-ai/web` — browser sandbox + `tell-web` server)
 
-Browser-based terminal + AI console (`tell-web` bin → `dist/server.js`), anchored to a working directory (`--cwd`). Built by tsup (`src/server/server.ts` → `dist/server.js`, ESM) + vite frontend assets into the same `dist/` (`--emptyOutDir false`, served from `__dirname` in production; vite middleware in dev). `node-pty` (native), `ws` and `vite` stay external. Requires Node `>=22`. Depends on `@tell-ai/sdk` (workspace) for model resolution (`MODELS`, `resolve_model_spec`, `get_model`) and the shared system prompt (`get_system_prompt({ chain: true })` composed with the project context); keys/URLs are captured from `process.env` in `server.ts` and the credential environment is then purged; workspace `.env` loads only with `TELL_TRUST_WORKSPACE_ENV=true` (no token files).
+Browser-based terminal + AI console (`tell-web` bin → `dist/server.js`), anchored to a working directory (`--cwd`). Built by tsup (`src/server/server.ts` → `dist/server.js`, ESM) + vite frontend assets into the same `dist/` (`--emptyOutDir false`, served from `__dirname` in production; vite middleware in dev). `node-pty` (native), `ws` and `vite` stay external. Requires Node `>=22`. Depends on `@tell-ai/sdk` (workspace) for model resolution (`MODELS`, `resolve_model_spec`, `get_model`) and the shared system prompt (`get_system_prompt({ chain: true })` composed with the project context); depends on `@tell-ai/core` (workspace, external in the server bundle) for the chain-confirm validator (`validate_chain_decision_payload`); keys/URLs are captured from `process.env` in `server.ts` and the credential environment is then purged; workspace `.env` loads only with `TELL_TRUST_WORKSPACE_ENV=true` (no token files).
 
 Key behaviors:
 - Real PTY panes (`node-pty` + WebSocket + xterm.js, up to 8 sessions max, scrollback persisted)
@@ -113,9 +122,11 @@ Key behaviors:
 - `--stream` replies on `/api/tell` as NDJSON (`reasoning`/`reasoning_end`/`text`/`done`/`error`; codec shared in `src/shared/chat-stream.ts`); collapsed reasoning headers with a live `Thinking… Ns` timer
 - `--think` seeds reasoning headers expanded on first visit; manual expand/collapse persists to `localStorage`. Provider `reasoning_end` is not universal — the client freezes the timer on the first `text` delta
 - Sensitive files never served (`.env*` except `.env.example`, `.tell/**`, `.git/**`, `*.key`, `*.pem`); per-IP rate limits on chat/execute/auth
+- Server-side chain (additive; `/api/tell`, `/api/execute`, `/api/risk-check` stay stable): `POST /api/chain` runs the ≤8-round loop on the server, `GET /api/chain/:runId` replays sequenced events, `POST …/confirm` answers a server-kept approval by decision id only (any `script`/`command`/`path` is 400; same id + same verdict replays without re-executing; 409 on conflict/stale/cancelled; 403 high-risk/`--no-exec` without execution; cancel wins mid-flight), `POST …/cancel` invalidates the run; 15 min TTL, restarts drop everything. The App submits/renders/answers through these routes with the local loop as offline fallback; the client No-Exec toggle cancels the run instead of approving it
 
 Files:
-- `src/server/server.ts` — express app + `/api/*` routes + vite/static serving (~790 lines)
+- `src/server/server.ts` — express app + `/api/*` routes + vite/static serving (~1400 lines)
+- `src/server/chain-store.ts` — pure in-memory chain runs (version, event sequence, TTL, command hash, idempotent decisions, cancel); loaded directly by `test/test-web-backend.js`, keep dependency-light
 - `src/server/guards.ts` — pure guards (sensitive paths, rate limiter, PTY/auth guards, payload validation, risk patterns); loaded directly by `test/test-web-backend.js`, keep dependency-light
 - `src/server/context-builder.ts` — project tree (4 levels) + README/AGENTS system-prompt context
 - `src/server/cli-args.ts`, `src/server/paths.ts`, `src/server/pty.ts`, `src/server/session.ts` — flags, traversal guard, terminal server, `.tell/` persistence
@@ -154,8 +165,9 @@ API keys are resolved in the CLI (`packages/cli/src/env.ts`): env vars (`OPENAI_
 ## Related docs
 
 - `docs/sdk/` — SDK reference: `README.md` (index + examples), `api.md` (API surface), `models.md` (aliases/specs/reasoning matrix/custom endpoints), `streaming.md` (AskStream events), `config.md` (SDKConfig injection/browser safety), `imports.md` (build variants)
+- `docs/core/` — core reference: `runtime-api.md` (contract, lifecycle, redaction boundary, chain-confirm payloads)
 - `docs/cli/` — CLI reference pages (flags, context, execution, chain mode, env config, security, development, mentions)
 - `docs/usage.md`, `docs/integrations.md` — CLI usage and integrations
 - `docs/web-sandbox.md`, `packages/web/README.md` — web sandbox guide (`tell --web`) and package reference (flags, `/api/*` routes, `.tell/` layout); backend harness `test/test-web-backend.js`, sandbox suite `test/test-web-sandbox.js` (`bun run --filter @tell-ai/web test`)
 - `examples/sdk/` — `proxy.ts` (API proxy + static serving) + `index.html` (uses the IIFE `TellSDK` build) + `demo.ts` (proxy walkthrough) + `custom-endpoint.ts` (custom URLs/Ollama/new-vendor walkthrough, runs offline)
-- `packages/sdk/CHANGELOG_AI.md`, `packages/cli/CHANGELOG_AI.md`, `packages/web/CHANGELOG_AI.md` — Version history per package
+- `packages/sdk/CHANGELOG_AI.md`, `packages/core/CHANGELOG_AI.md`, `packages/cli/CHANGELOG_AI.md`, `packages/web/CHANGELOG_AI.md` — Version history per package

@@ -21,6 +21,7 @@ browser tab, no SSH client or local terminal needed.
   - [4. Via a website / hosted instance](#4-via-a-website--hosted-instance)
 - [Real-world examples](#real-world-examples)
 - [Execution modes](#execution-modes)
+- [Server-side chain (`/api/chain`)](#server-side-chain-apichain)
 - [Session persistence (`.tell/`)](#session-persistence-tell)
 - [Authentication (`TELL_TOKEN`)](#authentication-tell_token)
 - [Security notes](#security-notes)
@@ -324,6 +325,41 @@ whose last choice is remembered in `localStorage` (survives page reloads;
 `localStorage` → first-visit only, server flags like `-y`/`--no-exec` seed the
 default); high-risk commands (`sudo`, `rm -rf`, `curl|sh`, …) are always
 blocked server-side — see [Security notes](#security-notes).
+
+---
+
+## Server-side chain (`/api/chain`)
+
+In Chain Mode the App submits to `/api/chain` instead of looping in the
+browser: the model loop (up to 8 rounds), the pending script and the approval
+state all stay on the server. The client renders the sequenced events and
+answers approvals by decision id; the local loop remains as the offline
+fallback, and `/api/tell`, `/api/execute` and `/api/risk-check` stay stable
+beside the chain routes.
+
+- `POST /api/chain` — same payload shape as `/api/tell` (`messages`,
+  `modelAlias?`, `systemPrompt?`, same limits). Answers with the run snapshot:
+  `{runId, status, version, rounds, text, events, pending}`. `pending` carries
+  only `{decisionId, script, expectedVersion}` for display — the script is
+  server-kept.
+- `GET /api/chain/:runId` — replays the event sequence (`seq` is monotonic,
+  so clients render incrementally). Unknown ids and TTL-expired runs (15 min
+  idle) read as 404; a restart drops every run.
+- `POST /api/chain/:runId/confirm` — `{decisionId|approvalId,
+  expectedVersion, decision: 'approve'|'skip'}`. Any `script`/`command`/`path`
+  field is rejected with 400 before any state transition. Retrying the same
+  decision id with the same verdict replays the stored result without
+  re-executing; a different verdict, a stale `expectedVersion` or an unknown
+  id is 409; high-risk scripts and `--no-exec` answer 403 without executing;
+  a cancel that lands mid-flight wins and the run stays cancelled.
+- `POST /api/chain/:runId/cancel` — invalidates the run and its pending
+  approval (idempotent).
+
+`no-exec` denies carry `reason: 'disabled'` with `source: '--no-exec'`
+(never `reason: 'no-exec'`). An edited command in the confirm card never
+enters the server confirm path: the client cancels the run and executes
+locally instead — and the client No-Exec toggle cancels the run rather than
+approving it.
 
 ---
 
