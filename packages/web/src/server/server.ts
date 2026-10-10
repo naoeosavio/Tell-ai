@@ -104,6 +104,32 @@ const FORWARDED_LIMITS = {
   stdinTimeoutMs?: number;
 };
 
+/** Default internal exec buffer in bytes (mirrors the CLI `MAX_BUFFER`). */
+const EXEC_DEFAULT_MAX_BUFFER = 32 * 1024 * 1024;
+/** Effective exec buffer: the forwarded CLI override wins, default otherwise. */
+const EXEC_MAX_BUFFER = FORWARDED_LIMITS.maxBufferBytes ?? EXEC_DEFAULT_MAX_BUFFER;
+/**
+ * Effective chain round cap: the forwarded CLI override wins, clamped to the
+ * server `1..CHAIN_MAX_ROUNDS` contract. The CLI accepts up to 127 rounds,
+ * but the sandbox keeps the historical cap of 8 — larger forwarded values
+ * clamp down here instead of failing the boot. Only the number is
+ * overridden — the loop and approval state machine stay in the core-owned
+ * chain store.
+ */
+const CHAIN_ROUND_CAP = Math.min(
+  CHAIN_MAX_ROUNDS,
+  Math.max(1, Math.floor(FORWARDED_LIMITS.maxChainSteps ?? CHAIN_MAX_ROUNDS)),
+);
+/**
+ * Chain-limit notice for the effective cap (same wording family as the core,
+ * with the actual cap so a forwarded `--max-chain-steps 2` reports `(2)`).
+ *
+ * @returns The notice recorded when the server-side rounds run out.
+ */
+function chain_limit_notice(): string {
+  return `Chain limit reached (${CHAIN_ROUND_CAP}); ignoring further requested commands.`;
+}
+
 /** Forwarded custom instructions (CLI-resolved tellrc system, 64 KB cap, non-secret). */
 function load_forwarded_system_text(file: string | undefined): string | undefined {
   if (!file) return undefined;
@@ -247,9 +273,8 @@ const EXEC_OUTPUT_LIMIT = 200 * 1024;
 // Feedback tail fed back to the model after a chain command (mirrors the
 // App `FEEDBACK_OUTPUT_LIMIT`: huge outputs must not explode the context).
 const CHAIN_FEEDBACK_TAIL_CHARS = 4 * 1024;
-// Chain-limit notice recorded when the server-side rounds run out (mirrors
-// the core `CHAIN_LIMIT_NOTICE` wording family without importing the loop).
-const CHAIN_LIMIT_NOTICE = `Chain limit reached (${CHAIN_MAX_ROUNDS}); ignoring further requested commands.`;
+// (Chain-limit notice lives in `chain_limit_notice()` so it reflects the
+// effective `CHAIN_ROUND_CAP`, not just the default.)
 const executeRateLimit = createRateLimiter({ max: 10, windowMs: 60_000 });
 const tellRateLimit = createRateLimiter({ max: 10, windowMs: 60_000 });
 const chainRateLimit = createRateLimiter({ max: 10, windowMs: 60_000 });
@@ -666,7 +691,7 @@ app.post('/api/execute', async (req, res) => {
   try {
     const { stdout, stderr } = await execAsync(command, {
       cwd: CWD,
-      maxBuffer: 32 * 1024 * 1024,
+      maxBuffer: EXEC_MAX_BUFFER,
       shell: '/bin/bash',
       timeout: EXEC_TIMEOUT_MS,
       env: sanitizeChildEnv(process.env),
@@ -1041,7 +1066,7 @@ function denyChainScript(
 async function advanceChainRun(runId: string, modelSpec: string, system: string): Promise<ChainRunSnapshot | null> {
   for (;;) {
     const current = chainStore.getRun(runId);
-    if (current === null || current.status !== 'running' || current.rounds >= CHAIN_MAX_ROUNDS) {
+    if (current === null || current.status !== 'running' || current.rounds >= CHAIN_ROUND_CAP) {
       break;
     } else {
       // Budget left — run the next model turn below.
@@ -1089,7 +1114,7 @@ async function advanceChainRun(runId: string, modelSpec: string, system: string)
   if (capped === null || capped.status !== 'running') {
     return capped;
   } else {
-    chainStore.appendEvent(runId, { type: 'completed', text: CHAIN_LIMIT_NOTICE });
+    chainStore.appendEvent(runId, { type: 'completed', text: chain_limit_notice() });
     return chainStore.completeRun(runId);
   }
 }
@@ -1226,7 +1251,7 @@ app.post('/api/chain/:runId/confirm', async (req, res) => {
     try {
       const { stdout, stderr } = await execAsync(script, {
         cwd: CWD,
-        maxBuffer: 32 * 1024 * 1024,
+        maxBuffer: EXEC_MAX_BUFFER,
         shell: '/bin/bash',
         timeout: EXEC_TIMEOUT_MS,
         env: sanitizeChildEnv(process.env),

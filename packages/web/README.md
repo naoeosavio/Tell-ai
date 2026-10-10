@@ -48,6 +48,10 @@ tell-web --help
 | `--port <n>` | `PORT` or `3000` | TCP port |
 | `--host <addr>` | `127.0.0.1` | Bind address (`0.0.0.0` for LAN) |
 | `--exec-timeout <ms>` | `120000` (max `600000`) | Timeout per command |
+| `--max-chain-steps <n>` | server default (clamped `1..8`; the CLI accepts up to 127, larger forwarded values clamp down here) | Server chain round cap override (forwarded by `tell --web --max-chain`) |
+| `--max-buffer-bytes <n>` | `33554432` | Internal exec buffer override (forwarded by `tell --web --max-buffer`) |
+| `--context-chars <n>` | — | Context chars override, exposed on `/api/config` (forwarded by `tell --web --context-max-chars`) |
+| `--stdin-timeout-ms <n>` | — | Stdin timeout override, exposed on `/api/config` (web has no stdin; a disabled deadline is omitted) |
 | `--chain` | off | Continue after output until final answer |
 | `--stream` | off | Seed the Stream toggle (Settings → Agent Runtime) and keep NDJSON as the server fallback |
 | `--think` | off | Start reasoning headers expanded (manual collapse/expand persists) |
