@@ -5,8 +5,10 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { validate_chain_decision_payload } from '@tell-ai/core';
 import {
   create_ask_ai,
+  extract_runs,
   get_model,
   is_wire_api,
   MODELS,
@@ -20,6 +22,7 @@ import { config as loadEnv } from 'dotenv';
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import { type ChatStreamEvent, encode_chat_stream_event } from '../shared/chat-stream';
+import { CHAIN_MAX_ROUNDS, type ChainConfirmError, type ChainRunSnapshot, createChainStore } from './chain-store';
 import { parseCliArgs, printHelp } from './cli-args';
 import { buildSystemPrompt } from './context-builder';
 import {
@@ -241,8 +244,40 @@ for (const name of Object.keys(process.env)) {
 
 const EXEC_MAX_CONCURRENCY = 2;
 const EXEC_OUTPUT_LIMIT = 200 * 1024;
+// Feedback tail fed back to the model after a chain command (mirrors the
+// App `FEEDBACK_OUTPUT_LIMIT`: huge outputs must not explode the context).
+const CHAIN_FEEDBACK_TAIL_CHARS = 4 * 1024;
+// Chain-limit notice recorded when the server-side rounds run out (mirrors
+// the core `CHAIN_LIMIT_NOTICE` wording family without importing the loop).
+const CHAIN_LIMIT_NOTICE = `Chain limit reached (${CHAIN_MAX_ROUNDS}); ignoring further requested commands.`;
 const executeRateLimit = createRateLimiter({ max: 10, windowMs: 60_000 });
 const tellRateLimit = createRateLimiter({ max: 10, windowMs: 60_000 });
+const chainRateLimit = createRateLimiter({ max: 10, windowMs: 60_000 });
+// Server-side chain runs: the pending script lives here, never in the client.
+const chainStore = createChainStore();
+// Model + system per run (kept beside the store so confirms resume context).
+// Entries die with their run: every terminal snapshot drops its continuation,
+// so idle/expired runs never accumulate beside the TTL-reaped store.
+const chainContinuations = new Map<string, { modelSpec: string; system: string }>();
+
+/**
+ * Drops the per-run continuation once the run can no longer advance.
+ *
+ * @param runId - Run whose continuation may be released.
+ * @param snapshot - Latest snapshot (null when the run already expired).
+ */
+function dropContinuationIfTerminal(runId: string, snapshot: ChainRunSnapshot | null): void {
+  const terminal =
+    snapshot === null ||
+    snapshot.status === 'completed' ||
+    snapshot.status === 'failed' ||
+    snapshot.status === 'cancelled';
+  if (terminal) {
+    chainContinuations.delete(runId);
+  } else {
+    // Still advancing — the next confirm needs the stored context.
+  }
+}
 // Brute-force shield for the login page: 5 attempts per 15min per IP.
 const authRateLimit = createRateLimiter({ max: 5, windowMs: 15 * 60_000 });
 let activeExecutions = 0;
@@ -854,6 +889,49 @@ async function stream_tell(
   res.end();
 }
 
+// Runs one model turn (shared by `/api/tell` and the `/api/chain` loop so the
+// server-side chain reuses the exact same model boundary, never a second one).
+async function generateOnce(
+  modelSpec: string,
+  formattedMessages: Array<{ role: 'user' | 'assistant'; content: string }>,
+  system: string,
+): Promise<{ text: string; reasoning: string | null }> {
+  // Resolve model spec and get AI SDK model instance (via @tell-ai/sdk)
+  const handle = await get_model(modelSpec, SDK_CONFIG);
+  const reasoning = handle.fast ? 'none' : handle.reasoning;
+
+  // Call generateText
+  const result = await generateText({
+    model: handle.model,
+    system,
+    messages: formattedMessages,
+    reasoning: reasoning as any,
+    ...(handle.providerOptions ? { providerOptions: handle.providerOptions } : {}),
+  });
+
+  return { text: result.text, reasoning: sanitizeReasoning((result as any).reasoning) };
+}
+
+// Extracts the first `<RUN>` script from a model answer (single source: the
+// SDK parser, never a second regex on the server).
+function extractFirstScript(text: string): string | null {
+  const first = extract_runs(text).scripts[0]?.trim();
+  if (first === undefined || first === '') {
+    return null;
+  } else {
+    return first;
+  }
+}
+
+// Output tail fed back to the model (keeps huge outputs from exploding the context).
+function truncateChainFeedbackTail(text: string): string {
+  if (text.length > CHAIN_FEEDBACK_TAIL_CHARS) {
+    return `…[truncated]\n${text.slice(-CHAIN_FEEDBACK_TAIL_CHARS)}`;
+  } else {
+    return text;
+  }
+}
+
 // API: Model execution route (using Vercel AI SDK)
 app.post('/api/tell', async (req, res) => {
   const payloadError = validateTellPayload(req.body);
@@ -900,28 +978,355 @@ app.post('/api/tell', async (req, res) => {
     }
 
     // Resolve model spec and get AI SDK model instance (via @tell-ai/sdk)
-    const handle = await get_model(modelSpec, SDK_CONFIG);
-    const reasoning = handle.fast ? 'none' : handle.reasoning;
-
-    // Call generateText
-    const result = await generateText({
-      model: handle.model,
-      system: effectiveSystem,
-      messages: formattedMessages,
-      reasoning: reasoning as any,
-      ...(handle.providerOptions ? { providerOptions: handle.providerOptions } : {}),
-    });
+    const generated = await generateOnce(modelSpec, formattedMessages, effectiveSystem);
 
     return res.json({
-      text: result.text,
+      text: generated.text,
       // Pass back other useful properties if available
-      reasoning: sanitizeReasoning((result as any).reasoning),
+      reasoning: generated.reasoning,
     });
   } catch (error: any) {
     console.error('Error generating AI text:', model_error_message(error));
     return res.status(500).json({ error: 'AI generation failed. Check server logs.' });
   }
 });
+
+// ---------------------------------------------------------------------------
+// Server-side chain (`/api/chain`): the model loop runs here, the client only
+// renders events and answers pending approvals by decision id. The pending
+// script is server-kept; confirm payloads never carry script/command/path
+// (rejected by `validate_chain_decision_payload` before any transition).
+// `/api/tell`, `/api/execute` and `/api/risk-check` stay stable beside it.
+// ---------------------------------------------------------------------------
+
+/** Maps a store gate rejection to its fail-closed HTTP status. */
+function chainConfirmHttpStatus(error: ChainConfirmError): number {
+  if (error === 'unknown_run') {
+    return 404;
+  } else if (error === 'run_cancelled' || error === 'no_pending_approval') {
+    return 409;
+  } else {
+    return 409;
+  }
+}
+
+/** Records a `denied` outcome for a script that must never execute. */
+function denyChainScript(
+  runId: string,
+  decisionId: string,
+  script: string,
+  reason: string,
+  source: string,
+): ChainRunSnapshot | null {
+  return chainStore.finishConfirm(runId, decisionId, {
+    type: 'denied',
+    script,
+    text: `${reason} (${source})`,
+    status: 'completed',
+  });
+}
+
+/**
+ * Advances one chain run server-side: calls the model, and either completes
+ * (final answer, deny, failure, round cap) or pauses with a pending approval.
+ * Every command after a confirm re-enters here, so the loop never lives in
+ * the browser. Fail-closed: anything risky, disabled or undecidable stops
+ * the run without executing.
+ *
+ * @param runId - Server-side run to advance.
+ * @param modelSpec - Model alias or spec resolved for this run.
+ * @param system - Effective system prompt (server-built project context).
+ * @returns The fresh snapshot, or null when the run expired mid-flight.
+ */
+async function advanceChainRun(runId: string, modelSpec: string, system: string): Promise<ChainRunSnapshot | null> {
+  for (;;) {
+    const current = chainStore.getRun(runId);
+    if (current === null || current.status !== 'running' || current.rounds >= CHAIN_MAX_ROUNDS) {
+      break;
+    } else {
+      // Budget left — run the next model turn below.
+    }
+    let generated: { text: string; reasoning: string | null };
+    try {
+      // Turn context travels inside the store; snapshots stay replay-only.
+      generated = await generateOnce(modelSpec, chainStore.messagesOf(runId), system);
+    } catch (error: unknown) {
+      return chainStore.failRun(runId, model_error_message(error) || 'AI generation failed');
+    }
+    // A cancel that landed during the model call wins: never append to a
+    // run that is no longer live.
+    const fresh = chainStore.getRun(runId);
+    if (fresh === null || fresh.status !== 'running') {
+      return fresh;
+    } else {
+      // Still running — record the turn below.
+    }
+    chainStore.pushMessage(runId, { role: 'assistant', content: generated.text });
+    chainStore.setText(runId, generated.text);
+    chainStore.appendEvent(runId, { type: 'message', text: generated.text });
+    chainStore.countRound(runId);
+    const script = extractFirstScript(generated.text);
+    if (script === null) {
+      return chainStore.completeRun(runId, generated.text);
+    } else if (NO_EXEC) {
+      // Contract wording: denied/disabled with --no-exec source, never
+      // reason 'no-exec', and nothing is executed.
+      chainStore.appendEvent(runId, { type: 'denied', script, text: 'disabled (--no-exec)' });
+      return chainStore.completeRun(runId, generated.text);
+    } else if (isHighRiskScript(script)) {
+      chainStore.appendEvent(runId, { type: 'denied', script, text: 'high-risk: blocked without execution' });
+      return chainStore.completeRun(runId, generated.text);
+    } else {
+      const pending = chainStore.requestApproval(runId, script);
+      if (pending === null) {
+        return chainStore.failRun(runId, 'Chain approval could not be recorded');
+      } else {
+        return chainStore.getRun(runId);
+      }
+    }
+  }
+  const capped = chainStore.getRun(runId);
+  if (capped === null || capped.status !== 'running') {
+    return capped;
+  } else {
+    chainStore.appendEvent(runId, { type: 'completed', text: CHAIN_LIMIT_NOTICE });
+    return chainStore.completeRun(runId);
+  }
+}
+
+// API: Start a server-side chain run (additive; `/api/tell` stays compatible).
+app.post('/api/chain', async (req, res) => {
+  const payloadError = validateTellPayload(req.body);
+  if (payloadError) {
+    return res.status(400).json({ error: payloadError });
+  }
+  const { messages, modelAlias, systemPrompt } = req.body as {
+    messages: Array<{ role: 'user' | 'assistant'; content: string }>;
+    modelAlias?: unknown;
+    systemPrompt?: string | null;
+  };
+  if (modelAlias !== undefined && (typeof modelAlias !== 'string' || modelAlias.length > 256)) {
+    return res.status(400).json({ error: 'modelAlias must be a string limited to 256 chars' });
+  }
+
+  if (!chainRateLimit.check(clientIp(req))) {
+    return res.status(429).json({ error: 'Rate limit exceeded (10/min). Slow down.' });
+  }
+
+  const modelSpec = modelAlias || DEFAULT_MODEL;
+  serverState.aiTurns += 1;
+
+  try {
+    try {
+      const resolved = resolve_model_spec(modelSpec);
+      serverState.keysUsed.add(resolved.vendor);
+    } catch {
+      /* vendor unknown; skip */
+    }
+
+    // Convert messages to Vercel AI SDK format
+    const formattedMessages = messages.map((m: any) => ({
+      role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
+      content: m.content,
+    }));
+
+    const effectiveSystem = systemPrompt?.trim() ? systemPrompt : compose_forwarded_system(buildSystemPrompt(CWD));
+
+    const created = chainStore.createRun(formattedMessages);
+    chainContinuations.set(created.runId, { modelSpec, system: effectiveSystem });
+    const snapshot = await advanceChainRun(created.runId, modelSpec, effectiveSystem);
+    dropContinuationIfTerminal(created.runId, snapshot);
+    if (snapshot === null) {
+      return res.status(404).json({ error: 'Unknown or expired chain run' });
+    } else {
+      return res.json(snapshot);
+    }
+  } catch (error: any) {
+    console.error('Error advancing chain run:', model_error_message(error));
+    return res.status(500).json({ error: 'AI generation failed. Check server logs.' });
+  }
+});
+
+// API: Replay a chain run (event sequence for idempotent clients).
+app.get('/api/chain/:runId', (req, res) => {
+  if (!chainRateLimit.check(clientIp(req))) {
+    return res.status(429).json({ error: 'Rate limit exceeded (10/min). Slow down.' });
+  }
+  const snapshot = chainStore.getRun(String(req.params.runId || ''));
+  if (snapshot === null) {
+    // Genuinely unknown ids and TTL-expired runs share this answer: a
+    // restart drops every run, and nothing resumes blindly.
+    return res.status(404).json({ error: 'Unknown or expired chain run' });
+  } else {
+    return res.json(snapshot);
+  }
+});
+
+// API: Answer a pending chain approval (approve runs the server-kept script
+// exactly once; skip continues without it). Any script/command/path field in
+// the body is a 400 — the client never supplies free scripts.
+app.post('/api/chain/:runId/confirm', async (req, res) => {
+  const validation = validate_chain_decision_payload(req.body);
+  if (!validation.ok) {
+    return res.status(400).json({ error: validation.error });
+  }
+  if (!chainRateLimit.check(clientIp(req))) {
+    return res.status(429).json({ error: 'Rate limit exceeded (10/min). Slow down.' });
+  }
+  const runId = String(req.params.runId || '');
+  if (validation.value.decision === 'approve' && activeExecutions >= EXEC_MAX_CONCURRENCY) {
+    return res.status(429).json({ error: 'Server busy: max concurrent executions reached' });
+  }
+  const gate = chainStore.tryBeginConfirm(runId, validation.value);
+  if (!gate.ok) {
+    return res.status(chainConfirmHttpStatus(gate.error)).json({ error: gate.error });
+  } else if ('snapshot' in gate) {
+    // Same decision id + same verdict replayed: stored result, no re-execution.
+    return res.json(gate.snapshot);
+  } else {
+    // Single-flight approval below: the script runs at most once per
+    // decision id, and every failure below stays fail-closed (no execution).
+  }
+  const script = gate.script;
+  const decisionId = validation.value.decision_id;
+  if (NO_EXEC) {
+    const snapshot = denyChainScript(runId, decisionId, script, 'disabled', '--no-exec');
+    dropContinuationIfTerminal(runId, snapshot);
+    return res.status(403).json({ error: 'disabled', run: snapshot });
+  } else if (isHighRiskScript(script)) {
+    const snapshot = denyChainScript(runId, decisionId, script, 'high-risk', 'risk-check');
+    dropContinuationIfTerminal(runId, snapshot);
+    return res.status(403).json({ error: 'high-risk script blocked without execution', run: snapshot });
+  } else if (validation.value.decision === 'skip') {
+    chainStore.pushMessage(runId, { role: 'user', content: `Skipped by user:\n${script}` });
+    const skipped = chainStore.finishConfirm(runId, decisionId, {
+      type: 'skipped',
+      script,
+      status: 'running',
+    });
+    if (skipped === null) {
+      return res.status(404).json({ error: 'Unknown or expired chain run' });
+    } else if (skipped.status === 'cancelled') {
+      // A cancel landed mid-flight: the skip is recorded, the run stays
+      // cancelled and the loop never resumes.
+      const settled = chainStore.settleDecision(runId, decisionId);
+      dropContinuationIfTerminal(runId, settled ?? skipped);
+      return res.json(settled ?? skipped);
+    } else {
+      const continued = await continueChainAfterConfirm(runId);
+      // Settle the idempotency snapshot on the post-continuation state so a
+      // retry replays exactly this answer (never a stale prefix, never a re-run).
+      const settled = chainStore.settleDecision(runId, decisionId);
+      dropContinuationIfTerminal(runId, settled ?? continued);
+      return res.json(settled ?? continued ?? skipped);
+    }
+  } else {
+    serverState.commandsRun += 1;
+    activeExecutions += 1;
+    try {
+      const { stdout, stderr } = await execAsync(script, {
+        cwd: CWD,
+        maxBuffer: 32 * 1024 * 1024,
+        shell: '/bin/bash',
+        timeout: EXEC_TIMEOUT_MS,
+        env: sanitizeChildEnv(process.env),
+      });
+      const truncate = (text: string) =>
+        text.length > EXEC_OUTPUT_LIMIT ? `${text.slice(0, EXEC_OUTPUT_LIMIT)}\n[truncated]` : text;
+      const output = truncate(stdout) + truncate(stderr);
+      chainStore.pushMessage(runId, {
+        role: 'user',
+        content: `Executed command:\n${script}\nOutput:\n${truncateChainFeedbackTail(output)}`,
+      });
+      const executed = chainStore.finishConfirm(runId, decisionId, {
+        type: 'executed',
+        script,
+        output,
+        exitCode: 0,
+        status: 'running',
+      });
+      if (executed === null) {
+        return res.status(404).json({ error: 'Unknown or expired chain run' });
+      } else if (executed.status === 'cancelled') {
+        const settled = chainStore.settleDecision(runId, decisionId);
+        dropContinuationIfTerminal(runId, settled ?? executed);
+        return res.json(settled ?? executed);
+      } else {
+        const continued = await continueChainAfterConfirm(runId);
+        const settled = chainStore.settleDecision(runId, decisionId);
+        dropContinuationIfTerminal(runId, settled ?? continued);
+        return res.json(settled ?? continued ?? executed);
+      }
+    } catch (error: any) {
+      const output = [
+        error.stdout || '',
+        error.stderr || '',
+        error.killed ? `Process timed out after ${EXEC_TIMEOUT_MS}ms` : error.message || '',
+      ]
+        .filter(Boolean)
+        .join('\n');
+      const capped = output.slice(0, EXEC_OUTPUT_LIMIT + 32);
+      chainStore.pushMessage(runId, {
+        role: 'user',
+        content: `Executed command:\n${script}\nOutput:\n${truncateChainFeedbackTail(capped)}`,
+      });
+      // A failing command self-heals through the next model turn (same
+      // protocol as the CLI chain), it does not fail the run.
+      const failed = chainStore.finishConfirm(runId, decisionId, {
+        type: 'executed',
+        script,
+        output: capped,
+        exitCode: typeof error.code === 'number' ? error.code : 1,
+        status: 'running',
+      });
+      if (failed === null) {
+        return res.status(404).json({ error: 'Unknown or expired chain run' });
+      } else if (failed.status === 'cancelled') {
+        const settled = chainStore.settleDecision(runId, decisionId);
+        dropContinuationIfTerminal(runId, settled ?? failed);
+        return res.json(settled ?? failed);
+      } else {
+        const continued = await continueChainAfterConfirm(runId);
+        const settled = chainStore.settleDecision(runId, decisionId);
+        dropContinuationIfTerminal(runId, settled ?? continued);
+        return res.json(settled ?? continued ?? failed);
+      }
+    } finally {
+      activeExecutions -= 1;
+    }
+  }
+});
+
+// API: Cancel a chain run (invalidates any pending approval; idempotent).
+app.post('/api/chain/:runId/cancel', (req, res) => {
+  if (!chainRateLimit.check(clientIp(req))) {
+    return res.status(429).json({ error: 'Rate limit exceeded (10/min). Slow down.' });
+  }
+  const snapshot = chainStore.cancelRun(String(req.params.runId || ''));
+  dropContinuationIfTerminal(String(req.params.runId || ''), snapshot);
+  if (snapshot === null) {
+    return res.status(404).json({ error: 'Unknown or expired chain run' });
+  } else {
+    return res.json(snapshot);
+  }
+});
+
+/**
+ * Continues a run after a confirm decision: replays the model loop with the
+ * run's own model and system prompt. Stored alongside the run so a confirm
+ * resumes the same context the creation call built.
+ *
+ * @param runId - Run whose loop should continue.
+ * @returns The fresh snapshot, or null when the run expired mid-flight.
+ */
+async function continueChainAfterConfirm(runId: string): Promise<ChainRunSnapshot | null> {
+  const continuation = chainContinuations.get(runId);
+  if (continuation === undefined) {
+    return chainStore.getRun(runId);
+  } else {
+    return advanceChainRun(runId, continuation.modelSpec, continuation.system);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Session persistence API (.tell/)
