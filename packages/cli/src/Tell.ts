@@ -26,7 +26,6 @@ import {
   create_core_runtime,
   type ExecMode,
   is_high_risk_script,
-  LOOP_MAX_ROUNDS,
   lock_process_environment,
   READLINE_CONFIRM_TIMEOUT_MS,
   type RuntimeCallbacks,
@@ -47,6 +46,27 @@ import {
   show_entry,
 } from './history';
 import { expand_mentions } from './mentions';
+import {
+  build_execution_options,
+  DEFAULT_CONTEXT_MAX_CHARS,
+  DEFAULT_EXEC_TIMEOUT_MS,
+  DEFAULT_MAX_BUFFER_BYTES,
+  DEFAULT_MAX_CHAIN_STEPS,
+  DEFAULT_OUTPUT_MAX_BYTES,
+  DEFAULT_STDIN_MAX_BYTES,
+  DEFAULT_STDIN_TIMEOUT_MS,
+  EXIT_CONFIG_ERROR,
+  EXIT_LIMIT,
+  EXIT_MODEL_ERROR,
+  EXIT_TIMEOUT,
+  MAX_CHAIN_STEPS,
+  parse_runtime_limits,
+  type RuntimeLimits,
+  runtime_env_from_process,
+  StdinLimitError,
+  truncate_context,
+  truncate_output,
+} from './runtime-limits';
 import { get_system_prompt } from './systemPrompt';
 import {
   compose_system_prompt,
@@ -59,10 +79,12 @@ import {
 } from './tellrc';
 
 const DEFAULT_MODEL = process.env['TELL_MODEL'] || 'g';
-const STDIN_TIMEOUT = 30_000;
+const STDIN_TIMEOUT = DEFAULT_STDIN_TIMEOUT_MS;
 // Chars of accumulated conversation context; beyond this the oldest part is
 // summarized away (LLM windows are far below 64K chars of raw history).
-const MAX_CONTEXT_CHARS = 64 * 1024;
+// Single owner of the value lives in `./runtime-limits`; this alias keeps
+// historical references working without a second constant.
+const MAX_CONTEXT_CHARS = DEFAULT_CONTEXT_MAX_CHARS;
 
 type CliOptions = {
   model?: string;
@@ -84,6 +106,14 @@ type CliOptions = {
   system?: string;
   systemFile?: string;
   temperature?: string;
+  contextMaxChars?: string;
+  stdinTimeout?: string | boolean;
+  noStdinTimeout?: boolean;
+  stdinMaxBytes?: string;
+  execTimeout?: string;
+  maxChain?: string;
+  maxBuffer?: string;
+  outputMaxBytes?: string;
 };
 
 type ParsedInput = { model: string; parts: string[]; readStdin: boolean };
@@ -117,6 +147,7 @@ type ConversationState = {
   coreConfig: CoreConfig;
   customSystemText?: string;
   temperature?: number;
+  limits: RuntimeLimits;
 };
 
 const CREATED_DIRS = new Set<string>();
@@ -182,7 +213,7 @@ async function print_custom_models(): Promise<void> {
     endpoint = config.urls.custom ?? '';
   } catch (error) {
     console.error('\x1b[31m%s\x1b[0m', format_model_error(error));
-    process.exitCode = 1;
+    process.exitCode = EXIT_MODEL_ERROR;
     return;
   }
   console.log('Usage: tell -m custom:<model> "message"\n');
@@ -204,23 +235,63 @@ async function print_custom_models(): Promise<void> {
 // transport moved to `./core-adapters` (core-owned ports); this file keeps
 // only the readline prompt, history/context UX and the response loop.
 
-async function read_stdin(): Promise<string> {
+async function read_stdin(limits?: RuntimeLimits): Promise<string> {
   if (process.stdin.isTTY) return '';
+  const timeout_ms = limits?.stdin_timeout_ms ?? STDIN_TIMEOUT;
+  const max_bytes = limits?.stdin_max_bytes ?? DEFAULT_STDIN_MAX_BYTES;
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`stdin read timed out after ${STDIN_TIMEOUT / 1000}s`));
-    }, STDIN_TIMEOUT);
+    const timer =
+      timeout_ms > 0
+        ? setTimeout(() => {
+            cleanup();
+            reject(new StdinLimitError('timeout', `stdin read timed out after ${timeout_ms / 1000}s`));
+          }, timeout_ms)
+        : undefined;
 
     const chunks: Buffer[] = [];
-    process.stdin.on('data', (chunk: Buffer) => chunks.push(chunk));
-    process.stdin.on('end', () => {
-      clearTimeout(timer);
-      resolve(Buffer.concat(chunks).toString('utf8').trimEnd());
-    });
-    process.stdin.on('error', (err) => {
-      clearTimeout(timer);
-      reject(err);
-    });
+    let bytes = 0;
+    let settled = false;
+    const cleanup = (): void => {
+      if (timer !== undefined) clearTimeout(timer);
+      process.stdin.removeListener('data', on_data);
+      process.stdin.removeListener('end', on_end);
+      process.stdin.removeListener('error', on_error);
+    };
+    const on_data = (chunk: Buffer): void => {
+      bytes += chunk.length;
+      if (bytes > max_bytes) {
+        if (!settled) {
+          settled = true;
+          cleanup();
+          reject(new StdinLimitError('overflow', `stdin exceeded ${max_bytes} bytes`));
+        } else {
+          // Already settled — ignore late data.
+        }
+      } else {
+        chunks.push(chunk);
+      }
+    };
+    const on_end = (): void => {
+      if (!settled) {
+        settled = true;
+        cleanup();
+        resolve(Buffer.concat(chunks).toString('utf8').trimEnd());
+      } else {
+        // Overflow/timeout already rejected — ignore end.
+      }
+    };
+    const on_error = (err: Error): void => {
+      if (!settled) {
+        settled = true;
+        cleanup();
+        reject(err);
+      } else {
+        // Already settled — ignore error.
+      }
+    };
+    process.stdin.on('data', on_data);
+    process.stdin.on('end', on_end);
+    process.stdin.on('error', on_error);
   });
 }
 
@@ -304,7 +375,7 @@ function run_history_dispatch(ref: boolean | string): void {
         ? `No context at index ${index} (have ${total} saved context${total === 1 ? '' : 's'})`
         : `No conversation at index ${index} (have ${total} conversation${total === 1 ? '' : 's'})`;
       console.error('\x1b[31m%s\x1b[0m', message);
-      process.exitCode = 1;
+      process.exitCode = EXIT_MODEL_ERROR;
       return;
     }
     show_entry(target.file);
@@ -319,7 +390,7 @@ function run_history_dispatch(ref: boolean | string): void {
   const results = [...search_contexts(value, entries), ...search_sessions(value, history_dir())];
   if (results.length === 0) {
     console.error('\x1b[31m%s\x1b[0m', `No matches for "${value}" in contexts or conversations.`);
-    process.exitCode = 1;
+    process.exitCode = EXIT_MODEL_ERROR;
     return;
   }
   print_search_results(results, value);
@@ -476,14 +547,13 @@ function read_text(file: string): string {
   }
 }
 
-function limit_context(text: string): string {
-  if (text.length <= MAX_CONTEXT_CHARS) return text;
-  return `[older context truncated]\n${text.slice(-MAX_CONTEXT_CHARS)}`;
+function limit_context(text: string, max_chars: number = MAX_CONTEXT_CHARS): string {
+  return truncate_context(text, max_chars);
 }
 
-function write_context(file: string, content: string): void {
+function write_context(file: string, content: string, max_chars: number = MAX_CONTEXT_CHARS): void {
   ensure_dir(path.dirname(file));
-  fs.writeFileSync(file, `${limit_context(content).trim()}\n`, { encoding: 'utf8', mode: 0o600 });
+  fs.writeFileSync(file, `${limit_context(content, max_chars).trim()}\n`, { encoding: 'utf8', mode: 0o600 });
   tighten_permissions(file, 0o600);
 }
 
@@ -491,7 +561,7 @@ function save_incremental_context(contextPath: string, previousContext: string, 
   try {
     const turn = strip_think_tags(conversation_text(state));
     const next_context = previousContext ? `${previousContext}\n${turn}` : turn;
-    write_context(contextPath, next_context);
+    write_context(contextPath, next_context, state.limits.context_max_chars);
   } catch (err) {
     process.stderr.write(
       `\x1b[33mWarning: failed to save incremental context: ${err instanceof Error ? err.message : String(err)}\x1b[0m\n`,
@@ -616,6 +686,14 @@ function build_program(argv: string[]): Command {
     .option('--system <text>', 'custom instructions prepended before the safety prompt')
     .option('--system-file <path>', 'file with custom instructions (64 KB cap)')
     .option('--temperature <n>', 'sampling temperature 0..2')
+    .option('--context-max-chars <n>', `max context chars (default ${DEFAULT_CONTEXT_MAX_CHARS})`)
+    .option('--stdin-timeout <ms>', `stdin read deadline in ms (default ${DEFAULT_STDIN_TIMEOUT_MS})`)
+    .option('--no-stdin-timeout', 'disable the stdin deadline (byte cap stays)')
+    .option('--stdin-max-bytes <n>', `max stdin bytes (default ${DEFAULT_STDIN_MAX_BYTES})`)
+    .option('--exec-timeout <ms>', `per-command timeout in ms (default ${DEFAULT_EXEC_TIMEOUT_MS})`)
+    .option('--max-chain <n>', `max chain rounds 1..${MAX_CHAIN_STEPS} (default ${DEFAULT_MAX_CHAIN_STEPS})`)
+    .option('--max-buffer <n>', `internal exec buffer bytes (default ${DEFAULT_MAX_BUFFER_BYTES})`)
+    .option('--output-max-bytes <n>', `delivered output cap bytes (default ${DEFAULT_OUTPUT_MAX_BYTES})`)
     .option('--no-exec', 'do not execute requested commands')
     .parse(argv);
 }
@@ -706,18 +784,27 @@ async function run_response_loop(
   // Shared ports across runs: storage accumulates the conversation so resumed
   // runs compose follow-ups continuously; everything else is stateless.
   const storage = create_cli_memory_storage(previousContext);
-  const executor = create_cli_executor();
+  // The execution contract is built once from the resolved limits (single
+  // owner in `./runtime-limits`): timeout/buffer flow to the injected
+  // executor, the output cap to delivered text, rounds to the loop budget.
+  const exec_options = build_execution_options(state.limits);
+  const executor = create_cli_executor({
+    timeout_ms: exec_options.timeout_ms,
+    max_output_bytes: exec_options.max_buffer_bytes,
+  });
+  const chain_budget = exec_options.max_rounds;
   const runtime_callbacks: RuntimeCallbacks = {
     onText: () => {
       remember_assistant(state, log, last_raw);
       if (state.saveContext) save_incremental_context(contextPath, previousContext, state);
     },
     onCommandOutput: (event) => {
+      const capped = truncate_output(event.output, exec_options.max_output_bytes);
       const result_text =
         event.exit_code > 0
-          ? `Command failed (exit code ${event.exit_code}):\n${event.script}\nOutput:\n${event.output}`
-          : `Executed command:\n${event.script}\nOutput:\n${event.output}`;
-      print_command_output(event.output);
+          ? `Command failed (exit code ${event.exit_code}):\n${event.script}\nOutput:\n${capped}`
+          : `Executed command:\n${event.script}\nOutput:\n${capped}`;
+      print_command_output(capped);
       append_log(log, result_text);
       remember_command_result(state, result_text);
       if (state.saveContext) save_incremental_context(contextPath, previousContext, state);
@@ -746,7 +833,7 @@ async function run_response_loop(
   // One runtime per budget: resumed runs get only the rounds the legacy
   // 8-command counter still allows, so chained declines can never overshoot
   // the cap the way a fresh full-budget run would.
-  function create_runtime(max_rounds: number) {
+  function create_runtime(rounds: number) {
     return create_core_runtime({
       config: state.coreConfig,
       model,
@@ -756,10 +843,10 @@ async function run_response_loop(
       risk: cli_risk_port(),
       system,
       callbacks: runtime_callbacks,
-      max_rounds,
+      max_rounds: rounds,
     });
   }
-  let runtime = create_runtime(state.autoContinue ? LOOP_MAX_ROUNDS : 1);
+  let runtime = create_runtime(state.autoContinue ? chain_budget : 1);
   let result = await runtime.run(state.firstPrompt);
   // Chain mode resumes after declined commands with the legacy feedback
   // (conversation plus instruction); executed/failed rounds already iterate
@@ -767,16 +854,16 @@ async function run_response_loop(
   // The resume check reads the latest run only: a clean follow-up must stop
   // even when an earlier round declined.
   let latest = result;
-  while (state.autoContinue && result.commands.length < LOOP_MAX_ROUNDS && should_resume_after_decline(latest)) {
+  while (state.autoContinue && result.commands.length < chain_budget && should_resume_after_decline(latest)) {
     const feedback = `${strip_think_tags(conversation_text(state))}\n\n${RESUME_INSTRUCTION}`;
-    runtime = create_runtime(LOOP_MAX_ROUNDS - result.commands.length);
+    runtime = create_runtime(chain_budget - result.commands.length);
     latest = await runtime.run(feedback);
     result = merge_run_result(result, latest);
   }
-  if (state.autoContinue && result.commands.length >= LOOP_MAX_ROUNDS) {
-    process.stderr.write(`\x1b[33mChain limit reached (${LOOP_MAX_ROUNDS}); asking for final answer.\x1b[0m\n`);
+  if (state.autoContinue && result.commands.length >= chain_budget) {
+    process.stderr.write(`\x1b[33mChain limit reached (${chain_budget}); asking for final answer.\x1b[0m\n`);
     process.stderr.write(
-      `\x1b[33mChain limit reached (${LOOP_MAX_ROUNDS}); ignoring further requested commands.\x1b[0m\n`,
+      `\x1b[33mChain limit reached (${chain_budget}); ignoring further requested commands.\x1b[0m\n`,
     );
   } else {
     // Limit not reached — nothing to announce.
@@ -803,12 +890,12 @@ async function maybe_summarize_context(
 ): Promise<void> {
   try {
     const turn = strip_think_tags(conversation_text(state));
-    if (previousContext && previousContext.length + turn.length > MAX_CONTEXT_CHARS) {
+    if (previousContext && previousContext.length + turn.length > state.limits.context_max_chars) {
       try {
         const summary = await summarize_context(ai, previousContext);
-        write_context(contextPath, `${summary}\n${turn}`);
+        write_context(contextPath, `${summary}\n${turn}`, state.limits.context_max_chars);
       } catch {
-        write_context(contextPath, `${previousContext}\n${turn}`);
+        write_context(contextPath, `${previousContext}\n${turn}`, state.limits.context_max_chars);
       }
     }
   } catch (error) {
@@ -816,7 +903,7 @@ async function maybe_summarize_context(
       '\x1b[31mFailed to summarize context: %s\x1b[0m',
       error instanceof Error ? error.message : String(error),
     );
-    process.exitCode = 1;
+    process.exitCode = EXIT_MODEL_ERROR;
   }
 }
 
@@ -837,6 +924,7 @@ async function launch_web(opts: {
   maxBufferBytes?: number | undefined;
   contextChars?: number | undefined;
   stdinTimeoutMs?: number | undefined;
+  execTimeout?: number | undefined;
 }): Promise<void> {
   let cwd = process.cwd();
   if (opts.cwd) {
@@ -850,7 +938,7 @@ async function launch_web(opts: {
           '\x1b[31mFailed to create working directory ' +
             `${JSON.stringify(opts.cwd)}: ${err instanceof Error ? err.message : String(err)}\x1b[0m`,
         );
-        process.exitCode = 1;
+        process.exitCode = EXIT_MODEL_ERROR;
         return;
       }
     }
@@ -888,6 +976,7 @@ async function launch_web(opts: {
     if (opts.maxBufferBytes !== undefined) child_args.push('--max-buffer-bytes', String(opts.maxBufferBytes));
     if (opts.contextChars !== undefined) child_args.push('--context-chars', String(opts.contextChars));
     if (opts.stdinTimeoutMs !== undefined) child_args.push('--stdin-timeout-ms', String(opts.stdinTimeoutMs));
+    if (opts.execTimeout !== undefined) child_args.push('--exec-timeout', String(opts.execTimeout));
 
     const child = spawn('tell-web', child_args, {
       stdio: 'inherit',
@@ -898,12 +987,12 @@ async function launch_web(opts: {
       const code = (err as { code?: string })?.code;
       if (code === 'ENOENT') {
         console.error('\x1b[31mWeb interface not installed. Install it with:\x1b[0m\n  npm install -g @tell-ai/web\n');
-        process.exitCode = 1;
+        process.exitCode = EXIT_MODEL_ERROR;
       } else {
         console.error(
           `\x1b[31mFailed to launch web interface: ${err instanceof Error ? err.message : String(err)}\x1b[0m`,
         );
-        process.exitCode = 1;
+        process.exitCode = EXIT_MODEL_ERROR;
       }
     });
     await new Promise<void>((resolve) => {
@@ -948,6 +1037,40 @@ function tellrc_env_from_process(): {
   take('TELL_TEMPERATURE');
   take('TELL_PROFILE');
   return env;
+}
+
+/**
+ * Resolves runtime limits with `flag > env > project > user > default`.
+ *
+ * Reuses the tellrc file layers (no second parser) and the runtime env
+ * reader; flag/env values fail with exit 2 via `parse_runtime_limits`.
+ *
+ * @param opts - Commander options carrying limit flags.
+ * @param cwd - Working directory for the project layer.
+ * @returns The resolved limits.
+ */
+function resolve_runtime_limits(opts: CliOptions, cwd: string): RuntimeLimits {
+  const no_timeout = opts.noStdinTimeout === true || (opts.stdinTimeout as unknown) === false;
+  const layers = load_tellrc(cwd, os.homedir());
+  const user = layers.find((layer) => layer.rank === 1);
+  const project = layers.find((layer) => layer.rank === 2);
+  return parse_runtime_limits({
+    flags: {
+      ...(opts.contextMaxChars !== undefined ? { context_max_chars: opts.contextMaxChars } : {}),
+      ...(opts.stdinTimeout !== undefined && (opts.stdinTimeout as unknown) !== false
+        ? { stdin_timeout_ms: opts.stdinTimeout as string }
+        : {}),
+      ...(no_timeout ? { no_stdin_timeout: true } : {}),
+      ...(opts.stdinMaxBytes !== undefined ? { stdin_max_bytes: opts.stdinMaxBytes } : {}),
+      ...(opts.execTimeout !== undefined ? { exec_timeout_ms: opts.execTimeout } : {}),
+      ...(opts.maxChain !== undefined ? { max_chain_steps: opts.maxChain } : {}),
+      ...(opts.maxBuffer !== undefined ? { max_buffer_bytes: opts.maxBuffer } : {}),
+      ...(opts.outputMaxBytes !== undefined ? { output_max_bytes: opts.outputMaxBytes } : {}),
+    },
+    env: runtime_env_from_process(),
+    ...(project ? { project: { source: project.source, limits: project.limits } } : {}),
+    ...(user ? { user: { source: user.source, limits: user.limits } } : {}),
+  });
 }
 
 /**
@@ -996,6 +1119,14 @@ async function run_tell(
   // mutating MODELS; temperature and custom system flow into the run;
   // deny/limits stay validated data (enforcement lives elsewhere).
   const tellrc = resolve_invocation_tellrc(opts, process.cwd());
+  let limits: RuntimeLimits;
+  try {
+    limits = resolve_runtime_limits(opts, process.cwd());
+  } catch (error) {
+    console.error('\x1b[31m%s\x1b[0m', error instanceof Error ? error.message : String(error));
+    process.exitCode = EXIT_CONFIG_ERROR;
+    return;
+  }
   const effective_model = resolve_model_input(tellrc.model ?? model, tellrc.aliases, MODELS);
   let label = '';
   let plan: ContextPlan;
@@ -1005,7 +1136,7 @@ async function run_tell(
     plan = build_context_plan(opts, effective_model, entries, has_positional_prompt);
   } catch (error) {
     console.error('\x1b[31m%s\x1b[0m', error instanceof Error ? error.message : String(error));
-    process.exitCode = 1;
+    process.exitCode = EXIT_MODEL_ERROR;
     return;
   }
 
@@ -1031,7 +1162,11 @@ async function run_tell(
   // `--no-exec` wins over everything; `-y` enables the risk-gated auto mode.
   // `--require-approval` is declarative in the CLI (high-risk always asks even
   // with -y, which is already `auto-risk` behavior) and is forwarded to -w.
-  const core_config = resolve_cli_core_config({ exec: opts.exec, chain: opts.chain });
+  const core_config = resolve_cli_core_config({
+    exec: opts.exec,
+    chain: opts.chain,
+    exec_timeout_ms: limits.exec_timeout_ms,
+  });
   const exec_mode: ExecMode = core_config.exec_enabled === false ? 'no-exec' : opts.yes ? 'auto-risk' : 'confirm-all';
   // 'create' always starts empty, even if it reuses an existing name (an explicit reset).
   const context_path = plan.$ === 'none' ? context_file(effective_model) : plan.file;
@@ -1075,6 +1210,7 @@ async function run_tell(
     stream: Boolean(opts.stream),
     think: Boolean(opts.think),
     coreConfig: core_config,
+    limits,
     ...(custom_system_text ? { customSystemText: custom_system_text } : {}),
     ...(tellrc.temperature !== undefined ? { temperature: tellrc.temperature } : {}),
   };
@@ -1090,7 +1226,7 @@ async function run_tell(
     await run_response_loop(ai, state, log, context_path, previous_context);
   } catch (error) {
     console.error('\x1b[31m%s\x1b[0m', format_model_error(error));
-    process.exitCode = 1;
+    process.exitCode = EXIT_MODEL_ERROR;
     return;
   }
 
@@ -1122,7 +1258,7 @@ async function main() {
   const positional_args = program.args;
   if (opts.ctx !== undefined && opts.context) {
     console.error('\x1b[31merror: --ctx cannot be combined with -c\x1b[0m');
-    process.exitCode = 1;
+    process.exitCode = EXIT_MODEL_ERROR;
     return;
   }
 
@@ -1131,14 +1267,54 @@ async function main() {
   // alias is accepted in the same slot the parser accepts for models.
   // Quiet unless this is a web launch (run_tell re-resolves and prints).
   const early_tellrc = resolve_invocation_tellrc(opts, process.cwd(), !opts.web);
+  let early_limits: RuntimeLimits;
+  try {
+    early_limits = resolve_runtime_limits(opts, process.cwd());
+  } catch (error) {
+    console.error('\x1b[31m%s\x1b[0m', error instanceof Error ? error.message : String(error));
+    process.exitCode = EXIT_CONFIG_ERROR;
+    return;
+  }
   const opt_model = opts.model ?? early_tellrc.model;
   const input = parse_args(positional_args, opt_model, Boolean(opts.input), early_tellrc.aliases);
   const effective_model = resolve_model_input(input.model, early_tellrc.aliases, MODELS);
-  const stdin_text = input.readStdin ? await read_stdin().catch(() => '') : '';
+  let stdin_text = '';
+  if (input.readStdin) {
+    try {
+      stdin_text = await read_stdin(early_limits);
+    } catch (error) {
+      if (error instanceof StdinLimitError) {
+        console.error('\x1b[31m%s\x1b[0m', error.message);
+        process.exitCode = error.kind === 'timeout' ? EXIT_TIMEOUT : EXIT_LIMIT;
+        return;
+      } else {
+        console.error('\x1b[31m%s\x1b[0m', error instanceof Error ? error.message : String(error));
+        process.exitCode = EXIT_LIMIT;
+        return;
+      }
+    }
+  } else {
+    // No piped input — nothing to read.
+  }
   const prompt = format_prompt(input.parts.join(' '), stdin_text, opts);
   if (opts.web) {
     const web_system_file = opts.systemFile ?? early_tellrc.system_file;
     const web_system_text = opts.system ?? early_tellrc.system;
+    // Limit forwarding prefers explicit CLI flags/env (already validated
+    // into `early_limits`) over tellrc; absent layers stay absent so the web
+    // server keeps its own defaults. `--stdin-max-bytes`/`--output-max-bytes`
+    // have no web target and stay CLI-only; a disabled stdin deadline (0) is
+    // omitted because the web parser drops non-positive values.
+    const web_env = runtime_env_from_process();
+    const web_stdin_flag_set =
+      (opts.stdinTimeout !== undefined && (opts.stdinTimeout as unknown) !== false) ||
+      opts.noStdinTimeout === true ||
+      web_env.TELL_STDIN_TIMEOUT_MS !== undefined;
+    const web_stdin_timeout = web_stdin_flag_set
+      ? early_limits.stdin_timeout_ms > 0
+        ? early_limits.stdin_timeout_ms
+        : undefined
+      : early_tellrc.limits.stdin_timeout_ms;
     await launch_web({
       model: effective_model,
       prompt,
@@ -1152,23 +1328,30 @@ async function main() {
       profile: opts.profile ?? early_tellrc.profile,
       systemFile: web_system_file,
       systemText: web_system_file ? undefined : web_system_text,
-      ...(early_tellrc.limits.max_chain_steps !== undefined
-        ? { maxChainSteps: early_tellrc.limits.max_chain_steps }
-        : {}),
-      ...(early_tellrc.limits.max_buffer_bytes !== undefined
-        ? { maxBufferBytes: early_tellrc.limits.max_buffer_bytes }
-        : {}),
-      ...(early_tellrc.limits.context_chars !== undefined ? { contextChars: early_tellrc.limits.context_chars } : {}),
-      ...(early_tellrc.limits.stdin_timeout_ms !== undefined
-        ? { stdinTimeoutMs: early_tellrc.limits.stdin_timeout_ms }
-        : {}),
+      maxChainSteps:
+        opts.maxChain !== undefined || web_env.TELL_MAX_CHAIN_STEPS !== undefined
+          ? early_limits.max_chain_steps
+          : early_tellrc.limits.max_chain_steps,
+      maxBufferBytes:
+        opts.maxBuffer !== undefined || web_env.TELL_MAX_BUFFER_BYTES !== undefined
+          ? early_limits.max_buffer_bytes
+          : early_tellrc.limits.max_buffer_bytes,
+      contextChars:
+        opts.contextMaxChars !== undefined || web_env.TELL_CONTEXT_MAX_CHARS !== undefined
+          ? early_limits.context_max_chars
+          : early_tellrc.limits.context_chars,
+      stdinTimeoutMs: web_stdin_timeout,
+      execTimeout:
+        opts.execTimeout !== undefined || web_env.TELL_EXEC_TIMEOUT_MS !== undefined
+          ? early_limits.exec_timeout_ms
+          : undefined,
     });
     return;
   }
   const ctx_has_prompt = typeof opts.ctx === 'string' && ctx_value_has_prompt(opts.ctx);
   if (!prompt && !ctx_has_prompt) {
     console.error(format_missing_prompt_error(program));
-    process.exitCode = 1;
+    process.exitCode = EXIT_MODEL_ERROR;
     return;
   }
   // `input.parts` is the positional prompt with any leading model spec already
@@ -1180,5 +1363,5 @@ async function main() {
 
 main().catch((error: unknown) => {
   console.error('\x1b[31m%s\x1b[0m', format_model_error(error));
-  process.exitCode = 1;
+  process.exitCode = EXIT_MODEL_ERROR;
 });

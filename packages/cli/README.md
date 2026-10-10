@@ -171,6 +171,10 @@ secrets never enter args, files or `/api/config`. Env layer: `TELL_MODEL`,
 `TELL_SYSTEM`, `TELL_SYSTEM_FILE`, `TELL_TEMPERATURE`, `TELL_PROFILE`.
 New flags: `--profile`, `--system`, `--system-file`, `--temperature` (0..2).
 
+### Runtime limits
+
+Operational caps live in `src/runtime-limits.ts` (single owner: `parse_runtime_limits`, `truncate_context`, `RuntimeLimits`, `ExecutionOptions`): context 64 Ki (`--context-max-chars` / `TELL_CONTEXT_MAX_CHARS`), stdin 30 s (`--stdin-timeout` / `--no-stdin-timeout` / `TELL_STDIN_TIMEOUT_MS`) and 1 MiB (`--stdin-max-bytes` / `TELL_STDIN_MAX_BYTES`), exec 120 s (`--exec-timeout` / `TELL_EXEC_TIMEOUT_MS`), 8 chain rounds by default (`--max-chain` / `TELL_MAX_CHAIN_STEPS`, range `1..128`), 32 Mi buffer (`--max-buffer` / `TELL_MAX_BUFFER_BYTES`), 200 Ki delivered output (`--output-max-bytes` / `TELL_OUTPUT_MAX_BYTES`). Precedence `flag > env > project .tellrc > user ~/.tellrc > default`; bad flag/env fails with exit `2` before any model call, stdin timeout is `124`, overflow is `125`. Context is cut by whole turns with balanced `<think>`/`<RUN>` blocks — no tokenizer, no stdout monkey-patch. Covered by `bun run test:runtime`.
+
 ### Flag interactions
 
 | Flags | Reads context? | Deletes? | Writes? | Loop? |

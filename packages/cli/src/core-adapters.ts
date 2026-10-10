@@ -274,8 +274,13 @@ export async function execute_command(script: string): Promise<CliCommandResult>
  * @returns A `CommandExecutor` for runtime wiring (the loop still calls
  * `execute_command` until its own migration).
  */
-export function create_cli_executor(): CommandExecutor {
-  return (options: ExecutorOptions): Promise<ExecutorResult> => run_exec_transport(options);
+export function create_cli_executor(defaults?: { timeout_ms?: number; max_output_bytes?: number }): CommandExecutor {
+  return (options: ExecutorOptions): Promise<ExecutorResult> =>
+    run_exec_transport({
+      ...(defaults?.timeout_ms !== undefined ? { timeout_ms: defaults.timeout_ms } : {}),
+      ...(defaults?.max_output_bytes !== undefined ? { max_output_bytes: defaults.max_output_bytes } : {}),
+      ...options,
+    });
 }
 
 /**
