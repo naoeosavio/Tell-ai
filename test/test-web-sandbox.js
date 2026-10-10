@@ -2325,6 +2325,44 @@ describe('web sandbox: chain routes', () => {
     });
   });
 
+  describe('forwarded round cap', () => {
+    let handle;
+    let base;
+
+    before(async () => {
+      handle = bootChain(['--max-chain-steps', '1']);
+      base = await handle.basePromise;
+    });
+
+    after(() => shutdown(handle));
+
+    it('stops after the forwarded cap and reports it in the notice', async () => {
+      const run = await (await createRun(base)).json();
+      const approved = await (
+        await postJson(base, `/api/chain/${run.runId}/confirm`, {
+          decisionId: run.pending.decisionId,
+          expectedVersion: run.pending.expectedVersion,
+          decision: 'approve',
+        })
+      ).json();
+      assert.strictEqual(approved.status, 'completed');
+      assert.strictEqual(approved.pending, null);
+      assert.strictEqual(approved.events.filter((e) => e.type === 'executed').length, 1);
+      const completed = approved.events.filter((e) => e.type === 'completed');
+      assert.ok(
+        completed.some((e) => /Chain limit reached \(1\); ignoring further requested commands\./.test(e.text || '')),
+        'expected the cap notice among completed events',
+      );
+    });
+
+    it('/api/config exposes the forwarded round cap', async () => {
+      const res = await fetch(`${base}/api/config`);
+      assert.strictEqual(res.status, 200);
+      const body = await res.json();
+      assert.strictEqual(body.limits.maxChainSteps, 1);
+    });
+  });
+
   describe('chain rate limit', () => {
     let handle;
     let base;
@@ -2345,6 +2383,118 @@ describe('web sandbox: chain routes', () => {
       }
       assert.deepStrictEqual(statuses.slice(0, 10), Array(10).fill(404));
       assert.strictEqual(statuses[10], 429);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Runtime limits: forwarded CLI options reach the executor (timeout/output
+// cap) and are visible on /api/config; absent layers keep server defaults.
+// No model calls here, so no stub is needed.
+// ---------------------------------------------------------------------------
+describe('web sandbox: runtime limits', () => {
+  function bootLimits(extraArgs = []) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-web-limits-'));
+    const env = { ...process.env, PORT: '0', NODE_ENV: 'production' };
+    delete env.TELL_TOKEN;
+    const child = spawn(process.execPath, [DIST_SERVER, '--cwd', dir, ...extraArgs], {
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return { dir, child, basePromise: waitForServer(child) };
+  }
+
+  async function shutdown(handle) {
+    if (handle.child && !handle.child.killed) handle.child.kill('SIGTERM');
+    if (handle.dir) fs.rmSync(handle.dir, { recursive: true, force: true });
+  }
+
+  describe('forwarded limits', () => {
+    let handle;
+    let base;
+
+    before(async () => {
+      handle = bootLimits([
+        '--max-chain-steps',
+        '3',
+        '--max-buffer-bytes',
+        '1048576',
+        '--context-chars',
+        '8192',
+        '--stdin-timeout-ms',
+        '7000',
+        '--exec-timeout',
+        '45000',
+      ]);
+      base = await handle.basePromise;
+    });
+
+    after(() => shutdown(handle));
+
+    it('/api/config exposes the forwarded limits', async () => {
+      const res = await fetch(`${base}/api/config`);
+      assert.strictEqual(res.status, 200);
+      const body = await res.json();
+      assert.deepStrictEqual(body.limits, {
+        maxChainSteps: 3,
+        maxBufferBytes: 1048576,
+        contextChars: 8192,
+        stdinTimeoutMs: 7000,
+      });
+    });
+  });
+
+  describe('absent limits keep server defaults', () => {
+    let handle;
+    let base;
+
+    before(async () => {
+      handle = bootLimits();
+      base = await handle.basePromise;
+    });
+
+    after(() => shutdown(handle));
+
+    it('/api/config reports empty limits without overrides', async () => {
+      const res = await fetch(`${base}/api/config`);
+      assert.strictEqual(res.status, 200);
+      const body = await res.json();
+      assert.deepStrictEqual(body.limits, {});
+    });
+
+    it('/api/execute caps delivered output with an explicit marker', async () => {
+      const res = await fetch(`${base}/api/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: 'seq 1 300000' }),
+      });
+      assert.strictEqual(res.status, 200);
+      const body = await res.json();
+      assert.ok(body.output.length <= 200 * 1024 + 64);
+      assert.match(body.output, /\[truncated]/);
+    });
+  });
+
+  describe('forwarded exec timeout', () => {
+    let handle;
+    let base;
+
+    before(async () => {
+      handle = bootLimits(['--exec-timeout', '1000']);
+      base = await handle.basePromise;
+    });
+
+    after(() => shutdown(handle));
+
+    it('/api/execute reports timeout status past the forwarded deadline', async () => {
+      const res = await fetch(`${base}/api/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: 'sleep 5' }),
+      });
+      assert.strictEqual(res.status, 200);
+      const body = await res.json();
+      assert.match(body.output, /Process timed out after 1000ms/);
     });
   });
 });

@@ -189,6 +189,61 @@ test('cli: --require-approval is detected, default off, never a value', () => {
   assert.strictEqual(combo.noExec, true);
 });
 
+test('cli: forwarded runtime limits parse as positive ints', () => {
+  const args = parseCliArgs(
+    [
+      '--max-chain-steps',
+      '3',
+      '--max-buffer-bytes',
+      '1048576',
+      '--context-chars',
+      '8192',
+      '--stdin-timeout-ms',
+      '7000',
+      '--exec-timeout',
+      '90000',
+    ],
+    '/tmp',
+  );
+  assert.strictEqual(args.maxChainSteps, 3);
+  assert.strictEqual(args.maxBufferBytes, 1048576);
+  assert.strictEqual(args.contextChars, 8192);
+  assert.strictEqual(args.stdinTimeoutMs, 7000);
+  assert.strictEqual(args.execTimeout, 90000);
+});
+
+test('cli: runtime limits default to absent (server keeps its own defaults)', () => {
+  const args = parseCliArgs([], '/tmp');
+  assert.strictEqual(args.maxChainSteps, undefined);
+  assert.strictEqual(args.maxBufferBytes, undefined);
+  assert.strictEqual(args.contextChars, undefined);
+  assert.strictEqual(args.stdinTimeoutMs, undefined);
+  assert.strictEqual(args.execTimeout, undefined);
+});
+
+test('cli: invalid runtime limits are dropped, never crash the boot', () => {
+  const args = parseCliArgs(
+    ['--max-chain-steps', 'abc', '--max-buffer-bytes', '-5', '--context-chars', '1.9x', '--exec-timeout', 'fast'],
+    '/tmp',
+  );
+  assert.strictEqual(args.maxChainSteps, undefined);
+  assert.strictEqual(args.maxBufferBytes, undefined);
+  assert.strictEqual(args.contextChars, undefined);
+  assert.strictEqual(args.execTimeout, undefined);
+});
+
+test('cli: --exec-timeout clamps to 1000..600000 like the core contract', () => {
+  assert.strictEqual(parseCliArgs(['--exec-timeout', '10'], '/tmp').execTimeout, 1000);
+  assert.strictEqual(parseCliArgs(['--exec-timeout', '9999999'], '/tmp').execTimeout, 600000);
+  assert.strictEqual(parseCliArgs(['--exec-timeout', '0'], '/tmp').execTimeout, 1000);
+});
+
+test('cli: limit flags are not swallowed by preceding value flags', () => {
+  const args = parseCliArgs(['--cwd', '--max-chain-steps', '3'], '/tmp/defcwd');
+  assert.strictEqual(args.cwd, path.resolve('/tmp/defcwd'));
+  assert.strictEqual(args.maxChainSteps, 3);
+});
+
 // ---------------------------------------------------------------------------
 // Path traversal guard
 // ---------------------------------------------------------------------------

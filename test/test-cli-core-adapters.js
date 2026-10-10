@@ -175,6 +175,25 @@ describe('cli executor preserves the historical output shape', () => {
 
     await assert.rejects(executor({ script: 'echo never', cancellation: core.cancelled_token() }), /cancelled/);
   });
+
+  it('honors constructor defaults injected from runtime limits', async () => {
+    const quick = adapters.create_cli_executor({ timeout_ms: 300 });
+    const timed_out = await quick({ script: 'sleep 5' });
+    assert.strictEqual(timed_out.exit_code, core.EXEC_TIMEOUT_EXIT_CODE);
+    assert.match(timed_out.stderr, /Command timed out after \ds:/);
+
+    const capped = adapters.create_cli_executor({ max_output_bytes: 100 });
+    const overflow = await capped({ script: "node -e \"process.stdout.write('y'.repeat(5000))\"" });
+    assert.notStrictEqual(overflow.exit_code, 0);
+    assert.match(overflow.stderr, /maxBuffer/i);
+  });
+
+  it('prefers per-call overrides over constructor defaults', async () => {
+    const quick = adapters.create_cli_executor({ timeout_ms: 300 });
+    const overridden = await quick({ script: 'echo fast', timeout_ms: 60_000 });
+    assert.strictEqual(overridden.exit_code, 0);
+    assert.match(overridden.stdout, /fast/);
+  });
 });
 
 describe('cli approval port preserves -y/--require-approval/--no-exec', () => {

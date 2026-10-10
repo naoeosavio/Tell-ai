@@ -56,6 +56,14 @@ const tellrc_source = ts.transpileModule(
   { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } },
 ).outputText;
 
+// `./runtime-limits` is required by Tell.js at load time (single owner of
+// limits/truncate); compile it into the same vm sandbox on demand, like
+// `./mentions`.
+const runtime_limits_source = ts.transpileModule(
+  fs.readFileSync(path.join(__dirname, '..', 'packages', 'cli', 'src', 'runtime-limits.ts'), 'utf8'),
+  { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } },
+).outputText;
+
 function fake_stdin(text) {
   const stdin = new EventEmitter();
   stdin.isTTY = false;
@@ -193,6 +201,15 @@ async function run_tell(args, response, opts = {}) {
       const factory = vm.runInContext(`(function(require, module, exports) {${tellrc_source}\n})`, active_context);
       factory(mock_require, tellrc_module, tellrc_module.exports);
       return tellrc_module.exports;
+    }
+    if (name === './runtime-limits') {
+      const runtime_limits_module = { exports: {} };
+      const factory = vm.runInContext(
+        `(function(require, module, exports) {${runtime_limits_source}\n})`,
+        active_context,
+      );
+      factory(mock_require, runtime_limits_module, runtime_limits_module.exports);
+      return runtime_limits_module.exports;
     }
     if (name === '@tell-ai/sdk') {
       return {
