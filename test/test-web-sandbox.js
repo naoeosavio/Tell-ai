@@ -1960,6 +1960,396 @@ describe('web sandbox: api routes', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Chain routes: server-side loop with stateful approval (`/api/chain`).
+// A local OpenAI-compatible stub answers content-driven replies (script on a
+// fresh prompt, final answer after command feedback), so the suite never
+// touches the network. Each boot gets a 10/min chain quota, so the flows are
+// spread across boots: create/replay, approve/idempotency/conflict,
+// TOCTOU/free-script/skip, cancel, auth, no-exec, rate limit.
+// ---------------------------------------------------------------------------
+describe('web sandbox: chain routes', () => {
+  const SCRIPT_REPLY = 'Sure, running it now.\n<RUN>echo chain-hi</RUN>';
+  const FINAL_REPLY = 'All done, no more commands.';
+
+  let stub;
+  let stubPort;
+
+  function startStub() {
+    const server = http.createServer((req, res) => {
+      let body = '';
+      req.on('data', (chunk) => {
+        body += chunk;
+      });
+      req.on('end', () => {
+        let payload = {};
+        try {
+          payload = JSON.parse(body || '{}');
+        } catch {
+          /* ignore */
+        }
+        const messages = Array.isArray(payload.messages) ? payload.messages : [];
+        const last = messages[messages.length - 1];
+        const content = typeof last?.content === 'string' ? last.content : '';
+        const done =
+          content.startsWith('Executed command:') || content.startsWith('Skipped by user:');
+        const reply = done ? FINAL_REPLY : SCRIPT_REPLY;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            id: 'stub',
+            object: 'chat.completion',
+            created: 1,
+            model: payload.model,
+            choices: [{ index: 0, message: { role: 'assistant', content: reply }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 },
+          }),
+        );
+      });
+    });
+    return new Promise((resolve) => {
+      server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port }));
+    });
+  }
+
+  function bootChain(extraArgs = [], extraEnv = {}) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-web-chain-'));
+    const env = {
+      ...process.env,
+      PORT: '0',
+      NODE_ENV: 'production',
+      LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stubPort}/v1`,
+      ...extraEnv,
+    };
+    delete env.TELL_TOKEN;
+    const child = spawn(process.execPath, [DIST_SERVER, '--cwd', dir, '-m', 'q', ...extraArgs], {
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return { dir, child, basePromise: waitForServer(child) };
+  }
+
+  async function shutdown(handle) {
+    if (handle.child && !handle.child.killed) handle.child.kill('SIGTERM');
+    if (handle.dir) fs.rmSync(handle.dir, { recursive: true, force: true });
+  }
+
+  const postJson = (base, urlPath, body, headers = {}) =>
+    fetch(`${base}${urlPath}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify(body),
+    });
+
+  const createRun = (base, content = 'please run') =>
+    postJson(base, '/api/chain', { messages: [{ role: 'user', content }] });
+
+  before(async () => {
+    stub = await startStub();
+    stubPort = stub.port;
+  });
+
+  after(() => {
+    if (stub) {
+      stub.server.closeAllConnections?.();
+      stub.server.close();
+    }
+  });
+
+  describe('create, replay and unknown runs', () => {
+    let handle;
+    let base;
+
+    before(async () => {
+      handle = bootChain();
+      base = await handle.basePromise;
+    });
+
+    after(() => shutdown(handle));
+
+    it('creates a run paused on a server-kept approval', async () => {
+      const res = await createRun(base);
+      assert.strictEqual(res.status, 200);
+      const run = await res.json();
+      assert.strictEqual(run.status, 'awaiting_approval');
+      assert.ok(run.runId);
+      assert.ok(run.pending);
+      assert.strictEqual(run.pending.script, 'echo chain-hi');
+      assert.strictEqual(typeof run.pending.decisionId, 'string');
+      assert.strictEqual(run.pending.expectedVersion, run.version);
+      assert.match(run.text, /Sure/);
+    });
+
+    it('replays the same event sequence via GET', async () => {
+      const created = await (await createRun(base)).json();
+      const res = await fetch(`${base}/api/chain/${created.runId}`);
+      assert.strictEqual(res.status, 200);
+      const replay = await res.json();
+      assert.deepStrictEqual(replay.pending, created.pending);
+      assert.deepStrictEqual(
+        replay.events.map((e) => e.type),
+        created.events.map((e) => e.type),
+      );
+      const seqs = replay.events.map((e) => e.seq);
+      assert.deepStrictEqual(seqs, seqs.map((_, i) => i));
+    });
+
+    it('rejects invalid payloads without a run', async () => {
+      assert.strictEqual((await postJson(base, '/api/chain', {})).status, 400);
+      const big = await postJson(base, '/api/chain', {
+        messages: [{ role: 'user', content: 'x'.repeat(51 * 1024) }],
+      });
+      assert.strictEqual(big.status, 400);
+    });
+
+    it('reads unknown runs as 404 (never resumed blindly)', async () => {
+      const missing = '00000000-0000-0000-0000-000000000000';
+      assert.strictEqual((await fetch(`${base}/api/chain/${missing}`)).status, 404);
+      const confirm = await postJson(base, `/api/chain/${missing}/confirm`, {
+        decisionId: 'd',
+        expectedVersion: 0,
+        decision: 'approve',
+      });
+      assert.strictEqual(confirm.status, 404);
+      assert.strictEqual((await postJson(base, `/api/chain/${missing}/cancel`, {})).status, 404);
+    });
+  });
+
+  describe('approve, idempotency and conflict', () => {
+    let handle;
+    let base;
+    let run;
+    let confirmBody;
+    let approved;
+
+    before(async () => {
+      handle = bootChain();
+      base = await handle.basePromise;
+      run = await (await createRun(base)).json();
+      confirmBody = {
+        decisionId: run.pending.decisionId,
+        expectedVersion: run.pending.expectedVersion,
+        decision: 'approve',
+      };
+      approved = await (await postJson(base, `/api/chain/${run.runId}/confirm`, confirmBody)).json();
+    });
+
+    after(() => shutdown(handle));
+
+    it('approve executes the server-kept script exactly once and completes', () => {
+      assert.strictEqual(approved.status, 'completed');
+      assert.strictEqual(approved.pending, null);
+      const executed = approved.events.filter((e) => e.type === 'executed');
+      assert.strictEqual(executed.length, 1);
+      assert.strictEqual(executed[0].script, 'echo chain-hi');
+      assert.match(executed[0].output, /chain-hi/);
+    });
+
+    it('retry of the same decision id replays the stored result', async () => {
+      const res = await postJson(base, `/api/chain/${run.runId}/confirm`, confirmBody);
+      assert.strictEqual(res.status, 200);
+      assert.deepStrictEqual(await res.json(), approved);
+    });
+
+    it('a concurrent different verdict on the same id conflicts', async () => {
+      const res = await postJson(base, `/api/chain/${run.runId}/confirm`, {
+        ...confirmBody,
+        decision: 'skip',
+      });
+      assert.strictEqual(res.status, 409);
+      assert.strictEqual((await res.json()).error, 'conflicting_decision');
+    });
+  });
+
+  describe('TOCTOU, free scripts and skip', () => {
+    let handle;
+    let base;
+    let run;
+
+    before(async () => {
+      handle = bootChain();
+      base = await handle.basePromise;
+      run = await (await createRun(base)).json();
+    });
+
+    after(() => shutdown(handle));
+
+    it('a stale expectedVersion is rejected without executing', async () => {
+      const res = await postJson(base, `/api/chain/${run.runId}/confirm`, {
+        decisionId: run.pending.decisionId,
+        expectedVersion: run.pending.expectedVersion - 1,
+        decision: 'approve',
+      });
+      assert.strictEqual(res.status, 409);
+      assert.strictEqual((await res.json()).error, 'stale_version');
+      const replay = await (await fetch(`${base}/api/chain/${run.runId}`)).json();
+      assert.strictEqual(replay.status, 'awaiting_approval');
+      assert.deepStrictEqual(replay.pending, run.pending);
+      assert.ok(!replay.events.some((e) => e.type === 'executed'));
+    });
+
+    it('free script/command fields are rejected before any transition', async () => {
+      for (const extra of [{ script: 'evil' }, { command: 'evil' }, { path: 'evil' }]) {
+        const res = await postJson(base, `/api/chain/${run.runId}/confirm`, {
+          decisionId: run.pending.decisionId,
+          expectedVersion: run.pending.expectedVersion,
+          decision: 'approve',
+          ...extra,
+        });
+        assert.strictEqual(res.status, 400);
+      }
+      const replay = await (await fetch(`${base}/api/chain/${run.runId}`)).json();
+      assert.strictEqual(replay.status, 'awaiting_approval');
+    });
+
+    it('skip continues the chain without the script', async () => {
+      const fresh = await (await createRun(base, 'please skip this')).json();
+      const res = await postJson(base, `/api/chain/${fresh.runId}/confirm`, {
+        decisionId: fresh.pending.decisionId,
+        expectedVersion: fresh.pending.expectedVersion,
+        decision: 'skip',
+      });
+      assert.strictEqual(res.status, 200);
+      const skipped = await res.json();
+      assert.strictEqual(skipped.status, 'completed');
+      assert.ok(skipped.events.some((e) => e.type === 'skipped'));
+      assert.ok(!skipped.events.some((e) => e.type === 'executed'));
+    });
+  });
+
+  describe('cancel invalidates approvals', () => {
+    let handle;
+    let base;
+    let run;
+
+    before(async () => {
+      handle = bootChain();
+      base = await handle.basePromise;
+      run = await (await createRun(base)).json();
+    });
+
+    after(() => shutdown(handle));
+
+    it('cancel before approval blocks the confirm and is idempotent', async () => {
+      const cancelled = await (await postJson(base, `/api/chain/${run.runId}/cancel`, {})).json();
+      assert.strictEqual(cancelled.status, 'cancelled');
+      assert.strictEqual(cancelled.pending, null);
+      const confirm = await postJson(base, `/api/chain/${run.runId}/confirm`, {
+        decisionId: run.pending.decisionId,
+        expectedVersion: run.pending.expectedVersion,
+        decision: 'approve',
+      });
+      assert.strictEqual(confirm.status, 409);
+      assert.strictEqual((await confirm.json()).error, 'run_cancelled');
+      const again = await postJson(base, `/api/chain/${run.runId}/cancel`, {});
+      assert.strictEqual(again.status, 200);
+      assert.strictEqual((await again.json()).status, 'cancelled');
+    });
+  });
+
+  describe('chain auth', () => {
+    const TOKEN = 'chain-token-abc123';
+    let handle;
+    let base;
+
+    before(async () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-web-chain-auth-'));
+      const env = {
+        ...process.env,
+        PORT: '0',
+        NODE_ENV: 'production',
+        LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stubPort}/v1`,
+        TELL_TOKEN: TOKEN,
+      };
+      const child = spawn(process.execPath, [DIST_SERVER, '--cwd', dir, '-m', 'q'], {
+        env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      handle = { dir, child, basePromise: waitForServer(child, 45000, '/api/auth/status') };
+      base = await handle.basePromise;
+    });
+
+    after(() => shutdown(handle));
+
+    it('rejects anonymous chain calls and honors the bearer token', async () => {
+      assert.strictEqual((await postJson(base, '/api/chain', {})).status, 401);
+      assert.strictEqual((await fetch(`${base}/api/chain/00000000-0000-0000-0000-000000000000`)).status, 401);
+      const authed = { Authorization: `Bearer ${TOKEN}` };
+      assert.strictEqual((await postJson(base, '/api/chain', {}, authed)).status, 400);
+    });
+
+    it('a sibling process knows nothing (restart drops every run)', async () => {
+      const authed = { Authorization: `Bearer ${TOKEN}` };
+      const res = await fetch(`${base}/api/chain`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authed },
+        body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }] }),
+      });
+      assert.strictEqual(res.status, 200);
+      const created = await res.json();
+      assert.strictEqual(created.status, 'awaiting_approval');
+      // A foreign id from another process reads as unknown: memory-only state.
+      const foreign = await fetch(`${base}/api/chain/11111111-1111-1111-1111-111111111111`, {
+        headers: authed,
+      });
+      assert.strictEqual(foreign.status, 404);
+    });
+  });
+
+  describe('chain no-exec', () => {
+    let handle;
+    let base;
+
+    before(async () => {
+      handle = bootChain(['--no-exec']);
+      base = await handle.basePromise;
+    });
+
+    after(() => shutdown(handle));
+
+    it('denies with disabled/--no-exec and never a no-exec reason', async () => {
+      const res = await createRun(base);
+      assert.strictEqual(res.status, 200);
+      const run = await res.json();
+      assert.strictEqual(run.status, 'completed');
+      assert.strictEqual(run.pending, null);
+      const denied = run.events.filter((e) => e.type === 'denied');
+      assert.strictEqual(denied.length, 1);
+      assert.match(denied[0].text, /disabled \(--no-exec\)/);
+      assert.ok(!run.events.some((e) => e.type === 'executed'));
+      const confirm = await postJson(base, `/api/chain/${run.runId}/confirm`, {
+        decisionId: 'x',
+        expectedVersion: run.version,
+        decision: 'approve',
+      });
+      assert.strictEqual(confirm.status, 409);
+    });
+  });
+
+  describe('chain rate limit', () => {
+    let handle;
+    let base;
+
+    before(async () => {
+      handle = bootChain();
+      base = await handle.basePromise;
+    });
+
+    after(() => shutdown(handle));
+
+    it('throttles chain reads past 10/min per IP', async () => {
+      const statuses = [];
+      for (let i = 0; i < 11; i += 1) {
+        const res = await fetch(`${base}/api/chain/00000000-0000-0000-0000-000000000000`);
+        statuses.push(res.status);
+        await res.json().catch(() => ({}));
+      }
+      assert.deepStrictEqual(statuses.slice(0, 10), Array(10).fill(404));
+      assert.strictEqual(statuses[10], 429);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // /api/tell transport: the body's `stream` overrides the boot `--stream` in
 // both directions. A local OpenAI-compatible stub answers both transports, so
 // the suite never touches the network and never needs a provider key.

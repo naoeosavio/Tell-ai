@@ -43,6 +43,31 @@ function loadModule(name) {
   return require(file);
 }
 
+// Absolute-path loader for dependency-free core modules (e.g. the pure
+// chain-decision validator the `/api/chain/:runId/confirm` route must run
+// before any store transition). Only for modules without relative imports.
+function loadAbsoluteModule(absPath) {
+  const key = `abs:${absPath}`;
+  if (compiledModules.has(key)) {
+    const cached = compiledModules.get(key);
+    delete require.cache[cached];
+    return require(cached);
+  }
+  const source = fs.readFileSync(absPath, 'utf8');
+  const js = ts.transpileModule(source, {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2020,
+      esModuleInterop: true,
+    },
+  }).outputText;
+  const file = path.join(CACHE_DIR, `abs_${compiledModules.size}.cjs`);
+  fs.writeFileSync(file, js);
+  compiledModules.set(key, file);
+  delete require.cache[file];
+  return require(file);
+}
+
 const { parseCliArgs, printHelp } = loadModule('src/server/cli-args.ts');
 const { resolveWithin } = loadModule('src/server/paths.ts');
 const {
@@ -69,6 +94,12 @@ const {
   sessionDir,
 } = loadModule('src/server/session.ts');
 const { buildProjectContext } = loadModule('src/server/context-builder.ts');
+const { createChainStore, hashChainScript, CHAIN_TTL_MS, CHAIN_MAX_ROUNDS } = loadModule(
+  'src/server/chain-store.ts',
+);
+const { validate_chain_decision_payload } = loadAbsoluteModule(
+  path.join(__dirname, '..', 'packages', 'core', 'src', 'chain-decision.ts'),
+);
 
 let failures = 0;
 function test(name, fn) {
@@ -592,7 +623,7 @@ test('build: tsup keeps the AI stack external (no bundled @vercel/oidc)', () => 
   // builtins into dist/server.js, crashing at startup in pure ESM
   // (Error: Dynamic require of "path" is not supported).
   const tsup = fs.readFileSync(path.join(WEB_SRC, 'tsup.config.ts'), 'utf8');
-  for (const dep of ['@tell-ai/sdk', "'ai'", '@vercel/oidc', '@ai-sdk']) {
+  for (const dep of ['@tell-ai/sdk', '@tell-ai/core', "'ai'", '@vercel/oidc', '@ai-sdk']) {
     assert.ok(tsup.includes(dep), `tsup.config.ts should externalize ${dep}`);
   }
 });
@@ -602,6 +633,324 @@ test('build: esbuild is forced above the file-read advisory', () => {
   assert.strictEqual(rootPackage.overrides.esbuild, '^0.28.1');
   const webPackage = JSON.parse(fs.readFileSync(path.join(WEB_SRC, 'package.json'), 'utf8'));
   assert.strictEqual(webPackage.engines.node, '>=22');
+});
+
+// ---------------------------------------------------------------------------
+// Chain store: server-side run state for POST /api/chain (Phase 6).
+// The confirm helper from @tell-ai/core always runs before any transition.
+// ---------------------------------------------------------------------------
+test('chain: constants bound rounds and TTL', () => {
+  assert.strictEqual(CHAIN_MAX_ROUNDS, 8);
+  assert.strictEqual(CHAIN_TTL_MS, 15 * 60 * 1000);
+});
+
+test('chain: create/get round-trips, unknown and malformed ids are null', () => {
+  const store = createChainStore();
+  const created = store.createRun([{ role: 'user', content: 'hi' }]);
+  assert.ok(created.runId);
+  assert.strictEqual(created.status, 'running');
+  assert.strictEqual(created.version, 0);
+  assert.deepStrictEqual(store.getRun(created.runId), created);
+  assert.strictEqual(store.getRun('00000000-0000-0000-0000-000000000000'), null);
+  assert.strictEqual(store.getRun('not-a-run'), null);
+  assert.strictEqual(store.getRun('../../etc/passwd'), null);
+  assert.strictEqual(store.getRun(''), null);
+});
+
+test('chain: events carry a monotonic sequence and bump the version', () => {
+  const store = createChainStore();
+  const created = store.createRun([{ role: 'user', content: 'hi' }]);
+  const first = store.appendEvent(created.runId, { type: 'message', text: 'one' });
+  const second = store.appendEvent(created.runId, { type: 'message', text: 'two' });
+  assert.strictEqual(first.seq, 0);
+  assert.strictEqual(second.seq, 1);
+  const replay = store.getRun(created.runId);
+  assert.strictEqual(replay.version, 2);
+  assert.deepStrictEqual(
+    replay.events.map((e) => e.text),
+    ['one', 'two'],
+  );
+  assert.ok(typeof replay.events[0].at === 'string');
+});
+
+test('chain: replay via get returns the full event sequence', () => {
+  const store = createChainStore();
+  const created = store.createRun([{ role: 'user', content: 'run it' }]);
+  store.appendEvent(created.runId, { type: 'message', text: 'ok <RUN>ls</RUN>' });
+  store.requestApproval(created.runId, 'ls');
+  const replay = store.getRun(created.runId);
+  assert.strictEqual(replay.status, 'awaiting_approval');
+  assert.ok(replay.pending);
+  assert.strictEqual(replay.pending.script, 'ls');
+  assert.strictEqual(typeof replay.pending.decisionId, 'string');
+  assert.strictEqual(replay.pending.expectedVersion, replay.version);
+});
+
+test('chain: confirm helper rejects free scripts before any transition', () => {
+  // The route must exercise this helper first: any script/command/path field
+  // (or extra field) is a 400 and never reaches the store.
+  assert.deepStrictEqual(validate_chain_decision_payload({
+    decisionId: 'd1',
+    expectedVersion: 1,
+    decision: 'approve',
+    script: 'evil',
+  }).ok, false);
+  assert.deepStrictEqual(validate_chain_decision_payload({
+    decisionId: 'd1',
+    expectedVersion: 1,
+    decision: 'approve',
+    command: 'evil',
+  }).ok, false);
+  assert.deepStrictEqual(validate_chain_decision_payload({
+    decisionId: 'd1',
+    expectedVersion: 1,
+    decision: 'maybe',
+  }).ok, false);
+  assert.deepStrictEqual(validate_chain_decision_payload({
+    decisionId: 'd1',
+    decision: 'approve',
+  }).ok, false);
+  const good = validate_chain_decision_payload({ decisionId: 'd1', expectedVersion: 1, decision: 'approve' });
+  assert.strictEqual(good.ok, true);
+});
+
+test('chain: happy-path approve runs through the gate then finishes once', () => {
+  const store = createChainStore();
+  const created = store.createRun([{ role: 'user', content: 'hi' }]);
+  const pending = store.requestApproval(created.runId, 'echo hi');
+  assert.ok(pending);
+  const validated = validate_chain_decision_payload({
+    decisionId: pending.decisionId,
+    expectedVersion: pending.expectedVersion,
+    decision: 'approve',
+  });
+  assert.strictEqual(validated.ok, true);
+  const gate = store.tryBeginConfirm(created.runId, validated.value);
+  assert.strictEqual(gate.ok, true);
+  assert.strictEqual(gate.script, 'echo hi');
+  const done = store.finishConfirm(created.runId, pending.decisionId, {
+    type: 'executed',
+    script: 'echo hi',
+    output: 'hi',
+    exitCode: 0,
+    status: 'running',
+  });
+  assert.strictEqual(done.status, 'running');
+  assert.strictEqual(done.pending, null);
+});
+
+test('chain: retry of the same decision id is idempotent (no re-execution)', () => {
+  const store = createChainStore();
+  const created = store.createRun([{ role: 'user', content: 'hi' }]);
+  const pending = store.requestApproval(created.runId, 'echo hi');
+  const body = {
+    decision_id: pending.decisionId,
+    expected_version: pending.expectedVersion,
+    decision: 'approve',
+  };
+  assert.strictEqual(store.tryBeginConfirm(created.runId, body).ok, true);
+  const first = store.finishConfirm(created.runId, pending.decisionId, {
+    type: 'executed',
+    script: 'echo hi',
+    output: 'hi',
+    exitCode: 0,
+    status: 'completed',
+  });
+  const retry = store.tryBeginConfirm(created.runId, body);
+  assert.strictEqual(retry.ok, true);
+  assert.deepStrictEqual(retry.snapshot, first);
+});
+
+test('chain: settle refreshes the replay after post-confirm continuation', () => {
+  const store = createChainStore();
+  const created = store.createRun([{ role: 'user', content: 'hi' }]);
+  const pending = store.requestApproval(created.runId, 'echo hi');
+  const body = {
+    decision_id: pending.decisionId,
+    expected_version: pending.expectedVersion,
+    decision: 'approve',
+  };
+  assert.strictEqual(store.tryBeginConfirm(created.runId, body).ok, true);
+  store.finishConfirm(created.runId, pending.decisionId, {
+    type: 'executed',
+    script: 'echo hi',
+    output: 'hi',
+    exitCode: 0,
+    status: 'running',
+  });
+  // The server loop appends follow-up turns after the decision; settle moves
+  // the idempotency snapshot forward so a retry replays the final answer.
+  store.appendEvent(created.runId, { type: 'message', text: 'All done' });
+  const settled = store.settleDecision(created.runId, pending.decisionId);
+  assert.ok(settled.events.some((e) => e.text === 'All done'));
+  const retry = store.tryBeginConfirm(created.runId, body);
+  assert.strictEqual(retry.ok, true);
+  assert.deepStrictEqual(retry.snapshot, settled);
+});
+
+test('chain: concurrent different verdict on the same id is a conflict', () => {
+  const store = createChainStore();
+  const created = store.createRun([{ role: 'user', content: 'hi' }]);
+  const pending = store.requestApproval(created.runId, 'echo hi');
+  const approve = {
+    decision_id: pending.decisionId,
+    expected_version: pending.expectedVersion,
+    decision: 'approve',
+  };
+  assert.strictEqual(store.tryBeginConfirm(created.runId, approve).ok, true);
+  store.finishConfirm(created.runId, pending.decisionId, {
+    type: 'executed',
+    script: 'echo hi',
+    output: 'hi',
+    exitCode: 0,
+    status: 'completed',
+  });
+  const rival = store.tryBeginConfirm(created.runId, { ...approve, decision: 'skip' });
+  assert.deepStrictEqual(rival, { ok: false, error: 'conflicting_decision' });
+});
+test('chain: second begin while in-flight is rejected (single execution)', () => {
+  const store = createChainStore();
+  const created = store.createRun([{ role: 'user', content: 'hi' }]);
+  const pending = store.requestApproval(created.runId, 'echo hi');
+  const body = {
+    decision_id: pending.decisionId,
+    expected_version: pending.expectedVersion,
+    decision: 'approve',
+  };
+  assert.strictEqual(store.tryBeginConfirm(created.runId, body).ok, true);
+  assert.deepStrictEqual(store.tryBeginConfirm(created.runId, body), { ok: false, error: 'decision_in_flight' });
+});
+
+test('chain: cancel mid-flight wins, finish keeps the run cancelled', () => {
+  const store = createChainStore();
+  const created = store.createRun([{ role: 'user', content: 'hi' }]);
+  const pending = store.requestApproval(created.runId, 'echo slow');
+  assert.strictEqual(
+    store.tryBeginConfirm(created.runId, {
+      decision_id: pending.decisionId,
+      expected_version: pending.expectedVersion,
+      decision: 'approve',
+    }).ok,
+    true,
+  );
+  // The user hits Stop while the executor is still running.
+  assert.strictEqual(store.cancelRun(created.runId).status, 'cancelled');
+  const finished = store.finishConfirm(created.runId, pending.decisionId, {
+    type: 'executed',
+    script: 'echo slow',
+    output: 'slow',
+    exitCode: 0,
+    status: 'running',
+  });
+  // The outcome is recorded, but the run never flips back to running.
+  assert.strictEqual(finished.status, 'cancelled');
+  assert.strictEqual(store.getRun(created.runId).status, 'cancelled');
+});
+
+test('chain: stale expectedVersion is rejected without executing (TOCTOU)', () => {
+  const store = createChainStore();
+  const created = store.createRun([{ role: 'user', content: 'hi' }]);
+  const pending = store.requestApproval(created.runId, 'echo hi');
+  const stale = store.tryBeginConfirm(created.runId, {
+    decision_id: pending.decisionId,
+    expected_version: pending.expectedVersion - 1,
+    decision: 'approve',
+  });
+  assert.deepStrictEqual(stale, { ok: false, error: 'stale_version' });
+  const future = store.tryBeginConfirm(created.runId, {
+    decision_id: pending.decisionId,
+    expected_version: pending.expectedVersion + 1,
+    decision: 'approve',
+  });
+  assert.deepStrictEqual(future, { ok: false, error: 'stale_version' });
+  // Nothing executed and the approval is still pending.
+  const replay = store.getRun(created.runId);
+  assert.strictEqual(replay.status, 'awaiting_approval');
+  assert.strictEqual(replay.pending.script, 'echo hi');
+  assert.ok(!replay.events.some((e) => e.type === 'executed'));
+});
+
+test('chain: unknown decision id is rejected', () => {
+  const store = createChainStore();
+  const created = store.createRun([{ role: 'user', content: 'hi' }]);
+  const pending = store.requestApproval(created.runId, 'echo hi');
+  assert.deepStrictEqual(
+    store.tryBeginConfirm(created.runId, {
+      decision_id: '00000000-0000-0000-0000-000000000000',
+      expected_version: pending.expectedVersion,
+      decision: 'approve',
+    }),
+    { ok: false, error: 'unknown_decision' },
+  );
+});
+
+test('chain: cancel before approval invalidates it; confirm after cancel fails', () => {
+  const store = createChainStore();
+  const created = store.createRun([{ role: 'user', content: 'hi' }]);
+  const pending = store.requestApproval(created.runId, 'echo hi');
+  const cancelled = store.cancelRun(created.runId);
+  assert.strictEqual(cancelled.status, 'cancelled');
+  assert.strictEqual(cancelled.pending, null);
+  assert.deepStrictEqual(
+    store.tryBeginConfirm(created.runId, {
+      decision_id: pending.decisionId,
+      expected_version: pending.expectedVersion,
+      decision: 'approve',
+    }),
+    { ok: false, error: 'run_cancelled' },
+  );
+  // Cancel is idempotent.
+  assert.strictEqual(store.cancelRun(created.runId).status, 'cancelled');
+});
+
+test('chain: cancel after completion keeps the completed run', () => {
+  const store = createChainStore();
+  const created = store.createRun([{ role: 'user', content: 'hi' }]);
+  store.completeRun(created.runId, 'done');
+  assert.strictEqual(store.cancelRun(created.runId).status, 'completed');
+});
+
+test('chain: TTL expiry reads as unknown (fail-closed, never resumed)', () => {
+  let at = 1_000_000;
+  const store = createChainStore({ now: () => at });
+  const created = store.createRun([{ role: 'user', content: 'hi' }]);
+  assert.ok(store.getRun(created.runId));
+  at += CHAIN_TTL_MS + 1;
+  assert.strictEqual(store.getRun(created.runId), null);
+});
+
+test('chain: a fresh store knows nothing (restart drops every run)', () => {
+  const first = createChainStore();
+  const created = first.createRun([{ role: 'user', content: 'hi' }]);
+  const second = createChainStore();
+  assert.strictEqual(second.getRun(created.runId), null);
+});
+
+test('chain: script hash is stable and distinguishes scripts', () => {
+  assert.strictEqual(hashChainScript('echo hi'), hashChainScript('echo hi'));
+  assert.notStrictEqual(hashChainScript('echo hi'), hashChainScript('echo bye'));
+});
+
+test('chain: server keeps the script, validates the helper, and denies closed', () => {
+  const source = fs.readFileSync(path.join(WEB_SRC, 'src', 'server', 'server.ts'), 'utf8');
+  assert.ok(
+    source.includes("validate_chain_decision_payload") && source.includes("@tell-ai/core"),
+    'server must validate confirm payloads with the core helper',
+  );
+  for (const route of ['/api/chain', '/api/chain/:runId', 'confirm', 'cancel']) {
+    assert.ok(source.includes(route), `server must define the chain ${route} route`);
+  }
+  assert.ok(source.includes('chain-store'), 'server must keep approvals in the chain store');
+  assert.ok(
+    source.includes("'disabled', '--no-exec'"),
+    'no-exec denial uses reason disabled with the --no-exec source',
+  );
+  assert.ok(!/reason:\s*['"]no-exec['"]/.test(source), 'no-exec must never use reason no-exec');
+  assert.ok(source.includes("'--no-exec'"), 'no-exec denial carries the --no-exec source');
+  assert.ok(
+    source.includes('chainContinuations.delete'),
+    'per-run continuations are released on terminal snapshots (no unbounded growth)',
+  );
 });
 
 if (failures > 0) {
