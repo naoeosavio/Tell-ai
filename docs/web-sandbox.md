@@ -417,8 +417,18 @@ With `TELL_TOKEN` set:
   hostnames must be listed in `TELL_ALLOWED_HOSTS`; `localhost` and IP literals
   are accepted by default.
 - The command bridge enforces limits even with a valid token: 10 commands/min
-  per IP, max 2 concurrent commands, 200 KB output truncation, per-command
-  timeout (`--exec-timeout`, default 120 s).
+  per IP, max 2 concurrent commands, 200 KB output truncation (explicit
+  `[truncated]` marker), per-command timeout (`--exec-timeout`, default 120 s).
+  `tell --web` forwards resolved runtime limits to the sandbox
+  (`--max-chain-steps`, `--max-buffer-bytes`, `--context-chars`,
+  `--stdin-timeout-ms`, `--exec-timeout`; explicit CLI flags/env win over
+  tellrc, absent layers keep server defaults): the exec buffer and the
+  server-side chain round cap (clamped to the core `1..8` contract, notice
+  reports the effective cap) follow the override, `/api/config` exposes them
+  under `limits`, and `/api/chain` + approval state stay server-side — the
+  browser never runs a second loop. `--stdin-max-bytes`/`--output-max-bytes`
+  are CLI-only (the web has no stdin; delivered output uses the local
+  200 KB cap).
 
 **Logging in from the browser:** open the page and a dedicated login screen
 asks for the token (animated Tell logo included). The main environment —

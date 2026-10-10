@@ -266,7 +266,7 @@ tell --ctx @0 "resume the most recent one"             # recency index (must exi
 tell --ctx %a1b2c3 "resume by hash prefix"             # unique hex prefix of a saved id
 ```
 
-Context files live at `~/.ai/tell_context/`. Without any context flag, each invocation starts fresh and the default context is cleared. Context is automatically truncated at 64K characters (older turns summarized away).
+Context files live at `~/.ai/tell_context/`. Without any context flag, each invocation starts fresh and the default context is cleared. Context is automatically truncated at 64K characters by `truncate_context` (whole `User:`/`Assistant:` turns, balanced `<think>`/`<RUN>` blocks, `[older context truncated]` marker; tune with `--context-max-chars` / `TELL_CONTEXT_MAX_CHARS`). Stdin (`--stdin-timeout`/`--no-stdin-timeout`, `--stdin-max-bytes`), execution (`--exec-timeout`, `--max-chain`, `--max-buffer`, `--output-max-bytes`) and exit codes (`2` bad limit, `124` timeout, `125` overflow) follow the same `flag > env > tellrc > default` contract — see [cli-reference](cli/cli-reference.md).
 
 **Refs vs prompt text:** naming a context always requires the `%` prefix. A single bare token is prompt text, but only when there is no positional prompt:
 
