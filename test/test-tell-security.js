@@ -8,6 +8,32 @@ const util = require('node:util');
 const vm = require('node:vm');
 
 const sdk = require('@tell-ai/sdk');
+const core = require('@tell-ai/core');
+
+// The sandbox copies the host environment so the CLI sees a realistic one, but
+// a `TELL_*` limit exported by the caller's shell would silently change the
+// chain cap / timeouts under test. Purge them: only an explicit `opts.env`
+// entry may introduce a limit, so the suite stays hermetic.
+const tellLimitKeys = core.TELL_LIMIT_ENV_KEYS;
+
+/**
+ * Builds the fake process environment for one sandbox run.
+ *
+ * Copies the host env (the CLI expects a realistic one) minus every `TELL_*`
+ * runtime-limit key, so only an explicit `opts.env` entry can set a limit.
+ *
+ * @param home - Fake home directory for this test.
+ * @param overrides - Extra env entries for this specific test.
+ * @returns The sanitized environment record.
+ */
+function sanitizedFakeEnv(home, overrides) {
+  const env = { ...process.env };
+  for (const key of tellLimitKeys) {
+    delete env[key];
+  }
+  return { ...env, HOME: home, ...(overrides || {}) };
+}
+
 
 const tellSource = ts.transpileModule(
   fs.readFileSync(path.join(__dirname, '..', 'packages', 'cli', 'src', 'Tell.ts'), 'utf8'),
@@ -101,7 +127,7 @@ async function runTell(args, response, opts = {}) {
   };
   const fakeProcess = {
     argv: ['node', 'Tell.js', ...args],
-    env: { ...process.env, HOME: home, ...(opts.env || {}) },
+    env: sanitizedFakeEnv(home, opts.env),
     stdin: fakeStdin(opts.stdin || ''),
     stdout: { isTTY: false, write: writeStdout },
     stderr: { isTTY: false, write: writeStderr },

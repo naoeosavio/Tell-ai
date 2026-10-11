@@ -41,6 +41,7 @@ const rl = load_module('packages/cli/src/runtime-limits.ts', [
   'MAX_CHAIN_STEPS',
   'DEFAULT_MAX_BUFFER_BYTES',
   'DEFAULT_OUTPUT_MAX_BYTES',
+  'TELLRC_LIMIT_KEYS',
   'EXIT_CONFIG_ERROR',
   'EXIT_TIMEOUT',
   'EXIT_LIMIT',
@@ -340,6 +341,41 @@ check('CLI harnesses compile ./runtime-limits (no MODULE_NOT_FOUND)', () => {
     const src = fs.readFileSync(path.join(__dirname, file), 'utf8');
     assert.ok(src.includes('runtime-limits'), `${file} must mock ./runtime-limits`);
   }
+});
+
+// The CLI module is a facade: the contract (defaults, ranges, parse,
+// truncate) is owned by `@tell-ai/core`, so the CLI must not restate a value
+// and its tellrc keys must be the ones the core publishes.
+check('CLI runtime-limits is a facade over the core owner', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'packages', 'cli', 'src', 'runtime-limits.ts'), 'utf8');
+  assert.ok(src.includes("from '@tell-ai/core'"), 'the facade must re-export the core owner');
+  for (const literal of ['120_000', '32 * 1024 * 1024', '1_048_576', '204_800', '64 * 1024', '30_000']) {
+    assert.ok(!src.includes(literal), `the CLI facade must not restate ${literal}`);
+  }
+  assert.ok(src.includes('StdinLimitError'), 'stdin failures stay host-owned');
+  assert.ok(src.includes('runtime_env_from_process'), 'env reading stays host-side');
+  assert.ok(!src.includes('TELL_LIMIT_ENV_KEYS = ['), 'the key list is owned by the core');
+});
+
+// Host-env hermeticity: the CLI suites copy `process.env` into a fake process,
+// so a leaked `TELL_*` from the caller's shell used to change chain caps and
+// timeouts under test. Every sandbox must purge the limit keys.
+check('CLI sandboxes purge host TELL_* limit vars (hermetic suite)', () => {
+  const harnesses = ['test-tell-security.js', 'test-tell-context.js', 'test-tell-stream.js', 'test-tell-mentions.js'];
+  for (const file of harnesses) {
+    const src = fs.readFileSync(path.join(__dirname, file), 'utf8');
+    assert.ok(src.includes('sanitizedFakeEnv'), `${file} must sanitize the fake env`);
+    assert.ok(!/\.\.\.process\.env, HOME: home/.test(src), `${file} must not copy the raw host env`);
+    assert.ok(src.includes('TELL_LIMIT_ENV_KEYS'), `${file} must read the key list from the core`);
+  }
+});
+
+check('facade limits and tellrc keys match the core owner', () => {
+  const core = require('@tell-ai/core');
+  assert.deepEqual(core.TELLRC_LIMIT_KEYS.slice().sort(), rl.TELLRC_LIMIT_KEYS.slice().sort());
+  assert.equal(rl.parse_runtime_limits({}).context_max_chars, core.DEFAULT_CONTEXT_MAX_CHARS);
+  assert.equal(rl.MAX_CHAIN_STEPS, core.MAX_CHAIN_STEPS);
+  assert.deepEqual(rl.runtime_env_from_process({ TELL_MAX_CHAIN_STEPS: '4' }), { TELL_MAX_CHAIN_STEPS: '4' });
 });
 
 check('runtime_env_from_process reads TELL_* without secrets', () => {

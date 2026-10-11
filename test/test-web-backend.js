@@ -100,6 +100,11 @@ const { createChainStore, hashChainScript, CHAIN_TTL_MS, CHAIN_MAX_ROUNDS } = lo
 const { validate_chain_decision_payload } = loadAbsoluteModule(
   path.join(__dirname, '..', 'packages', 'core', 'src', 'chain-decision.ts'),
 );
+// The limits owner has no imports, so it loads straight from source (no core
+// build needed) — used to pin the sandbox's chain cap against the real owner.
+const { DEFAULT_MAX_CHAIN_STEPS } = loadAbsoluteModule(
+  path.join(__dirname, '..', 'packages', 'core', 'src', 'runtime-limits.ts'),
+);
 
 let failures = 0;
 function test(name, fn) {
@@ -254,6 +259,13 @@ test('cli: forwarded temperature is accepted only inside 0..2', () => {
     assert.strictEqual(parseCliArgs(['--temperature', raw], '/tmp').temperature, undefined);
   }
   assert.strictEqual(parseCliArgs([], '/tmp').temperature, undefined);
+});
+
+// `chain-store.ts` stays free of core imports (the harness loads it directly),
+// so its sandbox cap is pinned here instead of silently drifting from the
+// owner: same number, different host policy.
+test('chain store cap equals the runtime-limits owner default', () => {
+  assert.strictEqual(CHAIN_MAX_ROUNDS, DEFAULT_MAX_CHAIN_STEPS);
 });
 
 // ---------------------------------------------------------------------------
