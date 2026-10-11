@@ -244,6 +244,18 @@ test('cli: limit flags are not swallowed by preceding value flags', () => {
   assert.strictEqual(args.maxChainSteps, 3);
 });
 
+// Tellrc forwarding: `--temperature` rides along with model/profile/system and
+// the limit flags; anything outside 0..2 is dropped so the boot never fails.
+test('cli: forwarded temperature is accepted only inside 0..2', () => {
+  assert.strictEqual(parseCliArgs(['--temperature', '0.3'], '/tmp').temperature, 0.3);
+  assert.strictEqual(parseCliArgs(['--temperature', '0'], '/tmp').temperature, 0);
+  assert.strictEqual(parseCliArgs(['--temperature', '2'], '/tmp').temperature, 2);
+  for (const raw of ['hot', '-1', '2.5', '--chain']) {
+    assert.strictEqual(parseCliArgs(['--temperature', raw], '/tmp').temperature, undefined);
+  }
+  assert.strictEqual(parseCliArgs([], '/tmp').temperature, undefined);
+});
+
 // ---------------------------------------------------------------------------
 // Path traversal guard
 // ---------------------------------------------------------------------------

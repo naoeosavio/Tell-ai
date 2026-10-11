@@ -2425,6 +2425,8 @@ describe('web sandbox: runtime limits', () => {
         '7000',
         '--exec-timeout',
         '45000',
+        '--temperature',
+        '0.3',
       ]);
       base = await handle.basePromise;
     });
@@ -2441,6 +2443,12 @@ describe('web sandbox: runtime limits', () => {
         contextChars: 8192,
         stdinTimeoutMs: 7000,
       });
+    });
+
+    it('/api/config exposes the forwarded temperature', async () => {
+      const res = await fetch(`${base}/api/config`);
+      const body = await res.json();
+      assert.strictEqual(body.temperature, 0.3);
     });
   });
 
@@ -2460,6 +2468,7 @@ describe('web sandbox: runtime limits', () => {
       assert.strictEqual(res.status, 200);
       const body = await res.json();
       assert.deepStrictEqual(body.limits, {});
+      assert.strictEqual(body.temperature, null);
     });
 
     it('/api/execute caps delivered output with an explicit marker', async () => {

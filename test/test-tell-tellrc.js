@@ -19,15 +19,23 @@ const COMMON_COMPILER_OPTIONS = {
   esModuleInterop: true,
 };
 
-function load_tellrc_module() {
-  const source = ts.transpileModule(
-    fs.readFileSync(path.join(__dirname, '..', 'packages', 'cli', 'src', 'tellrc.ts'), 'utf8'),
-    { compilerOptions: COMMON_COMPILER_OPTIONS },
-  ).outputText;
-  const module = { exports: {} };
+const CLI_SRC_DIR = path.join(__dirname, '..', 'packages', 'cli', 'src');
+const cli_modules = new Map();
+
+// Compiles a CLI module (and its `./sibling` dependencies) in isolation so
+// the suite exercises the real sources without the tsup bundle.
+function load_cli_module(name) {
+  const cached = cli_modules.get(name);
+  if (cached) return cached.exports;
+  const source = ts.transpileModule(fs.readFileSync(path.join(CLI_SRC_DIR, `${name}.ts`), 'utf8'), {
+    compilerOptions: COMMON_COMPILER_OPTIONS,
+  }).outputText;
+  const mod = { exports: {} };
+  cli_modules.set(name, mod);
+  const local_require = (id) => (id.startsWith('./') ? load_cli_module(id.slice(2)) : require(id));
   const fn = new Function('require', 'module', 'exports', '__dirname', '__filename', 'process', source);
-  fn(require, module, module.exports, path.join(__dirname, '..', 'packages', 'cli', 'src'), 'tellrc.ts', process);
-  return module.exports;
+  fn(local_require, mod, mod.exports, CLI_SRC_DIR, `${name}.ts`, process);
+  return mod.exports;
 }
 
 function load_cli_args_module() {
@@ -41,7 +49,8 @@ function load_cli_args_module() {
   return module.exports;
 }
 
-const tellrc = load_tellrc_module();
+const tellrc = load_cli_module('tellrc');
+const runtime_limits = load_cli_module('runtime-limits');
 const cli_args = load_cli_args_module();
 
 function test_missing_file_is_silent() {
@@ -261,12 +270,72 @@ function test_temperature_validation() {
 }
 
 function test_limits_validated() {
-  assert.strictEqual(tellrc.validate_limit_value('max_chain_steps', 4), 4);
-  assert.strictEqual(tellrc.validate_limit_value('max_chain_steps', 99), undefined);
-  assert.strictEqual(tellrc.validate_limit_value('max_buffer_bytes', 1024), 1024);
   const parsed = tellrc.parse_tellrc('[limits]\nmax_chain_steps = 3\ncontext_chars = 999999999\n', 'test');
   assert.strictEqual(parsed.limits.max_chain_steps, 3);
   assert.strictEqual(parsed.limits.context_chars, undefined);
+  assert.ok(parsed.warnings.some((w) => w.includes('invalid limit context_chars')));
+}
+
+// The tellrc schema owns no range table: every `[limits]` value is validated
+// by the runtime-limits owner, so the two layers cannot drift apart.
+function test_limits_delegate_to_runtime_limits() {
+  assert.deepStrictEqual(runtime_limits.TELLRC_LIMIT_KEYS.slice().sort(), [
+    'context_chars',
+    'exec_timeout_ms',
+    'max_buffer_bytes',
+    'max_chain_steps',
+    'output_max_bytes',
+    'stdin_max_bytes',
+    'stdin_timeout_ms',
+  ]);
+  // Valid probe per key = the CLI baseline default (never a restated range).
+  const valid_by_key = {
+    context_chars: runtime_limits.DEFAULT_CONTEXT_MAX_CHARS,
+    stdin_timeout_ms: runtime_limits.DEFAULT_STDIN_TIMEOUT_MS,
+    stdin_max_bytes: runtime_limits.DEFAULT_STDIN_MAX_BYTES,
+    exec_timeout_ms: runtime_limits.DEFAULT_EXEC_TIMEOUT_MS,
+    max_chain_steps: runtime_limits.DEFAULT_MAX_CHAIN_STEPS,
+    max_buffer_bytes: runtime_limits.DEFAULT_MAX_BUFFER_BYTES,
+    output_max_bytes: runtime_limits.DEFAULT_OUTPUT_MAX_BYTES,
+  };
+  for (const key of runtime_limits.TELLRC_LIMIT_KEYS) {
+    assert.strictEqual(runtime_limits.validate_tellrc_limit_value(key, valid_by_key[key]), valid_by_key[key]);
+    assert.strictEqual(runtime_limits.validate_tellrc_limit_value(key, 'x'), undefined);
+    assert.strictEqual(runtime_limits.validate_tellrc_limit_value(key, -1), undefined);
+    assert.strictEqual(runtime_limits.validate_tellrc_limit_value(key, 2 ** 40), undefined);
+    assert.strictEqual(runtime_limits.validate_tellrc_limit_value('not_a_limit', 1), undefined);
+  }
+}
+
+function test_limits_accept_zero_stdin_deadline_and_full_chain_range() {
+  // `max_chain_steps = 99` used to be rejected by the tellrc table (1..8);
+  // the runtime owner accepts 1..128 and a disabled stdin deadline is 0.
+  const parsed = tellrc.parse_tellrc(
+    '[limits]\nmax_chain_steps = 99\nstdin_timeout_ms = 0\nstdin_max_bytes = 2048\nexec_timeout_ms = 1000\noutput_max_bytes = 4096\n',
+    'test',
+  );
+  assert.deepStrictEqual(parsed.warnings, []);
+  assert.strictEqual(parsed.limits.max_chain_steps, 99);
+  assert.strictEqual(parsed.limits.stdin_timeout_ms, 0);
+  assert.strictEqual(parsed.limits.stdin_max_bytes, 2048);
+  assert.strictEqual(parsed.limits.exec_timeout_ms, 1000);
+  assert.strictEqual(parsed.limits.output_max_bytes, 4096);
+  const resolved = runtime_limits.parse_runtime_limits({ project: { source: 'proj', limits: parsed.limits } });
+  assert.strictEqual(resolved.max_chain_steps, 99);
+  assert.strictEqual(resolved.stdin_timeout_ms, 0);
+  assert.strictEqual(resolved.output_max_bytes, 4096);
+}
+
+function test_profile_limits_use_the_same_table() {
+  const parsed = tellrc.parse_tellrc('[profiles.backend]\nmax_chain_steps = 20\nexec_timeout_ms = 5000\n', 'test');
+  assert.deepStrictEqual(parsed.warnings, []);
+  assert.strictEqual(parsed.profiles['backend'].limits.max_chain_steps, 20);
+  assert.strictEqual(parsed.profiles['backend'].limits.exec_timeout_ms, 5000);
+  const rejected = tellrc.parse_tellrc('[profiles.backend]\nmax_chain_steps = 0\n', 'test');
+  assert.strictEqual(rejected.profiles['backend'].limits.max_chain_steps, undefined);
+  assert.ok(rejected.warnings.some((w) => w.includes('invalid profile limit max_chain_steps')));
+  const unknown = tellrc.parse_tellrc('[limits]\nnope = 1\n', 'test');
+  assert.ok(unknown.warnings.some((w) => w.includes('unknown limit nope')));
 }
 
 function test_compose_system_safety_last() {
@@ -292,15 +361,46 @@ async function test_sdk_temperature_propagates() {
 
 function test_web_cli_args_forwarding() {
   const parsed = cli_args.parseCliArgs(
-    ['--cwd', '/tmp', '--profile', 'node', '--system-file', '/tmp/sys.txt', '--max-chain-steps', '4'],
+    [
+      '--cwd',
+      '/tmp',
+      '--profile',
+      'node',
+      '--system-file',
+      '/tmp/sys.txt',
+      '--temperature',
+      '0.3',
+      '--max-chain-steps',
+      '4',
+    ],
     '/tmp',
   );
   assert.strictEqual(parsed.profile, 'node');
   assert.strictEqual(parsed.systemFile, '/tmp/sys.txt');
+  assert.strictEqual(parsed.temperature, 0.3);
   assert.strictEqual(parsed.maxChainSteps, 4);
   const plain = cli_args.parseCliArgs(['--cwd', '/tmp', '--prompt', 'hi', '--port', '3000'], '/tmp');
   assert.strictEqual(plain.profile, undefined);
+  assert.strictEqual(plain.temperature, undefined);
   assert.strictEqual(plain.model, '');
+  // Out-of-range or non-numeric temperatures are dropped, never clamped.
+  for (const raw of ['hot', '2.5', '-1', '']) {
+    const dropped = cli_args.parseCliArgs(['--cwd', '/tmp', '--temperature', raw || '--cwd'], '/tmp');
+    assert.strictEqual(dropped.temperature, undefined);
+  }
+}
+
+// `launch_web` forwards the resolved tellrc (not the raw flags), so a
+// profile/env/file temperature and an `exec_timeout_ms` from `[limits]` both
+// cross to `tell-web` instead of silently dropping.
+function test_web_forwarding_uses_resolved_tellrc() {
+  const src = fs.readFileSync(path.join(CLI_SRC_DIR, 'Tell.ts'), 'utf8');
+  assert.ok(src.includes("child_args.push('--temperature', String(opts.temperature))"));
+  assert.ok(src.includes('temperature: early_tellrc.temperature'));
+  assert.ok(src.includes(': early_tellrc.limits.exec_timeout_ms'));
+  // Secrets never reach the child args.
+  assert.ok(!src.includes("child_args.push('--key'"));
+  assert.ok(!src.includes('TELL_TOKEN'));
 }
 
 const TESTS = [
@@ -325,9 +425,13 @@ const TESTS = [
   test_alias_resolution_no_mutation,
   test_temperature_validation,
   test_limits_validated,
+  test_limits_delegate_to_runtime_limits,
+  test_limits_accept_zero_stdin_deadline_and_full_chain_range,
+  test_profile_limits_use_the_same_table,
   test_compose_system_safety_last,
   test_sdk_temperature_propagates,
   test_web_cli_args_forwarding,
+  test_web_forwarding_uses_resolved_tellrc,
 ];
 
 (async () => {
