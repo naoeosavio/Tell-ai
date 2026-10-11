@@ -2,6 +2,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import { TELLRC_LIMIT_KEYS, validate_tellrc_limit_value } from './runtime-limits';
+
 /** Max bytes of a `.tellrc` file read before it is ignored with a warning. */
 export const TELLRC_MAX_BYTES = 256 * 1024;
 /** Max bytes of a `system-file` payload injected as custom instructions. */
@@ -20,6 +22,9 @@ export type TellrcLimits = {
   max_buffer_bytes?: number | undefined;
   context_chars?: number | undefined;
   stdin_timeout_ms?: number | undefined;
+  stdin_max_bytes?: number | undefined;
+  exec_timeout_ms?: number | undefined;
+  output_max_bytes?: number | undefined;
 };
 
 /** Profile data: prompt/style/model/temperature plus deny data and limits. */
@@ -107,12 +112,9 @@ const KNOWN_PROFILE_KEYS = new Set([
   'deny_commands',
   'denycommands',
   'deny',
-  'max_chain_steps',
-  'max_buffer_bytes',
-  'context_chars',
-  'stdin_timeout_ms',
+  ...TELLRC_LIMIT_KEYS,
 ]);
-const KNOWN_LIMIT_KEYS = new Set(['max_chain_steps', 'max_buffer_bytes', 'context_chars', 'stdin_timeout_ms']);
+const KNOWN_LIMIT_KEYS = new Set(TELLRC_LIMIT_KEYS);
 /** Charset for custom profile names (`profiles.<name>` sections). */
 export const PROFILE_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
 
@@ -200,49 +202,6 @@ export function validate_temperature(raw: unknown): number | undefined {
     return undefined;
   } else {
     return value;
-  }
-}
-
-/**
- * Validates one numeric limit key.
- *
- * @param key - Limit key name.
- * @param raw - Raw value.
- * @returns The validated integer, or undefined when invalid.
- */
-export function validate_limit_value(key: keyof TellrcLimits, raw: unknown): number | undefined {
-  const value = typeof raw === 'string' ? Number(raw) : (raw as number);
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
-    return undefined;
-  } else {
-    const rounded = Math.floor(value);
-    if (key === 'max_chain_steps') {
-      if (rounded < 1 || rounded > 8) {
-        return undefined;
-      } else {
-        return rounded;
-      }
-    } else if (key === 'max_buffer_bytes') {
-      if (rounded < 1024 || rounded > 256 * 1024 * 1024) {
-        return undefined;
-      } else {
-        return rounded;
-      }
-    } else if (key === 'context_chars') {
-      if (rounded < 1024 || rounded > 1024 * 1024) {
-        return undefined;
-      } else {
-        return rounded;
-      }
-    } else if (key === 'stdin_timeout_ms') {
-      if (rounded < 1000 || rounded > 120000) {
-        return undefined;
-      } else {
-        return rounded;
-      }
-    } else {
-      return undefined;
-    }
   }
 }
 
@@ -357,7 +316,7 @@ export function parse_tellrc(text: string, source: string): ParsedTellrc {
       if (!KNOWN_LIMIT_KEYS.has(key)) {
         parsed.warnings.push(`${source}:${index + 1}: unknown limit ${raw_key}`);
       } else {
-        const value = validate_limit_value(key as keyof TellrcLimits, raw_value);
+        const value = validate_tellrc_limit_value(key, raw_value);
         if (value === undefined) {
           parsed.warnings.push(`${source}:${index + 1}: invalid limit ${raw_key}`);
         } else {
@@ -409,7 +368,7 @@ export function parse_tellrc(text: string, source: string): ParsedTellrc {
       } else if (key === 'deny_commands' || key === 'denycommands' || key === 'deny') {
         existing.deny_commands.push(...split_deny_value(raw_value));
       } else if (KNOWN_LIMIT_KEYS.has(key)) {
-        const value = validate_limit_value(key as keyof TellrcLimits, raw_value);
+        const value = validate_tellrc_limit_value(key, raw_value);
         if (value === undefined) {
           parsed.warnings.push(`${source}:${index + 1}: invalid profile limit ${raw_key}`);
         } else {

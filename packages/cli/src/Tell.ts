@@ -920,6 +920,7 @@ async function launch_web(opts: {
   profile?: string | undefined;
   systemFile?: string | undefined;
   systemText?: string | undefined;
+  temperature?: number | undefined;
   maxChainSteps?: number | undefined;
   maxBufferBytes?: number | undefined;
   contextChars?: number | undefined;
@@ -953,9 +954,10 @@ async function launch_web(opts: {
   if (opts.think) child_args.push('--think');
   if (opts.prompt) child_args.push('--prompt', opts.prompt);
   // Tellrc forwarding: model via -m (above), profile via its own flag,
-  // system via --system-file and limits via numeric flags. Keys, URLs and
-  // secrets are never forwarded.
+  // system via --system-file, temperature via its own flag and limits via
+  // numeric flags. Keys, URLs and secrets are never forwarded.
   if (opts.profile) child_args.push('--profile', opts.profile);
+  if (opts.temperature !== undefined) child_args.push('--temperature', String(opts.temperature));
   let temp_system_file: string | null = null;
   try {
     if (opts.systemFile) {
@@ -1344,7 +1346,8 @@ async function main() {
       execTimeout:
         opts.execTimeout !== undefined || web_env.TELL_EXEC_TIMEOUT_MS !== undefined
           ? early_limits.exec_timeout_ms
-          : undefined,
+          : early_tellrc.limits.exec_timeout_ms,
+      temperature: early_tellrc.temperature,
     });
     return;
   }

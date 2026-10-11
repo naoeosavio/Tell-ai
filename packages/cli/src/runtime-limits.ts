@@ -1,5 +1,3 @@
-import type { TellrcLimits } from './tellrc';
-
 /** Chars of accumulated conversation context (mirrors the CLI baseline). */
 export const DEFAULT_CONTEXT_MAX_CHARS = 64 * 1024;
 /** Stdin deadline in milliseconds (zero disables the deadline). */
@@ -75,10 +73,16 @@ export type RuntimeLimitEnv = {
   TELL_OUTPUT_MAX_BYTES?: string | undefined;
 };
 
-/** Tellrc layer subset (project/user limits plus provenance label). */
+/**
+ * Tellrc layer subset (project/user limits plus provenance label).
+ *
+ * Structurally typed on purpose: the runtime never imports the tellrc schema,
+ * so the dependency only points one way (`tellrc.ts` → this module, which owns
+ * the keys via `TELLRC_LIMIT_KEYS`). Only `tellrc_key` names are read here.
+ */
 export type RuntimeLimitTellrcLayer = {
   source: string;
-  limits: TellrcLimits & Record<string, number | undefined>;
+  limits: { [key: string]: number | undefined };
 };
 
 /** Input layers for `parse_runtime_limits` in precedence order. */
@@ -194,6 +198,9 @@ const LIMIT_SPECS: LimitSpec[] = [
   },
 ];
 
+/** `.tellrc` `[limits]` keys accepted by the runtime, derived from the single spec table. */
+export const TELLRC_LIMIT_KEYS: string[] = LIMIT_SPECS.map((spec) => spec.tellrc_key);
+
 const DEFAULT_LIMITS: RuntimeLimits = {
   context_max_chars: DEFAULT_CONTEXT_MAX_CHARS,
   stdin_timeout_ms: DEFAULT_STDIN_TIMEOUT_MS,
@@ -251,6 +258,34 @@ function validate_limit_value(spec: LimitSpec, value: number, source: string): n
     );
   } else {
     return value;
+  }
+}
+
+/**
+ * Validates one `.tellrc` `[limits]` value against the same spec table.
+ *
+ * Non-throwing variant of the internal validator, used by the tellrc parser:
+ * an unknown key, a non-integer or an out-of-range value is dropped so the
+ * caller can warn and keep the default, instead of failing the run (exit 2 is
+ * reserved for flag/env layers, which are explicit user input).
+ *
+ * @param key - Tellrc limit key (`context_chars`, `max_chain_steps`, ...).
+ * @param raw - Raw value read from the INI file.
+ * @returns The validated integer, or undefined when the key is unknown or invalid.
+ */
+export function validate_tellrc_limit_value(key: string, raw: unknown): number | undefined {
+  const spec = LIMIT_SPECS.find((entry) => entry.tellrc_key === key);
+  if (spec === undefined) {
+    return undefined;
+  }
+  const parsed = to_limit_int(raw);
+  if (parsed === undefined) {
+    return undefined;
+  }
+  try {
+    return validate_limit_value(spec, parsed, 'tellrc');
+  } catch {
+    return undefined;
   }
 }
 

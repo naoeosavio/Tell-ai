@@ -165,9 +165,14 @@ carry prompt/style/model/temperature/deny/limits data, and any
 own aliases via `[profiles.<name>.aliases]`, fill-if-empty semantics —
 explicit layers always win, file aliases beat profile aliases); enforcement
 stays in
-the policy sandbox. `tell --web` forwards only non-secret fields (model via
-`-m`, profile, system via `--system-file`, numeric limits); keys, URLs and
-secrets never enter args, files or `/api/config`. Env layer: `TELL_MODEL`,
+the policy sandbox. `[limits]` accepts all seven runtime keys
+(`context_chars`, `stdin_timeout_ms`, `stdin_max_bytes`, `exec_timeout_ms`,
+`max_chain_steps`, `max_buffer_bytes`, `output_max_bytes`); the parser imports
+the ranges from `runtime-limits` instead of keeping its own table, so a bad
+value warns and is dropped without ever failing the run. `tell --web` forwards
+only non-secret fields (model via `-m`, profile, system via `--system-file`,
+temperature via `--temperature`, numeric limits); keys, URLs and secrets never
+enter args, files or `/api/config`. Env layer: `TELL_MODEL`,
 `TELL_SYSTEM`, `TELL_SYSTEM_FILE`, `TELL_TEMPERATURE`, `TELL_PROFILE`.
 New flags: `--profile`, `--system`, `--system-file`, `--temperature` (0..2).
 
@@ -252,7 +257,7 @@ npm run test:security
 npm run test:mentions   # @path expansion + outside-cwd read gate
 npm run test:context    # --ctx grammar + --history
 npm run test:stream     # --stream / --think
-npm run test:tellrc     # .tellrc parser, precedence, profiles, aliases, temperature (24 tests; not in `npm test` aggregate yet — future gate)
+npm run test:tellrc     # .tellrc parser, precedence, profiles, aliases, temperature, limits (28 tests; part of the aggregate)
 ```
 
 License
