@@ -100,7 +100,7 @@ Profiles add `system`/`system-file`/own aliases as fill-if-empty defaults
 (file aliases win: project > user > profile); selecting an undefined
 profile warns. `[limits]` takes the seven runtime keys (`context_chars`,
 `stdin_timeout_ms`, `stdin_max_bytes`, `exec_timeout_ms`, `max_chain_steps`,
-`max_buffer_bytes`, `output_max_bytes`), validated by `runtime-limits` itself
+`max_buffer_bytes`, `output_max_bytes`), validated by `@tell-ai/core`'s `runtime-limits` itself
 (invalid values warn and are dropped). Full reference: [tellrc.md](tellrc.md).
 `TellOptions.system` stays an explicit library override. `tell --web`
 receives only non-secret forwarded fields (model, profile, system-file,

@@ -74,7 +74,7 @@ Custom aliases live in a per-invocation table — `MODELS` is never mutated (dee
 
 `temperature` (0..2, `TEMPERATURE_MIN/MAX`, `tellrc.ts:10-11`) is validated at every layer; invalid values warn and are ignored. The SDK (`AskInstance.ask` / `ask_stream` / `TellOptions`) forwards it only when present and throws `RangeError` outside 0..2. The CLI threads it through `ConversationState.temperature` into `create_cli_model` (`core-adapters.ts`), covering silent and streaming paths.
 
-Limits are validated data owned by `runtime-limits`; the parser imports the owner's key list (`TELLRC_LIMIT_KEYS`) and its non-throwing validator (`validate_tellrc_limit_value`) instead of keeping a second range table, so the two layers cannot drift. The dependency is one-way — `runtime-limits.ts` never imports the tellrc schema (`RuntimeLimitTellrcLayer.limits` is structural, and only `TELLRC_LIMIT_KEYS` names are read):
+Limits are validated data owned by `@tell-ai/core`'s `runtime-limits` (`packages/core/src/runtime-limits.ts`, re-exported by the CLI facade `./runtime-limits`); the parser imports the owner's key list (`TELLRC_LIMIT_KEYS`) and its non-throwing validator (`validate_tellrc_limit_value`) instead of keeping a second range table, so the two layers cannot drift. The dependency is one-way — the owner never imports the tellrc schema (`RuntimeLimitTellrcLayer.limits` is structural, and only `TELLRC_LIMIT_KEYS` names are read):
 
 | `[limits]` key | Range | Env equivalent |
 |---|---|---|
@@ -114,4 +114,4 @@ The Web never reads `.tellrc` directly — the CLI resolves and forwards only no
 | `BUILTIN_PROFILES` | `node`, `security`, `devops` | Profiles shipped with default data |
 | `PROFILE_NAME_PATTERN` | `/^[a-z0-9][a-z0-9_-]*$/` | Valid custom profile names |
 
-Sources: `packages/cli/src/tellrc.ts`, `packages/cli/src/runtime-limits.ts`, `Tell.ts:147-151`, `Tell.ts:553-562`, `Tell.ts:947-975`, `Tell.ts:1015-1045`, `Tell.ts:1106-1152`, `packages/cli/src/core-adapters.ts`, `packages/sdk/src/ask.ts`, `packages/sdk/src/tell.ts`, `packages/web/src/server/cli-args.ts`, `packages/web/src/server/server.ts`, `test/test-tell-tellrc.js`.
+Sources: `packages/cli/src/tellrc.ts`, `packages/cli/src/runtime-limits.ts` (casca), `packages/core/src/runtime-limits.ts` (owner), `Tell.ts:147-151`, `Tell.ts:553-562`, `Tell.ts:947-975`, `Tell.ts:1015-1045`, `Tell.ts:1106-1152`, `packages/cli/src/core-adapters.ts`, `packages/sdk/src/ask.ts`, `packages/sdk/src/tell.ts`, `packages/web/src/server/cli-args.ts`, `packages/web/src/server/server.ts`, `test/test-tell-tellrc.js`.
