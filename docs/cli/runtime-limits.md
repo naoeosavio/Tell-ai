@@ -22,10 +22,12 @@ sem monkey-patch de `process.stdout.write`.
 Precedência: `flag > env > tellrc do projeto > tellrc do usuário > default`.
 Flag/env inválidos falham com exit `2` **antes** de qualquer chamada ao modelo;
 tellrc inválido falha de forma diagnosticável (com a origem no erro), nunca
-caindo em silêncio para o default. O tellrc (`[limits]`) cobre
-`max_chain_steps` (até 8), `max_buffer_bytes`, `context_chars` e
-`stdin_timeout_ms` — `exec_timeout_ms`, `stdin_max_bytes` e `output_max_bytes`
-são flag/env-only até o schema ser estendido.
+caindo em silêncio para o default. O tellrc (`[limits]`) cobre as sete chaves
+(`context_chars`, `stdin_timeout_ms`, `stdin_max_bytes`, `exec_timeout_ms`,
+`max_chain_steps`, `max_buffer_bytes`, `output_max_bytes`) desde que
+`task_036` passou a importar `TELLRC_LIMIT_KEYS` e `validate_tellrc_limit_value`
+deste módulo: o parser não guarda tabela de faixa própria, então schema e
+resolver não divergem (tabela de faixas em `docs/cli/tellrc.md`).
 
 Exit codes: `0` ok · `1` uso/modelo (inalterado) · `2` limite inválido ·
 `124` timeout (stdin ou execução) · `125` estouro de stdin.
@@ -107,8 +109,9 @@ Depois: `EXEC_MAX_BUFFER` e `CHAIN_ROUND_CAP` (clamp `1..8` no sandbox) com
 notice refletindo o cap efetivo; `tell --web` prefere flags/env explícitos
 (`--max-chain/--max-buffer/--context-max-chars/--stdin-timeout/--exec-timeout`
 + `TELL_*`) sobre tellrc, e camada ausente continua ausente (server mantém
-seus defaults). `/api/chain` e approval seguem no chain store do core —
-nenhuma segunda chain no browser.
+seus defaults), inclusive o `exec_timeout_ms` do tellrc (a flag sempre foi
+encaminhada; a chave do arquivo entrou no schema depois). `/api/chain` e
+approval seguem no chain store do core — nenhuma segunda chain no browser.
 
 ```bash
 tell --web --max-chain 2 --exec-timeout 60000
