@@ -5,7 +5,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { validate_chain_decision_payload } from '@tell-ai/core';
+import { DEFAULT_EXEC_TIMEOUT_MS, DEFAULT_MAX_BUFFER_BYTES, validate_chain_decision_payload } from '@tell-ai/core';
 import {
   create_ask_ai,
   extract_runs,
@@ -90,7 +90,7 @@ const STREAM = cliArgs.stream;
 const THINK = cliArgs.think;
 const PORT = cliArgs.port ?? Number(process.env['PORT'] || 3000);
 const HOST = cliArgs.host || '127.0.0.1';
-const EXEC_TIMEOUT_MS = cliArgs.execTimeout ?? 120_000;
+const EXEC_TIMEOUT_MS = cliArgs.execTimeout ?? DEFAULT_EXEC_TIMEOUT_MS;
 const FORWARDED_PROFILE = cliArgs.profile?.trim() || undefined;
 const FORWARDED_TEMPERATURE = cliArgs.temperature;
 const FORWARDED_LIMITS = {
@@ -105,17 +105,17 @@ const FORWARDED_LIMITS = {
   stdinTimeoutMs?: number;
 };
 
-/** Default internal exec buffer in bytes (mirrors the CLI `MAX_BUFFER`). */
-const EXEC_DEFAULT_MAX_BUFFER = 32 * 1024 * 1024;
+/** Default internal exec buffer in bytes (owned by `@tell-ai/core`). */
+const EXEC_DEFAULT_MAX_BUFFER = DEFAULT_MAX_BUFFER_BYTES;
 /** Effective exec buffer: the forwarded CLI override wins, default otherwise. */
 const EXEC_MAX_BUFFER = FORWARDED_LIMITS.maxBufferBytes ?? EXEC_DEFAULT_MAX_BUFFER;
 /**
  * Effective chain round cap: the forwarded CLI override wins, clamped to the
- * server `1..CHAIN_MAX_ROUNDS` contract. The CLI accepts up to 127 rounds,
- * but the sandbox keeps the historical cap of 8 — larger forwarded values
- * clamp down here instead of failing the boot. Only the number is
- * overridden — the loop and approval state machine stay in the core-owned
- * chain store.
+ * server `1..CHAIN_MAX_ROUNDS` contract. The CLI accepts up to
+ * `MAX_CHAIN_STEPS` (128) rounds, but the sandbox keeps the historical cap of
+ * 8 — larger forwarded values clamp down here instead of failing the boot.
+ * Only the number is overridden — the loop and approval state machine stay in
+ * the core-owned chain store.
  */
 const CHAIN_ROUND_CAP = Math.min(
   CHAIN_MAX_ROUNDS,

@@ -17,7 +17,15 @@ import crypto from 'node:crypto';
 /** How long an idle run survives before reads report it as unknown. */
 export const CHAIN_TTL_MS = 15 * 60 * 1000;
 
-/** Max model turns per run (mirrors the CLI/Web eight-round chain). */
+/**
+ * Max model turns per run.
+ *
+ * Deliberately kept free of `@tell-ai/core` imports (this file stays
+ * dependency-light so `test/test-web-backend.js` loads it directly). The
+ * value equals the core default `DEFAULT_MAX_CHAIN_STEPS` — pinned by an
+ * equality assertion in the backend harness — and stays a sandbox clamp even
+ * though the CLI accepts up to `MAX_CHAIN_STEPS` rounds.
+ */
 export const CHAIN_MAX_ROUNDS = 8;
 
 /** Run ids are server-generated UUIDs, never client-supplied paths. */

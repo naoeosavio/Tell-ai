@@ -1,5 +1,7 @@
 import path from 'node:path';
 
+import { MAX_EXEC_TIMEOUT_MS, MIN_EXEC_TIMEOUT_MS } from '@tell-ai/core';
+
 export interface CliArgs {
   /** Resolved absolute working directory for the sandbox. */
   cwd: string;
@@ -119,7 +121,7 @@ export function parseCliArgs(argv: string[], defaultCwd: string): CliArgs {
     host,
     execTimeout:
       execTimeout !== undefined && Number.isFinite(execTimeout)
-        ? Math.min(600_000, Math.max(1_000, Math.round(execTimeout)))
+        ? Math.min(MAX_EXEC_TIMEOUT_MS, Math.max(MIN_EXEC_TIMEOUT_MS, Math.round(execTimeout)))
         : undefined,
     help: has(argv, '--help', '-h'),
   };
