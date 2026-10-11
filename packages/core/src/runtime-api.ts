@@ -1,13 +1,14 @@
 import { extract_runs, get_system_prompt, strip_run_tags, strip_think_tags } from '@tell-ai/sdk';
 
+import { DEFAULT_EXEC_TIMEOUT_MS, DEFAULT_MAX_BUFFER_BYTES } from './runtime-limits';
+
 // Default key for the single conversation slot kept through StoragePort.
 const DEFAULT_STORAGE_KEY = 'tell-runtime';
 
-// Mirrors the CLI execution limits (`packages/cli/src/Tell.ts`): 120s timeout
-// and 32 MB output cap. The SDK only forwards them inside ExecutorOptions —
-// enforcement belongs to the injected executor (core owns exec).
-const DEFAULT_EXEC_TIMEOUT_MS = 120_000;
-const DEFAULT_MAX_OUTPUT_BYTES = 32 * 1024 * 1024;
+// The SDK only forwards timeout/buffer inside ExecutorOptions — enforcement
+// belongs to the injected executor (core owns exec). Both values come from the
+// single owner in `./runtime-limits`, never from a literal here.
+const DEFAULT_MAX_OUTPUT_BYTES = DEFAULT_MAX_BUFFER_BYTES;
 
 /**
  * Lifecycle of one requested command. Exactly the union the task contract

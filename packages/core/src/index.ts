@@ -3,11 +3,8 @@ export type { ChainDecision, ChainDecisionPayload, ChainDecisionValidation } fro
 export { validate_chain_decision_payload } from './chain-decision';
 export type { ConfigLayer, CoreConfig, CoreHost, ResolvedConfigInput } from './config';
 export {
-  DEFAULT_EXEC_TIMEOUT_MS,
   HOST_DEFAULT_MODEL,
   load_env_layer,
-  MAX_EXEC_TIMEOUT_MS,
-  MIN_EXEC_TIMEOUT_MS,
   resolve_core_config,
 } from './config';
 export type { NodeExecutorDefaults } from './exec';
@@ -67,3 +64,36 @@ export {
   type TellRuntime,
   type TellRuntimeOptions,
 } from './runtime-api';
+export type {
+  ExecutionOptions,
+  ParseRuntimeLimitsInput,
+  RuntimeLimitEnv,
+  RuntimeLimitFlags,
+  RuntimeLimits,
+  RuntimeLimitTellrcLayer,
+} from './runtime-limits';
+export {
+  build_execution_options,
+  CONTEXT_TRUNCATE_MARKER,
+  DEFAULT_CONTEXT_MAX_CHARS,
+  DEFAULT_EXEC_TIMEOUT_MS,
+  DEFAULT_MAX_BUFFER_BYTES,
+  DEFAULT_MAX_CHAIN_STEPS,
+  DEFAULT_OUTPUT_MAX_BYTES,
+  DEFAULT_STDIN_MAX_BYTES,
+  DEFAULT_STDIN_TIMEOUT_MS,
+  EXIT_CONFIG_ERROR,
+  has_balanced_tags,
+  MAX_CHAIN_STEPS,
+  MAX_EXEC_TIMEOUT_MS,
+  MIN_EXEC_TIMEOUT_MS,
+  OUTPUT_TRUNCATE_MARKER_PREFIX,
+  parse_runtime_limits,
+  RuntimeLimitError,
+  split_context_turns,
+  TELL_LIMIT_ENV_KEYS,
+  TELLRC_LIMIT_KEYS,
+  truncate_context,
+  truncate_output,
+  validate_tellrc_limit_value,
+} from './runtime-limits';

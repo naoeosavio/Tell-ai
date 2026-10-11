@@ -12,9 +12,10 @@ import type {
   TellResult,
   TellRuntimeOptions,
 } from './runtime-api';
+import { DEFAULT_MAX_BUFFER_BYTES } from './runtime-limits';
 
-/** Default per-command output cap (mirrors the CLI 32 MB buffer via the SDK default). */
-export const CORE_MAX_OUTPUT_BYTES = 32 * 1024 * 1024;
+/** Default per-command internal buffer (owned by `./runtime-limits`). */
+export const CORE_MAX_OUTPUT_BYTES = DEFAULT_MAX_BUFFER_BYTES;
 
 /** Input for `create_core_runtime`: resolved config plus injected ports. */
 export type CoreRuntimeInput = {

@@ -57,12 +57,13 @@ handoff and are not read here.
 | `src/runtime-api.ts` | Injectable contract + `createTellRuntime` factory , `TellResult`, ports, callbacks, tokens |
 | `src/browser-runtime.ts` | `createLocalStorageAdapter` over injected `StorageLike` |
 | `src/config.ts` | Host defaults, `CoreConfig`/`ConfigLayer`, precedence resolver, base env loader |
+| `src/runtime-limits.ts` | Single owner of every limit value: defaults, range table, `parse_runtime_limits` (flag > env > project tellrc > user tellrc > default), `TELLRC_LIMIT_KEYS`, `truncate_context`/`truncate_output`, `build_execution_options` |
 | `src/paths.ts` | `canonical_path` / `canonical_write_path` (realpath, symlink fail-closed) |
 | `src/project-context.ts` | Bounded project tree + README/AGENTS docs, ported from the Web `context-builder` |
 | `src/chain-decision.ts` | Pure `validate_chain_decision_payload` for `/api/chain` confirm (no server state) |
 | `src/risk.ts` | Base `assess_base_risk` + `create_base_risk_port` (`permissive` CLI / `strict` Web, `RiskAssessment` only) |
-| `src/exec.ts` | Node `create_node_executor` (`/bin/bash`, real cwd, 120s/exit 124, 32 MB cap, process group, structural token, scrubbed env) |
-| `src/loop.ts` | The single primitive exec/loop (≤8 rounds, exit-code feedback, cancel, fail-closed) |
+| `src/exec.ts` | Node `create_node_executor` (`/bin/bash`, real cwd, 120s/exit 124, 32 MB cap, process group, structural token, scrubbed env); the timeout/buffer numbers are aliases of `src/runtime-limits.ts` |
+| `src/loop.ts` | The single primitive exec/loop (≤8 rounds via `DEFAULT_MAX_CHAIN_STEPS`, exit-code feedback, cancel, fail-closed) |
 | `src/runtime.ts` | `create_core_runtime`: injects resolved config into SDK ports, runs the loop |
 
 ## Environment allowlist

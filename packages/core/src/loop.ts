@@ -5,9 +5,10 @@ import {
   type TellResult,
   type TellRuntimeOptions,
 } from './runtime-api';
+import { DEFAULT_MAX_CHAIN_STEPS } from './runtime-limits';
 
-/** Max model→command rounds per run (mirrors the CLI `MAX_CHAIN_STEPS`). */
-export const LOOP_MAX_ROUNDS = 8;
+/** Default model→command rounds per run (owned by `./runtime-limits`). */
+export const LOOP_MAX_ROUNDS = DEFAULT_MAX_CHAIN_STEPS;
 
 /** Chain-limit notice recorded when rounds run out (CLI `finish_round` wording). */
 export const CHAIN_LIMIT_NOTICE = `Chain limit reached (${LOOP_MAX_ROUNDS}); ignoring further requested commands.`;

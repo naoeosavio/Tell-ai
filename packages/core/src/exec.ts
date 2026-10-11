@@ -3,15 +3,21 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import type { CancellationToken, CommandExecutor, ExecutorOptions, ExecutorResult, Redactor } from './runtime-api';
+import { DEFAULT_EXEC_TIMEOUT_MS, DEFAULT_MAX_BUFFER_BYTES } from './runtime-limits';
 
 /** Explicit shell for every executed script (mirrors the CLI executor). */
 export const EXEC_SHELL = '/bin/bash';
 
-/** Default per-command timeout in milliseconds (mirrors the CLI `EXEC_TIMEOUT`). */
-export const EXEC_DEFAULT_TIMEOUT_MS = 120_000;
+/** Default per-command timeout (owned by `./runtime-limits`, aliased for the port API). */
+export const EXEC_DEFAULT_TIMEOUT_MS = DEFAULT_EXEC_TIMEOUT_MS;
 
-/** Default per-command output cap in bytes (mirrors the CLI `MAX_BUFFER`). */
-export const EXEC_MAX_OUTPUT_BYTES = 32 * 1024 * 1024;
+/**
+ * Default internal exec buffer in bytes (owned by `./runtime-limits`).
+ *
+ * This is the cap the executor accumulates into, not the delivered-output cap
+ * the host applies afterwards (`DEFAULT_OUTPUT_MAX_BYTES`).
+ */
+export const EXEC_MAX_OUTPUT_BYTES = DEFAULT_MAX_BUFFER_BYTES;
 
 /** Exit code reported when a command exceeds its timeout (mirrors the CLI). */
 export const EXEC_TIMEOUT_EXIT_CODE = 124;

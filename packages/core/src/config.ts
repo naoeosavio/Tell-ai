@@ -1,15 +1,10 @@
+import { DEFAULT_EXEC_TIMEOUT_MS, MAX_EXEC_TIMEOUT_MS, MIN_EXEC_TIMEOUT_MS } from './runtime-limits';
+
 /** Hosts with distinct model defaults. The core never assumes one global default. */
 export type CoreHost = 'cli' | 'web';
 
 /** Model default per host: the CLI keeps `g`, the Web keeps `l`. */
 export const HOST_DEFAULT_MODEL: Record<CoreHost, string> = { cli: 'g', web: 'l' };
-
-/** Default per-command execution timeout in milliseconds. */
-export const DEFAULT_EXEC_TIMEOUT_MS = 120_000;
-/** Lower clamp for per-command execution timeouts (mirrors the Web `--exec-timeout`). */
-export const MIN_EXEC_TIMEOUT_MS = 1_000;
-/** Upper clamp for per-command execution timeouts (mirrors the Web `--exec-timeout`). */
-export const MAX_EXEC_TIMEOUT_MS = 600_000;
 
 /** Fully resolved core options injected into the runtime ports. */
 export type CoreConfig = {
