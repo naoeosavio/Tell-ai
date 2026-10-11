@@ -15,6 +15,8 @@ export interface CliArgs {
   profile?: string | undefined;
   /** File with custom instructions forwarded by the CLI (`--system-file`). */
   systemFile?: string | undefined;
+  /** Sampling temperature 0..2 forwarded by the CLI (`--temperature`). */
+  temperature?: number | undefined;
   /** Validated max chain steps forwarded by the CLI (`--max-chain-steps`). */
   maxChainSteps?: number | undefined;
   /** Validated max buffer bytes forwarded by the CLI (`--max-buffer-bytes`). */
@@ -80,6 +82,7 @@ export function parseCliArgs(argv: string[], defaultCwd: string): CliArgs {
   const execTimeout = execTimeoutRaw !== undefined ? Number(execTimeoutRaw) : undefined;
   const profile = argValue(argv, '--profile');
   const systemFile = argValue(argv, '--system-file');
+  const temperatureRaw = argValue(argv, '--temperature');
   const maxChainStepsRaw = argValue(argv, '--max-chain-steps');
   const maxBufferBytesRaw = argValue(argv, '--max-buffer-bytes');
   const contextCharsRaw = argValue(argv, '--context-chars');
@@ -89,6 +92,11 @@ export function parseCliArgs(argv: string[], defaultCwd: string): CliArgs {
     const value = Math.floor(Number(raw));
     return Number.isFinite(value) && value > 0 ? value : undefined;
   };
+  const toTemperature = (raw: string | undefined): number | undefined => {
+    if (raw === undefined) return undefined;
+    const value = Number(raw);
+    return Number.isFinite(value) && value >= 0 && value <= 2 ? value : undefined;
+  };
   return {
     cwd: path.resolve(argCwd || defaultCwd),
     initialPrompt,
@@ -97,6 +105,7 @@ export function parseCliArgs(argv: string[], defaultCwd: string): CliArgs {
     model,
     profile,
     systemFile,
+    temperature: toTemperature(temperatureRaw),
     maxChainSteps: toPositiveInt(maxChainStepsRaw),
     maxBufferBytes: toPositiveInt(maxBufferBytesRaw),
     contextChars: toPositiveInt(contextCharsRaw),
@@ -126,6 +135,8 @@ Options:
   --profile <name>  Tellrc profile forwarded by the CLI (node, security, devops)
   --system-file <path>
                     File with custom instructions forwarded by the CLI (64 KB cap)
+  --temperature <n>
+                    Sampling temperature 0..2 forwarded by the CLI
   --max-chain-steps <n>
                     Limit override forwarded by the CLI
   --max-buffer-bytes <n>

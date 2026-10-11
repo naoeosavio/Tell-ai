@@ -92,6 +92,7 @@ const PORT = cliArgs.port ?? Number(process.env['PORT'] || 3000);
 const HOST = cliArgs.host || '127.0.0.1';
 const EXEC_TIMEOUT_MS = cliArgs.execTimeout ?? 120_000;
 const FORWARDED_PROFILE = cliArgs.profile?.trim() || undefined;
+const FORWARDED_TEMPERATURE = cliArgs.temperature;
 const FORWARDED_LIMITS = {
   ...(cliArgs.maxChainSteps !== undefined ? { maxChainSteps: cliArgs.maxChainSteps } : {}),
   ...(cliArgs.maxBufferBytes !== undefined ? { maxBufferBytes: cliArgs.maxBufferBytes } : {}),
@@ -835,6 +836,7 @@ app.get('/api/config', (_req, res) => {
     cwd: CWD,
     initialPrompt: INITIAL_PROMPT || null,
     profile: FORWARDED_PROFILE ?? null,
+    temperature: FORWARDED_TEMPERATURE ?? null,
     limits: FORWARDED_LIMITS,
     hasCustomSystem: FORWARDED_SYSTEM_TEXT !== undefined,
   });
@@ -891,7 +893,10 @@ async function stream_tell(
   };
 
   try {
-    for await (const event of ai.ask_stream(messages, { system })) {
+    for await (const event of ai.ask_stream(messages, {
+      system,
+      ...(FORWARDED_TEMPERATURE !== undefined ? { temperature: FORWARDED_TEMPERATURE } : {}),
+    })) {
       if (is_client_gone) break;
       switch (event.type) {
         case 'text':
@@ -931,6 +936,7 @@ async function generateOnce(
     system,
     messages: formattedMessages,
     reasoning: reasoning as any,
+    ...(FORWARDED_TEMPERATURE !== undefined ? { temperature: FORWARDED_TEMPERATURE } : {}),
     ...(handle.providerOptions ? { providerOptions: handle.providerOptions } : {}),
   });
 
