@@ -14,9 +14,24 @@ export const MAX_CHAIN_STEPS = 128;
 export const DEFAULT_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
 /** Delivered output cap in bytes (marker appended on truncation). */
 export const DEFAULT_OUTPUT_MAX_BYTES = 204_800;
+/** Max items accepted in one chat-payload message list. */
+export const PAYLOAD_MAX_MESSAGES = 200;
+/** Max characters per chat-payload message content. */
+export const PAYLOAD_MAX_CONTENT_CHARS = 50 * 1024;
+/** Max characters for a chat-payload system prompt. */
+export const PAYLOAD_MAX_SYSTEM_CHARS = 30 * 1024;
 
 /** Invalid flag/env/tellrc limit value (the host maps this to its exit status). */
 export const EXIT_CONFIG_ERROR = 2;
+
+/** Success exit status. */
+export const EXIT_SUCCESS = 0;
+/** Usage/model failure preserves the historical status. */
+export const EXIT_MODEL_ERROR = 1;
+/** Execution timeout (mirrors the core/exec convention). */
+export const EXIT_TIMEOUT = 124;
+/** Stdin or output cap overflow. */
+export const EXIT_LIMIT = 125;
 
 /** Marker prepended when old context turns are dropped. */
 export const CONTEXT_TRUNCATE_MARKER = '[older context truncated]';
@@ -96,6 +111,27 @@ export class RuntimeLimitError extends Error {
     this.limit = limit;
     this.source = source;
     this.exit_code = EXIT_CONFIG_ERROR;
+  }
+}
+
+/** Identifiable stdin failure (timeout vs byte-cap overflow). */
+export type StdinLimitErrorKind = 'timeout' | 'overflow';
+
+/**
+ * Stdin failure with a stable exit status (124/125).
+ *
+ * Stdin has no other host target (the sandbox never reads stdin), but the
+ * error stays here with the rest of the limit contract so no host restates
+ * the statuses.
+ */
+export class StdinLimitError extends Error {
+  kind: StdinLimitErrorKind;
+  exit_code: number;
+  constructor(kind: StdinLimitErrorKind, message: string) {
+    super(message);
+    this.name = 'StdinLimitError';
+    this.kind = kind;
+    this.exit_code = kind === 'timeout' ? EXIT_TIMEOUT : EXIT_LIMIT;
   }
 }
 
@@ -382,11 +418,35 @@ export function build_execution_options(limits: RuntimeLimits): ExecutionOptions
  *
  * Reading them is a host concern (the CLI needs it inside its test
  * sandboxes), so the owner exports only the names — never a reader that
- * binds `process.env` itself.
+ * binds the host environment itself.
  */
 export const TELL_LIMIT_ENV_KEYS: (keyof RuntimeLimitEnv)[] = LIMIT_SPEC_LIST.map(
   (spec) => spec.env_key as keyof RuntimeLimitEnv,
 );
+
+/**
+ * Reads `TELL_*` runtime env values (never secrets).
+ *
+ * The environment arrives as an explicit parameter and the owner never binds
+ * the host environment itself: hosts pass their own record (the real one in
+ * production, a fake record inside the CLI test sandboxes), so a `TELL_*`
+ * variable leaked by the caller's shell can never change limits under test.
+ *
+ * @param env - Environment record to read the limit keys from.
+ * @returns The env layer for `parse_runtime_limits`.
+ */
+export function runtime_env_from_process(env: Record<string, string | undefined>): RuntimeLimitEnv {
+  const layer: RuntimeLimitEnv = {};
+  for (const key of TELL_LIMIT_ENV_KEYS) {
+    const value = env[key];
+    if (value !== undefined && value.trim() !== '') {
+      layer[key] = value;
+    } else {
+      // Absent or blank — treated as default.
+    }
+  }
+  return layer;
+}
 
 /**
  * Splits conversation text into atomic turns.

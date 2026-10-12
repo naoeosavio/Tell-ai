@@ -22,6 +22,22 @@ export const EXEC_MAX_OUTPUT_BYTES = DEFAULT_MAX_BUFFER_BYTES;
 /** Exit code reported when a command exceeds its timeout (mirrors the CLI). */
 export const EXEC_TIMEOUT_EXIT_CODE = 124;
 
+/**
+ * Formats the canonical timeout message for one script.
+ *
+ * The script travels with the message because it becomes model context: the
+ * model needs to see *what* timed out to correct itself. Every host (core
+ * executor, CLI transport, Web sandbox) reports timeouts this way.
+ *
+ * @param script - Script that exceeded its timeout.
+ * @param timeout_ms - Timeout budget in milliseconds.
+ * @returns The timeout message.
+ */
+export function format_timeout_message(script: string, timeout_ms: number): string {
+  const seconds = Math.round(timeout_ms / 1000);
+  return `Command timed out after ${seconds}s:\n${script}`;
+}
+
 /** Exit code reported when a command is cancelled mid-run. */
 export const EXEC_CANCELLED_EXIT_CODE = 130;
 
@@ -291,10 +307,9 @@ function run_shell_process(input: ShellRunInput): Promise<ExecutorResult> {
         timed_out = true;
         kill_process_group(child.pid);
         setTimeout(kill_late, EXEC_KILL_GRACE_MS);
-        const seconds = Math.round(timeout_ms / 1000);
         finish({
           stdout: '',
-          stderr: `Command timed out after ${seconds}s:\n${script}`,
+          stderr: format_timeout_message(script, timeout_ms),
           exit_code: EXEC_TIMEOUT_EXIT_CODE,
         });
       },
