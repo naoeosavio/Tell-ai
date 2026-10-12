@@ -5,8 +5,32 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
 import {
+  build_execution_options,
+  DEFAULT_CONTEXT_MAX_CHARS,
+  DEFAULT_EXEC_TIMEOUT_MS,
+  DEFAULT_MAX_BUFFER_BYTES,
+  DEFAULT_MAX_CHAIN_STEPS,
+  DEFAULT_OUTPUT_MAX_BYTES,
+  DEFAULT_STDIN_MAX_BYTES,
+  DEFAULT_STDIN_TIMEOUT_MS,
+  EXIT_CONFIG_ERROR,
+  EXIT_LIMIT,
+  EXIT_MODEL_ERROR,
+  EXIT_TIMEOUT,
+  format_command_result,
+  format_command_skipped,
+  MAX_CHAIN_STEPS,
+  parse_runtime_limits,
+  type RuntimeLimits,
+  runtime_env_from_process,
+  StdinLimitError,
+  truncate_context,
+  truncate_output,
+} from '@tell-ai/core';
+import {
   type AskInstance,
   create_ask_ai,
+  get_system_prompt,
   list_custom_models,
   MODELS,
   resolve_model_spec,
@@ -47,28 +71,6 @@ import {
 } from './history';
 import { expand_mentions } from './mentions';
 import {
-  build_execution_options,
-  DEFAULT_CONTEXT_MAX_CHARS,
-  DEFAULT_EXEC_TIMEOUT_MS,
-  DEFAULT_MAX_BUFFER_BYTES,
-  DEFAULT_MAX_CHAIN_STEPS,
-  DEFAULT_OUTPUT_MAX_BYTES,
-  DEFAULT_STDIN_MAX_BYTES,
-  DEFAULT_STDIN_TIMEOUT_MS,
-  EXIT_CONFIG_ERROR,
-  EXIT_LIMIT,
-  EXIT_MODEL_ERROR,
-  EXIT_TIMEOUT,
-  MAX_CHAIN_STEPS,
-  parse_runtime_limits,
-  type RuntimeLimits,
-  runtime_env_from_process,
-  StdinLimitError,
-  truncate_context,
-  truncate_output,
-} from './runtime-limits';
-import { get_system_prompt } from './systemPrompt';
-import {
   compose_system_prompt,
   load_system_file_text,
   load_tellrc,
@@ -82,7 +84,7 @@ const DEFAULT_MODEL = process.env['TELL_MODEL'] || 'g';
 const STDIN_TIMEOUT = DEFAULT_STDIN_TIMEOUT_MS;
 // Chars of accumulated conversation context; beyond this the oldest part is
 // summarized away (LLM windows are far below 64K chars of raw history).
-// Single owner of the value lives in `./runtime-limits`; this alias keeps
+// Single owner of the value lives in `@tell-ai/core`; this alias keeps
 // historical references working without a second constant.
 const MAX_CONTEXT_CHARS = DEFAULT_CONTEXT_MAX_CHARS;
 
@@ -767,7 +769,10 @@ async function run_response_loop(
   // both modes; feedback rounds only exist in chain mode, where it matches).
   // Tellrc custom instructions prepend context only — safety stays last and
   // config can never replace <RUN>, approval, injection or deny rules.
-  const system = compose_system_prompt(get_system_prompt({ chain: state.autoContinue }), state.customSystemText);
+  const system = compose_system_prompt(
+    get_system_prompt({ chain: state.autoContinue, cwd: process.cwd(), platform: `${os.platform()} ${os.release()}` }),
+    state.customSystemText,
+  );
   // The raw response of the in-flight round (captured by the model port for
   // the log/timeline mirror below; the core wiring only forwards stripped
   // text to its callbacks).
@@ -785,7 +790,7 @@ async function run_response_loop(
   // runs compose follow-ups continuously; everything else is stateless.
   const storage = create_cli_memory_storage(previousContext);
   // The execution contract is built once from the resolved limits (single
-  // owner in `./runtime-limits`): timeout/buffer flow to the injected
+  // owner in `@tell-ai/core`): timeout/buffer flow to the injected
   // executor, the output cap to delivered text, rounds to the loop budget.
   const exec_options = build_execution_options(state.limits);
   const executor = create_cli_executor({
@@ -800,10 +805,7 @@ async function run_response_loop(
     },
     onCommandOutput: (event) => {
       const capped = truncate_output(event.output, exec_options.max_output_bytes);
-      const result_text =
-        event.exit_code > 0
-          ? `Command failed (exit code ${event.exit_code}):\n${event.script}\nOutput:\n${capped}`
-          : `Executed command:\n${event.script}\nOutput:\n${capped}`;
+      const result_text = format_command_result(event.script, capped, event.exit_code);
       print_command_output(capped);
       append_log(log, result_text);
       remember_command_result(state, result_text);
@@ -813,7 +815,7 @@ async function run_response_loop(
       const disabled = event.reason === 'disabled';
       const result_text = disabled
         ? `Command execution disabled — not run:\n${event.script}`
-        : `Skipped by user:\n${event.script}`;
+        : format_command_skipped(event.script);
       if (disabled) {
         process.stderr.write('\x1b[33mCommand execution disabled (--no-exec).\x1b[0m\n');
       } else {
@@ -824,7 +826,7 @@ async function run_response_loop(
       if (state.saveContext) save_incremental_context(contextPath, previousContext, state);
     },
     onExecutorError: (event) => {
-      const result_text = `Command failed:\n${event.script}\nOutput:\n${event.error}`;
+      const result_text = format_command_result(event.script, event.error, null);
       append_log(log, result_text);
       remember_command_result(state, result_text);
       if (state.saveContext) save_incremental_context(contextPath, previousContext, state);
@@ -1069,7 +1071,7 @@ function resolve_runtime_limits(opts: CliOptions, cwd: string): RuntimeLimits {
       ...(opts.maxBuffer !== undefined ? { max_buffer_bytes: opts.maxBuffer } : {}),
       ...(opts.outputMaxBytes !== undefined ? { output_max_bytes: opts.outputMaxBytes } : {}),
     },
-    env: runtime_env_from_process(),
+    env: runtime_env_from_process(process.env),
     ...(project ? { project: { source: project.source, limits: project.limits } } : {}),
     ...(user ? { user: { source: user.source, limits: user.limits } } : {}),
   });
@@ -1307,7 +1309,7 @@ async function main() {
     // server keeps its own defaults. `--stdin-max-bytes`/`--output-max-bytes`
     // have no web target and stay CLI-only; a disabled stdin deadline (0) is
     // omitted because the web parser drops non-positive values.
-    const web_env = runtime_env_from_process();
+    const web_env = runtime_env_from_process(process.env);
     const web_stdin_flag_set =
       (opts.stdinTimeout !== undefined && (opts.stdinTimeout as unknown) !== false) ||
       opts.noStdinTimeout === true ||

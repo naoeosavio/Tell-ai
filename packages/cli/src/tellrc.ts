@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { TELLRC_LIMIT_KEYS, validate_tellrc_limit_value } from './runtime-limits';
+import { TELLRC_LIMIT_KEYS, validate_tellrc_limit_value } from '@tell-ai/core';
 
 /** Max bytes of a `.tellrc` file read before it is ignored with a warning. */
 export const TELLRC_MAX_BYTES = 256 * 1024;

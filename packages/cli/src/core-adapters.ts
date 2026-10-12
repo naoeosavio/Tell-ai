@@ -1,7 +1,5 @@
-import { exec } from 'node:child_process';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { promisify } from 'node:util';
 import {
   type ApprovalPort,
   assess_base_risk,
@@ -9,10 +7,8 @@ import {
   type CoreConfig,
   create_base_risk_port,
   create_core_runtime,
+  create_node_executor,
   EXEC_DEFAULT_TIMEOUT_MS,
-  EXEC_MAX_OUTPUT_BYTES,
-  EXEC_SHELL,
-  EXEC_TIMEOUT_EXIT_CODE,
   type ExecutorOptions,
   type ExecutorResult,
   LOOP_MAX_ROUNDS,
@@ -33,8 +29,6 @@ import { is_outside_cwd } from './mentions';
 /** Re-exported core runtime factory so the CLI consumes a single seam. */
 export { create_core_runtime, LOOP_MAX_ROUNDS };
 export type { CoreConfig, RuntimeCallbacks, TellResult };
-
-const EXEC_ASYNC = promisify(exec);
 
 /** Readline confirmation budget in milliseconds (mirrors the exec timeout, as before). */
 export const READLINE_CONFIRM_TIMEOUT_MS = EXEC_DEFAULT_TIMEOUT_MS;
@@ -188,60 +182,19 @@ export function script_touches_outside_cwd(script: string, cwd: string): boolean
 }
 
 /**
- * Runs one script through the promisified `exec` transport.
+ * Runs one script through the core Node executor.
  *
- * Single owner of the exec boundary: explicit `/bin/bash`, canonical
- * timeout/cap from core, scrubbed environment. The timeout wording
- * (`Command timed out after Ns`) and the exit codes match the historical
- * CLI behavior byte for byte.
+ * The CLI keeps no transport of its own: `create_node_executor` owns the
+ * explicit shell, the canonical timeout/cap, the scrubbed environment and
+ * the process-group kill on timeout, overflow or cancellation. The result
+ * contract (`stdout`, `stderr`, `exit_code`) is unchanged, so the historical
+ * CLI output shape below is preserved byte for byte.
  *
  * @param options - Executor options (script plus cwd/timeout/cap/env overrides).
  * @returns The raw process result (redaction happens at the runtime boundary).
  */
 async function run_exec_transport(options: ExecutorOptions): Promise<ExecutorResult> {
-  const timeout_ms = options.timeout_ms ?? EXEC_DEFAULT_TIMEOUT_MS;
-  const max_output_bytes = options.max_output_bytes ?? EXEC_MAX_OUTPUT_BYTES;
-  const merged: Record<string, string | undefined> = { ...process.env, ...(options.env ?? {}) };
-  const env = sanitize_exec_env(merged);
-  const is_cancelled = options.cancellation?.cancelled === true;
-  if (is_cancelled) {
-    throw new Error('cancelled');
-  } else {
-    try {
-      const { stdout, stderr } = await EXEC_ASYNC(options.script, {
-        cwd: options.cwd ?? process.cwd(),
-        maxBuffer: max_output_bytes,
-        shell: EXEC_SHELL,
-        timeout: timeout_ms,
-        env,
-      });
-      return { stdout, stderr, exit_code: 0 };
-    } catch (error) {
-      if (is_cancelled) {
-        throw new Error('cancelled');
-      } else {
-        const err = error as { code?: unknown; killed?: unknown; signal?: unknown; stdout?: unknown; stderr?: unknown };
-        const exit_code = typeof err.code === 'number' ? err.code : 1;
-        if (err.killed && err.signal === 'SIGTERM') {
-          const seconds = Math.round(timeout_ms / 1000);
-          return {
-            stdout: '',
-            stderr: `Command timed out after ${seconds}s:\n${options.script}`,
-            exit_code: EXEC_TIMEOUT_EXIT_CODE,
-          };
-        } else {
-          const stdout = typeof err.stdout === 'string' ? err.stdout : '';
-          const stderr = [
-            typeof err.stderr === 'string' ? err.stderr : '',
-            error instanceof Error ? error.message : String(error),
-          ]
-            .filter(Boolean)
-            .join('\n');
-          return { stdout, stderr, exit_code };
-        }
-      }
-    }
-  }
+  return create_node_executor()(options);
 }
 
 /**
@@ -264,23 +217,21 @@ export async function execute_command(script: string): Promise<CliCommandResult>
 }
 
 /**
- * Creates the CLI command executor port (promisified `exec` transport).
+ * Creates the CLI command executor port (the core Node executor).
  *
  * Honors per-call `cwd`/`timeout_ms`/`max_output_bytes`/`env`/`cancellation`
- * overrides; defaults mirror the historical CLI behavior (`process.cwd()`,
- * 120s, 32 MB, scrubbed `process.env`). A pre-cancelled token rejects
- * without spawning.
+ * overrides; constructor defaults mirror the historical CLI behavior (120s,
+ * 32 MB) while per-call values win. A pre-cancelled token rejects without
+ * spawning.
  *
  * @returns A `CommandExecutor` for runtime wiring (the loop still calls
  * `execute_command` until its own migration).
  */
 export function create_cli_executor(defaults?: { timeout_ms?: number; max_output_bytes?: number }): CommandExecutor {
-  return (options: ExecutorOptions): Promise<ExecutorResult> =>
-    run_exec_transport({
-      ...(defaults?.timeout_ms !== undefined ? { timeout_ms: defaults.timeout_ms } : {}),
-      ...(defaults?.max_output_bytes !== undefined ? { max_output_bytes: defaults.max_output_bytes } : {}),
-      ...options,
-    });
+  return create_node_executor({
+    ...(defaults?.timeout_ms !== undefined ? { timeout_ms: defaults.timeout_ms } : {}),
+    ...(defaults?.max_output_bytes !== undefined ? { max_output_bytes: defaults.max_output_bytes } : {}),
+  });
 }
 
 /**
