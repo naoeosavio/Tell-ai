@@ -1,6 +1,6 @@
-import { spawn } from 'node:child_process';
-import fs from 'node:fs';
-import path from 'node:path';
+import { spawn } from 'child_process';
+import fs from 'fs';
+import path from 'path';
 
 import type { CancellationToken, CommandExecutor, ExecutorOptions, ExecutorResult, Redactor } from './runtime-api';
 import { DEFAULT_EXEC_TIMEOUT_MS, DEFAULT_MAX_BUFFER_BYTES } from './runtime-limits';

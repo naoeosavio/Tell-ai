@@ -1,4 +1,4 @@
-import { homedir } from 'node:os';
+import { homedir } from 'os';
 import { load_sdk_config_from_env } from '@tell-ai/core';
 import type { SDKConfig } from '@tell-ai/sdk';
 

@@ -1,7 +1,7 @@
 /**
  * Stateful server-side chain runs for `POST /api/chain`.
  *
- * Pure in-memory store (only `node:crypto`), deliberately dependency-light
+ * Pure in-memory store (only `crypto`), deliberately dependency-light
  * like `guards.ts` so `test/test-web-backend.js` loads it directly. The
  * server keeps the pending script: confirm payloads carry only a
  * `decisionId`/`approvalId`, `expectedVersion` and `approve`|`skip` (validated
@@ -12,7 +12,7 @@
  * restart drops every run (fail-closed, never resumed blindly).
  */
 
-import crypto from 'node:crypto';
+import crypto from 'crypto';
 
 /** How long an idle run survives before reads report it as unknown. */
 export const CHAIN_TTL_MS = 15 * 60 * 1000;

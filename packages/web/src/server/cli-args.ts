@@ -1,4 +1,4 @@
-import path from 'node:path';
+import path from 'path';
 
 import { MAX_EXEC_TIMEOUT_MS, MIN_EXEC_TIMEOUT_MS } from '@tell-ai/core';
 

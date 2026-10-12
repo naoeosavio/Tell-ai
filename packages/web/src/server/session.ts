@@ -1,7 +1,7 @@
-import { execFile } from 'node:child_process';
-import fs from 'node:fs';
-import path from 'node:path';
-import { promisify } from 'node:util';
+import { execFile } from 'child_process';
+import fs from 'fs';
+import path from 'path';
+import { promisify } from 'util';
 import { canonical_path, canonical_write_path, sanitize_exec_env } from '@tell-ai/core';
 
 const execFileAsync = promisify(execFile);

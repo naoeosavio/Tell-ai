@@ -1,10 +1,10 @@
 /**
  * GC keep/kill policy + scrollback budget for Tell Web terminal panes.
- * Pure server-side helpers (only `node:fs`); `pty.ts` only wires them in.
+ * Pure server-side helpers (only `fs`); `pty.ts` only wires them in.
  * Linux-first: procfs child-probe, degrades to "idle" where /proc is absent.
  */
 
-import fs from 'node:fs';
+import fs from 'fs';
 
 // ---------------------------------------------------------------------------
 // Child-probe: /proc/<pid>/task/<pid>/children + /proc/<pid>/stat

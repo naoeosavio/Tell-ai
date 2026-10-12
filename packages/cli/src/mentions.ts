@@ -1,6 +1,6 @@
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import * as readline from 'node:readline';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as readline from 'readline';
 
 /** Max bytes of file content injected per mention before truncation. */
 export const MAX_MENTION_BYTES = 64 * 1024;

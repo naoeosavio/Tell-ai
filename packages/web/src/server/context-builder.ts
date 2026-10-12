@@ -1,4 +1,4 @@
-import path from 'node:path';
+import path from 'path';
 import { build_project_context, PROJECT_TREE_MAX_DEPTH } from '@tell-ai/core';
 import { get_system_prompt } from '@tell-ai/sdk';
 

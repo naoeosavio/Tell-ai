@@ -1,6 +1,6 @@
-import * as fs from 'node:fs';
-import * as os from 'node:os';
-import * as path from 'node:path';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 import { TELLRC_LIMIT_KEYS, validate_tellrc_limit_value } from '@tell-ai/core';
 

@@ -1,8 +1,8 @@
-import crypto from 'node:crypto';
-import fs from 'node:fs';
-import http from 'node:http';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import crypto from 'crypto';
+import fs from 'fs';
+import http from 'http';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import {
   build_sdk_config_from_env,
   canonical_path,

@@ -1,7 +1,7 @@
-import crypto from 'node:crypto';
-import type http from 'node:http';
-import type { IncomingMessage } from 'node:http';
-import type { Duplex } from 'node:stream';
+import crypto from 'crypto';
+import type http from 'http';
+import type { IncomingMessage } from 'http';
+import type { Duplex } from 'stream';
 import { sanitize_exec_env } from '@tell-ai/core';
 import { type IPty, spawn } from 'node-pty';
 import type { WebSocket } from 'ws';

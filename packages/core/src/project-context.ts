@@ -1,6 +1,6 @@
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { canonical_path } from './paths';
 
 /** Max project-tree depth (the working directory itself is depth 0). */

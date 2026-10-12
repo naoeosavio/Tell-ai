@@ -1,5 +1,5 @@
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readFile } from 'fs/promises';
+import { join } from 'path';
 import { is_wire_api, type SDKConfig, type SDKKeys, type SDKUrls, WIRE_APIS, type WireApi } from '@tell-ai/sdk';
 
 /** One vendor row of the environment mapping. */

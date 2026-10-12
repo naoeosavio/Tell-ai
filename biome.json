@@ -20,7 +20,8 @@
       "suspicious": "off",
       "style": {
         "recommended": true,
-        "useImportType": "error"
+        "useImportType": "error",
+        "useNodejsImportProtocol": "off"
       },
       "nursery": {
         "recommended": true,
@@ -35,6 +36,37 @@
       "a11y": "on"
     }
   },
+  "overrides": [
+    {
+      "includes": [
+        "packages/core/src/exec.ts",
+        "packages/core/src/paths.ts",
+        "packages/core/src/sdk-config.ts",
+        "packages/core/src/project-context.ts",
+        "packages/cli/src/Tell.ts",
+        "packages/cli/src/core-adapters.ts",
+        "packages/cli/src/env.ts",
+        "packages/cli/src/mentions.ts",
+        "packages/cli/src/history.ts",
+        "packages/cli/src/tellrc.ts",
+        "packages/web/src/server/server.ts",
+        "packages/web/src/server/session.ts",
+        "packages/web/src/server/context-builder.ts",
+        "packages/web/src/server/cli-args.ts",
+        "packages/web/src/server/pty-policy.ts",
+        "packages/web/src/server/chain-store.ts",
+        "packages/web/src/server/pty.ts",
+        "packages/web/vite.config.ts"
+      ],
+      "assist": {
+        "actions": {
+          "source": {
+            "organizeImports": "off"
+          }
+        }
+      }
+    }
+  ],
   "formatter": {
     "enabled": true,
     "lineEnding": "lf",

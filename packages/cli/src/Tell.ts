@@ -1,9 +1,9 @@
-import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import * as fs from 'node:fs';
-import * as os from 'node:os';
-import * as path from 'node:path';
-import * as readline from 'node:readline';
+import { spawn } from 'child_process';
+import { createHash } from 'crypto';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import * as readline from 'readline';
 import {
   build_execution_options,
   DEFAULT_CONTEXT_MAX_CHARS,
