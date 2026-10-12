@@ -45,6 +45,19 @@ describe('canonical_path', () => {
     assert.strictEqual(core.canonical_path(path.join(base, 'nope'), 'inside.txt'), null);
     assert.strictEqual(core.canonical_path(base, 'missing.txt'), null);
   });
+
+  it('never resolves through a symlinked base', () => {
+    // A symlinked anchor would move the whole base outside what the caller
+    // validated, so the base itself must not be a link.
+    const base = make_base();
+    const outside = make_base();
+    fs.writeFileSync(path.join(outside, 'secret.txt'), 'x');
+    const linked = path.join(base, 'root-link');
+    fs.symlinkSync(outside, linked, 'dir');
+    assert.strictEqual(core.canonical_path(linked, 'secret.txt'), null);
+    assert.strictEqual(core.canonical_write_path(linked, 'secret.txt'), null);
+    assert.strictEqual(core.canonical_write_path(linked, 'new.txt'), null);
+  });
 });
 
 describe('canonical_write_path', () => {
@@ -63,5 +76,20 @@ describe('canonical_write_path', () => {
     assert.strictEqual(core.canonical_write_path(base, ''), null);
     fs.symlinkSync(path.join(base, 'sub'), path.join(base, 'linkdir'));
     assert.strictEqual(core.canonical_write_path(base, path.join('linkdir', 'new.txt')), null);
+  });
+
+  it('anchors the leaf to the first missing parent when create_parents is set', () => {
+    const base = make_base();
+    assert.strictEqual(
+      core.canonical_write_path(base, path.join('.tell', 'history', 'a.json'), { create_parents: true }),
+      path.join(fs.realpathSync(base), '.tell', 'history', 'a.json'),
+    );
+    // An existing symlink on the way still fails closed.
+    fs.mkdirSync(path.join(base, 'real'));
+    fs.symlinkSync(path.join(base, 'real'), path.join(base, 'linkdir'));
+    assert.strictEqual(
+      core.canonical_write_path(base, path.join('linkdir', 'child', 'new.txt'), { create_parents: true }),
+      null,
+    );
   });
 });

@@ -196,10 +196,16 @@ describe('runtime limits: env keys are published, never read here', () => {
     ]);
   });
 
-  it('never binds process.env itself (reading is host-side)', () => {
-    // The CLI needs the reader inside vm sandboxes with a fake `process`, so
-    // the owner exports key names only.
-    assert.strictEqual(core.runtime_env_from_process, undefined);
+  it('reads env only through an explicit record (never binds process)', () => {
+    // The CLI needs the reader inside vm sandboxes with a fake `process`,
+    // so the owner takes the environment as a parameter and never references
+    // `process` itself — hosts pass their own record explicitly.
+    const owner = source('packages/core/src/runtime-limits.ts');
+    assert.ok(!/process\.env|process\.cwd|process\.argv/.test(owner), 'owner must not bind process');
+    assert.strictEqual(core.runtime_env_from_process.length, 1, 'reader takes exactly the env record');
+    assert.deepStrictEqual(core.runtime_env_from_process({ TELL_MAX_CHAIN_STEPS: '4' }), {
+      TELL_MAX_CHAIN_STEPS: '4',
+    });
   });
 
   it('still validates an env layer passed by the host', () => {
@@ -214,6 +220,17 @@ describe('runtime limits: public aliases stay equal to the owner', () => {
     assert.strictEqual(core.EXEC_MAX_OUTPUT_BYTES, core.DEFAULT_MAX_BUFFER_BYTES);
     assert.strictEqual(core.CORE_MAX_OUTPUT_BYTES, core.DEFAULT_MAX_BUFFER_BYTES);
     assert.strictEqual(core.LOOP_MAX_ROUNDS, core.DEFAULT_MAX_CHAIN_STEPS);
+  });
+
+  it('hosts the CLI exit statuses and stdin failures too', () => {
+    assert.strictEqual(core.EXIT_SUCCESS, 0);
+    assert.strictEqual(core.EXIT_MODEL_ERROR, 1);
+    assert.strictEqual(core.EXIT_TIMEOUT, 124);
+    assert.strictEqual(core.EXIT_LIMIT, 125);
+    const timeout = new core.StdinLimitError('timeout', 'timed out');
+    assert.strictEqual(timeout.exit_code, 124);
+    const overflow = new core.StdinLimitError('overflow', 'too big');
+    assert.strictEqual(overflow.exit_code, 125);
   });
 });
 
@@ -252,11 +269,69 @@ describe('runtime limits: no host restates a limit literal', () => {
     }
   });
 
-  it('leaves the CLI module a pure facade over the core owner', () => {
-    const facade = source('packages/cli/src/runtime-limits.ts');
-    for (const [literal] of forbidden) {
-      assert.ok(!facade.includes(literal), `CLI facade must not restate ${literal}`);
+  it('leaves no CLI runtime-limits module (Tell/tellrc import the owner)', () => {
+    assert.ok(!fs.existsSync(path.join(REPO, 'packages', 'cli', 'src', 'runtime-limits.ts')), 'CLI module must be gone');
+    for (const file of ['packages/cli/src/Tell.ts', 'packages/cli/src/tellrc.ts']) {
+      const text = source(file);
+      assert.ok(text.includes("from '@tell-ai/core'"), `${file} must import the core owner`);
+      assert.ok(!text.includes("from './runtime-limits'"), `${file} must not import a local module`);
     }
-    assert.ok(facade.includes("from '@tell-ai/core'"), 'facade must re-export the core owner');
+  });
+});
+
+describe('runtime limits: web payload caps and env scrub have one owner', () => {
+  const guards = 'packages/web/src/server/guards.ts';
+
+  it('leaves the child-environment denylist only in the core', () => {
+    const text = source(guards);
+    assert.ok(!text.includes('SENSITIVE_ENV_NAMES'), 'guards must not redeclare the denylist');
+    assert.ok(!text.includes('SENSITIVE_ENV_SUFFIX'), 'guards must not redeclare the suffix rule');
+    assert.ok(!text.includes('sanitizeChildEnv'), 'guards must not wrap the core scrubber');
+    assert.ok(
+      text.includes("from '@tell-ai/core'"),
+      'guards must import the shared policies from the core',
+    );
+  });
+
+  it('keeps the three payload caps as aliases of the core owner', () => {
+    const text = source(guards);
+    for (const name of ['TELL_MAX_MESSAGES', 'TELL_MAX_CONTENT_CHARS', 'TELL_MAX_SYSTEM_CHARS']) {
+      assert.ok(!new RegExp(`${name}\\s*=\\s*[\\d'"]`).test(text), `${name} must not carry a literal`);
+    }
+    assert.strictEqual(core.PAYLOAD_MAX_MESSAGES, 200);
+    assert.strictEqual(core.PAYLOAD_MAX_CONTENT_CHARS, 50 * 1024);
+    assert.strictEqual(core.PAYLOAD_MAX_SYSTEM_CHARS, 30 * 1024);
+  });
+
+  it('has every host importing the scrubber instead of restating it', () => {
+    // The Web server scrubs through the core executor it runs (`core_execute`);
+    // the PTY/session helpers call the scrubber directly.
+    for (const file of ['packages/web/src/server/pty.ts', 'packages/web/src/server/session.ts']) {
+      const text = source(file);
+      assert.ok(text.includes('sanitize_exec_env'), `${file} must use the core scrubber`);
+      assert.ok(!text.includes('sanitizeChildEnv'), `${file} must not keep the local wrapper`);
+    }
+    const server = source('packages/web/src/server/server.ts');
+    assert.ok(server.includes('create_node_executor'), 'server must run the core executor');
+    assert.ok(!server.includes('sanitizeChildEnv'), 'server must not keep the local wrapper');
+    assert.ok(!server.includes('execAsync'), 'server must not keep a local exec transport');
+  });
+});
+
+describe('runtime limits: the timeout message has one wording', () => {
+  it('formats seconds plus the script', () => {
+    assert.strictEqual(core.format_timeout_message('sleep 5', 1000), 'Command timed out after 1s:\nsleep 5');
+    assert.strictEqual(core.format_timeout_message('sleep 5', 45_000), 'Command timed out after 45s:\nsleep 5');
+  });
+
+  it('leaves no host restating the timeout wording', () => {
+    // Both hosts inherit the wording through the core executor
+    // (`create_node_executor`), so none of them may assemble it.
+    const adapters = source('packages/cli/src/core-adapters.ts');
+    assert.ok(!adapters.includes('Process timed out after'), 'CLI must not keep the old wording');
+    assert.ok(!/timed out after \$\{/s.test(adapters), 'CLI must not build the message inline');
+    const server = source('packages/web/src/server/server.ts');
+    assert.ok(!server.includes('Process timed out after'), 'server must not keep the old wording');
+    assert.ok(!/timed out after \$\{/s.test(server), 'server must not build the message inline');
   });
 });

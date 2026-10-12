@@ -107,6 +107,27 @@ describe('create_node_executor limits', () => {
     assert.ok(elapsed < 4000, `took ${elapsed}ms`);
   });
 
+  it('carries the script in the timeout message, through the owner formatter', async () => {
+    const executor = core.create_node_executor();
+    const result = await executor({ script: 'sleep 5', timeout_ms: 300 });
+    assert.strictEqual(result.stderr, core.format_timeout_message('sleep 5', 300));
+    assert.strictEqual(core.format_timeout_message('sleep 5', 1000), 'Command timed out after 1s:\nsleep 5');
+  });
+
+  it('kills the whole process group on timeout, leaving no orphans', async () => {
+    const executor = core.create_node_executor();
+    const marker = `core-orphan-${process.pid}-${Date.now()}`;
+    // Background child shares the detached group; without `kill(-pid)` it
+    // would survive the timeout and keep the marker file fresh.
+    const script = `rm -f /tmp/${marker}; sleep 30 & echo started; sleep 30`;
+    const result = await executor({ script, timeout_ms: 800 });
+    assert.strictEqual(result.exit_code, core.EXEC_TIMEOUT_EXIT_CODE);
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    const { execFileSync } = require('node:child_process');
+    const ps = execFileSync('ps', ['-eo', 'args'], { encoding: 'utf8' });
+    assert.ok(!ps.includes('sleep 30'), 'timed-out sleepers must be gone');
+  });
+
   it('cancels mid-run through the structural token', async () => {
     const token = core.create_cancellation_token();
     const executor = core.create_node_executor();
