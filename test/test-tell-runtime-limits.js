@@ -1,6 +1,6 @@
 // test-tell-runtime-limits.js
 //
-// Coverage for the runtime-limits owner (`packages/cli/src/runtime-limits.ts`)
+// Coverage for the runtime-limits owner (`packages/core/src/runtime-limits.ts`)
 // plus its CLI wiring in `packages/cli/src/Tell.ts`: defaults, precedence
 // flag > env > project > user > default, zero-timeout disable, invalid values
 // (exit 2), stdin timeout/bytes (124/125), output caps/markers, exit status
@@ -23,7 +23,7 @@ function load_module(rel, export_names) {
   return out;
 }
 
-const rl = load_module('packages/cli/src/runtime-limits.ts', [
+const rl = load_module('packages/core/src/runtime-limits.ts', [
   'parse_runtime_limits',
   'truncate_context',
   'truncate_output',
@@ -269,7 +269,8 @@ check('execution options map to core ports', () => {
 // --- CLI wiring: Tell.ts consumes the contract (no second constant/state machine) ---
 check('Tell.ts reuses runtime-limits and has no blind slice', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'packages', 'cli', 'src', 'Tell.ts'), 'utf8');
-  assert.ok(src.includes("from './runtime-limits'"));
+  assert.ok(src.includes("from '@tell-ai/core'"), 'Tell.js reads the limit contract from the owner');
+  assert.ok(!src.includes("from './runtime-limits'"), 'no CLI facade module remains');
   assert.ok(src.includes('truncate_context'));
   assert.ok(src.includes('truncate_output'));
   assert.ok(src.includes('parse_runtime_limits'));
@@ -336,25 +337,27 @@ check('Tell.ts forwards CLI limit flags to tell-web (no silent drop)', () => {
   assert.ok(src.includes("child_args.push('--exec-timeout'"));
 });
 
-check('CLI harnesses compile ./runtime-limits (no MODULE_NOT_FOUND)', () => {
+check('CLI harnesses read the owner directly (no local module to mock)', () => {
   for (const file of ['test-tell-security.js', 'test-tell-context.js', 'test-tell-stream.js', 'test-tell-mentions.js']) {
     const src = fs.readFileSync(path.join(__dirname, file), 'utf8');
-    assert.ok(src.includes('runtime-limits'), `${file} must mock ./runtime-limits`);
+    assert.ok(!src.includes('./runtime-limits'), `${file} must not mock a local module`);
+    assert.ok(src.includes("'@tell-ai/core'"), `${file} must read the core owner`);
   }
 });
 
-// The CLI module is a facade: the contract (defaults, ranges, parse,
-// truncate) is owned by `@tell-ai/core`, so the CLI must not restate a value
-// and its tellrc keys must be the ones the core publishes.
-check('CLI runtime-limits is a facade over the core owner', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'packages', 'cli', 'src', 'runtime-limits.ts'), 'utf8');
-  assert.ok(src.includes("from '@tell-ai/core'"), 'the facade must re-export the core owner');
-  for (const literal of ['120_000', '32 * 1024 * 1024', '1_048_576', '204_800', '64 * 1024', '30_000']) {
-    assert.ok(!src.includes(literal), `the CLI facade must not restate ${literal}`);
-  }
-  assert.ok(src.includes('StdinLimitError'), 'stdin failures stay host-owned');
-  assert.ok(src.includes('runtime_env_from_process'), 'env reading stays host-side');
-  assert.ok(!src.includes('TELL_LIMIT_ENV_KEYS = ['), 'the key list is owned by the core');
+// No CLI module remains: the whole contract (defaults, ranges, parse,
+// truncate, stdin failures, exit statuses, env reading) is owned by
+// `@tell-ai/core`, so the CLI must not restate a value and its tellrc keys
+// must be the ones the core publishes.
+check('no CLI runtime-limits module remains (core owns the contract)', () => {
+  assert.ok(
+    !fs.existsSync(path.join(__dirname, '..', 'packages', 'cli', 'src', 'runtime-limits.ts')),
+    'the CLI module must be gone',
+  );
+  const owner = fs.readFileSync(path.join(__dirname, '..', 'packages', 'core', 'src', 'runtime-limits.ts'), 'utf8');
+  assert.ok(owner.includes('StdinLimitError'), 'stdin failures are owned by the core');
+  assert.ok(owner.includes('runtime_env_from_process'), 'env reading is owned by the core');
+  assert.ok(!/process\.env|process\.cwd|process\.argv/.test(owner), 'the owner never binds process itself');
 });
 
 // Host-env hermeticity: the CLI suites copy `process.env` into a fake process,
@@ -370,7 +373,7 @@ check('CLI sandboxes purge host TELL_* limit vars (hermetic suite)', () => {
   }
 });
 
-check('facade limits and tellrc keys match the core owner', () => {
+check('owner limits and tellrc keys match the loaded contract', () => {
   const core = require('@tell-ai/core');
   assert.deepEqual(core.TELLRC_LIMIT_KEYS.slice().sort(), rl.TELLRC_LIMIT_KEYS.slice().sort());
   assert.equal(rl.parse_runtime_limits({}).context_max_chars, core.DEFAULT_CONTEXT_MAX_CHARS);

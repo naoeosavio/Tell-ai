@@ -79,14 +79,6 @@ const tellrc_source = ts.transpileModule(
   { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } },
 ).outputText;
 
-// `./runtime-limits` is required by Tell.js at load time (single owner of
-// limits/truncate); compile it into the same vm sandbox on demand, like
-// `./mentions`.
-const runtime_limits_source = ts.transpileModule(
-  fs.readFileSync(path.join(__dirname, '..', 'packages', 'cli', 'src', 'runtime-limits.ts'), 'utf8'),
-  { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } },
-).outputText;
-
 function fake_stdin(text) {
   const stdin = new EventEmitter();
   stdin.isTTY = false;
@@ -184,6 +176,17 @@ async function run_tell(args, response, opts = {}) {
     return { stdout: opts.execStdout || '', stderr: opts.execStderr || '' };
   };
 
+  // The CLI transport is the real core executor (`create_node_executor`), so
+  // the vm-loaded `core-adapters` gets a recording stand-in for it: the rest
+  // of `@tell-ai/core` stays real, but no command ever runs for real inside
+  // the sandbox.
+  function mock_create_node_executor() {
+    return async (options) => {
+      exec_calls.push(options.script);
+      return { stdout: opts.execStdout || '', stderr: opts.execStderr || '', exit_code: opts.execExitCode ?? 0 };
+    };
+  }
+
   const spawn_calls = [];
   function mock_spawn(cmd, args, options) {
     const child = new EventEmitter();
@@ -212,11 +215,15 @@ async function run_tell(args, response, opts = {}) {
     }
     if (name === './core-adapters') {
       const adapters_module = { exports: {} };
+      const adapters_require = (specifier) => {
+        if (specifier === '@tell-ai/core') return { ...core, create_node_executor: mock_create_node_executor };
+        return mock_require(specifier);
+      };
       const factory = vm.runInContext(
         `(function(require, module, exports) {${core_adapters_source}\n})`,
         active_context,
       );
-      factory(mock_require, adapters_module, adapters_module.exports);
+      factory(adapters_require, adapters_module, adapters_module.exports);
       return adapters_module.exports;
     }
     if (name === './tellrc') {
@@ -225,14 +232,11 @@ async function run_tell(args, response, opts = {}) {
       factory(mock_require, tellrc_module, tellrc_module.exports);
       return tellrc_module.exports;
     }
-    if (name === './runtime-limits') {
-      const runtime_limits_module = { exports: {} };
-      const factory = vm.runInContext(
-        `(function(require, module, exports) {${runtime_limits_source}\n})`,
-        active_context,
-      );
-      factory(mock_require, runtime_limits_module, runtime_limits_module.exports);
-      return runtime_limits_module.exports;
+    if (name === '@tell-ai/core') {
+      // Tell.js reads the limit contract straight from the owner; the pure
+      // helpers are real, and `runtime_env_from_process` always receives the
+      // fake process env explicitly from Tell.js, never a default binding.
+      return core;
     }
     if (name === '@tell-ai/sdk') {
       return {

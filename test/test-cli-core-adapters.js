@@ -143,9 +143,9 @@ describe('cli executor preserves the historical output shape', () => {
   });
 
   it('reports non-zero exits with the exit code', async () => {
-    const result = await adapters.execute_command("node -e \"process.exit(3)\"");
+    const result = await adapters.execute_command("node -e \"console.error('boom'); process.exit(3)\"");
     assert.strictEqual(result.exitCode, 3);
-    assert.ok(result.output.length > 0);
+    assert.match(result.output, /boom/);
   });
 
   it('honors per-call env, cwd, timeout and cancellation overrides', async () => {
@@ -185,7 +185,7 @@ describe('cli executor preserves the historical output shape', () => {
     const capped = adapters.create_cli_executor({ max_output_bytes: 100 });
     const overflow = await capped({ script: "node -e \"process.stdout.write('y'.repeat(5000))\"" });
     assert.notStrictEqual(overflow.exit_code, 0);
-    assert.match(overflow.stderr, /maxBuffer/i);
+    assert.match(overflow.stderr, /output exceeded 100 bytes/);
   });
 
   it('prefers per-call overrides over constructor defaults', async () => {

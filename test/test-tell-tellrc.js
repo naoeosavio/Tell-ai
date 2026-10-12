@@ -50,7 +50,9 @@ function load_cli_args_module() {
 }
 
 const tellrc = load_cli_module('tellrc');
-const runtime_limits = load_cli_module('runtime-limits');
+// The limit contract lives in the core now (tellrc.ts imports it from
+// `@tell-ai/core`, resolved through the real built package below).
+const runtime_limits = require('@tell-ai/core');
 const cli_args = load_cli_args_module();
 
 function test_missing_file_is_silent() {

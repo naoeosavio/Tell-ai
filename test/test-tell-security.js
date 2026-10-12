@@ -73,14 +73,6 @@ const tellrcSource = ts.transpileModule(
   { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } },
 ).outputText;
 
-// `./runtime-limits` is required by Tell.js at load time (single owner of
-// limits/truncate); compile it into the same vm sandbox on demand, like
-// `./mentions`.
-const runtimeLimitsSource = ts.transpileModule(
-  fs.readFileSync(path.join(__dirname, '..', 'packages', 'cli', 'src', 'runtime-limits.ts'), 'utf8'),
-  { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } },
-).outputText;
-
 function fakeStdin(text) {
   const stdin = new EventEmitter();
   stdin.isTTY = false;
@@ -143,6 +135,21 @@ async function runTell(args, response, opts = {}) {
     return { stdout: opts.execStdout || '', stderr: opts.execStderr || '' };
   };
 
+  // The CLI transport is the real core executor (`create_node_executor`), so
+  // the vm-loaded `core-adapters` gets a recording stand-in for it: the rest
+  // of `@tell-ai/core` stays real (risk, config, scrub), but no command ever
+  // runs for real inside the sandbox. The env is merged over the fake process
+  // env and scrubbed exactly like the core does, so the scrub assertions keep
+  // proving the CLI forwards a clean environment.
+  function mockCreateNodeExecutor(defaults = {}) {
+    return async (options) => {
+      execCalls.push(options.script);
+      const merged = { ...fakeProcess.env, ...(defaults.env ?? {}), ...(options.env ?? {}) };
+      execOptions.push({ ...options, env: core.sanitize_exec_env(merged) });
+      return { stdout: opts.execStdout || '', stderr: opts.execStderr || '', exit_code: opts.execExitCode ?? 0 };
+    };
+  }
+
   const spawnCalls = [];
   function mockSpawn(cmd, args, options) {
     const child = new EventEmitter();
@@ -171,11 +178,15 @@ async function runTell(args, response, opts = {}) {
     }
     if (name === './core-adapters') {
       const adaptersModule = { exports: {} };
+      const adaptersRequire = (specifier) => {
+        if (specifier === '@tell-ai/core') return { ...core, create_node_executor: mockCreateNodeExecutor };
+        return mockRequire(specifier);
+      };
       const factory = vm.runInContext(
         `(function(require, module, exports) {${coreAdaptersSource}\n})`,
         activeContext,
       );
-      factory(mockRequire, adaptersModule, adaptersModule.exports);
+      factory(adaptersRequire, adaptersModule, adaptersModule.exports);
       return adaptersModule.exports;
     }
     if (name === './tellrc') {
@@ -184,14 +195,11 @@ async function runTell(args, response, opts = {}) {
       factory(mockRequire, tellrcModule, tellrcModule.exports);
       return tellrcModule.exports;
     }
-    if (name === './runtime-limits') {
-      const runtimeLimitsModule = { exports: {} };
-      const factory = vm.runInContext(
-        `(function(require, module, exports) {${runtimeLimitsSource}\n})`,
-        activeContext,
-      );
-      factory(mockRequire, runtimeLimitsModule, runtimeLimitsModule.exports);
-      return runtimeLimitsModule.exports;
+    if (name === '@tell-ai/core') {
+      // Tell.js reads the limit contract straight from the owner; the pure
+      // helpers are real, and `runtime_env_from_process` always receives the
+      // fake process env explicitly from Tell.js, never a default binding.
+      return core;
     }
     if (name === '@tell-ai/sdk') {
       return {
