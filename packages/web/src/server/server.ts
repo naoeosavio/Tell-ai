@@ -1,22 +1,20 @@
-import { exec } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
-import { DEFAULT_EXEC_TIMEOUT_MS, DEFAULT_MAX_BUFFER_BYTES, validate_chain_decision_payload } from '@tell-ai/core';
 import {
-  create_ask_ai,
-  extract_runs,
-  get_model,
-  is_wire_api,
-  MODELS,
-  resolve_model_spec,
-  type SDKConfig,
-  WIRE_APIS,
-  type WireApi,
-} from '@tell-ai/sdk';
+  build_sdk_config_from_env,
+  canonical_path,
+  canonical_write_path,
+  create_node_executor,
+  DEFAULT_EXEC_TIMEOUT_MS,
+  DEFAULT_MAX_BUFFER_BYTES,
+  format_command_skipped,
+  format_executed_command,
+  validate_chain_decision_payload,
+} from '@tell-ai/core';
+import { create_ask_ai, extract_runs, get_model, MODELS, resolve_model_spec } from '@tell-ai/sdk';
 import { generateText } from 'ai';
 import { config as loadEnv } from 'dotenv';
 import express from 'express';
@@ -35,10 +33,8 @@ import {
   isValidTokenInput,
   normalizeApiPath,
   resolveStreamMode,
-  sanitizeChildEnv,
   validateTellPayload,
 } from './guards';
-import { resolveWithin } from './paths';
 import { attachTerminalServer, getScrollback } from './pty';
 import { configureScrollbackMax } from './pty-policy';
 import {
@@ -51,7 +47,8 @@ import {
   type TellSession,
 } from './session';
 
-const execAsync = promisify(exec);
+/** Single executor for the sandbox: the core owns shell/timeout/cap and kills the process group. */
+const core_execute = create_node_executor();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 
@@ -162,84 +159,12 @@ const ALLOWED_HOSTS = new Set(
 if (!['0.0.0.0', '::', '[::]'].includes(HOST.toLowerCase())) ALLOWED_HOSTS.add(HOST.toLowerCase());
 configureScrollbackMax(Number(process.env['TELL_SCROLLBACK_MAX']) || undefined);
 
-// Trimmed env value, empty/missing as undefined.
-function env(name: string): string | undefined {
-  const value = (process.env[name] ?? '').trim();
-  return value || undefined;
-}
-
-// API keys / base URLs are injected into the SDK (it never reads process.env).
-function load_sdk_config_from_env(): SDKConfig {
-  return {
-    keys: {
-      openai: env('OPENAI_API_KEY'),
-      anthropic: env('ANTHROPIC_API_KEY'),
-      google: env('GOOGLE_API_KEY') || env('GEMINI_API_KEY'),
-      xai: env('XAI_API_KEY'),
-      deepseek: env('DEEPSEEK_API_KEY'),
-      cerebras: env('CEREBRAS_API_KEY'),
-      moonshotai: env('MOONSHOTAI_API_KEY'),
-      openrouter: env('OPENROUTER_API_KEY'),
-      alibaba: env('ALIBABA_API_KEY'),
-      zhipu: env('ZHIPU_API_KEY'),
-      meta: env('META_API_KEY'),
-      xiaomi: env('MIMO_API_KEY'),
-      custom: env('CUSTOM_API_KEY'),
-    },
-    urls: {
-      openai: env('OPENAI_BASE_URL') || 'https://api.openai.com/v1',
-      anthropic: env('ANTHROPIC_BASE_URL') || 'https://api.anthropic.com/v1',
-      google: env('GOOGLE_BASE_URL') || 'https://generativelanguage.googleapis.com/v1beta',
-      xai: env('XAI_BASE_URL') || 'https://api.x.ai/v1',
-      deepseek: env('DEEPSEEK_BASE_URL') || 'https://api.deepseek.com',
-      cerebras: env('CEREBRAS_BASE_URL') || 'https://api.cerebras.ai/v1',
-      moonshotai: env('MOONSHOTAI_BASE_URL') || 'https://api.moonshot.ai/v1',
-      openrouter: env('OPENROUTER_BASE_URL') || 'https://openrouter.ai/api/v1',
-      alibaba: env('ALIBABA_BASE_URL') || 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
-      zhipu: env('ZHIPU_BASE_URL') || 'https://api.z.ai/api/paas/v4',
-      meta: env('META_BASE_URL') || 'https://api.meta.ai/v1',
-      xiaomi: env('MIMO_BASE_URL') || 'https://api.xiaomimimo.com/v1',
-      custom: env('CUSTOM_BASE_URL'),
-      vast: env('VAST_BASE_URL'),
-      local: env('LOCAL_OPENAI_BASE_URL'),
-    },
-  };
-}
-
-const SDK_CONFIG = load_sdk_config_from_env();
-
-// `custom` knobs are optional: each one only reaches the SDK when set, so an
-// invalid value fails loudly on the request instead of silently falling back.
-// Mirrors `load_sdk_config` in the CLI (`packages/cli/src/env.ts`).
-function custom_wire_from_env(): WireApi | undefined {
-  const value = env('CUSTOM_API');
-  if (!value) return undefined;
-  if (!is_wire_api(value)) {
-    throw new Error(`CUSTOM_API must be one of: ${WIRE_APIS.join(', ')} (got "${value}")`);
-  }
-  return value;
-}
-
-function custom_headers_from_env(): Record<string, string> {
-  const value = env('CUSTOM_HEADERS');
-  if (!value) return {};
-  const hint = 'CUSTOM_HEADERS must be a JSON object, e.g. \'{"x-tenant":"acme"}\'';
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    throw new Error(hint);
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error(hint);
-  return Object.fromEntries(Object.entries(parsed).map(([name, header]) => [name, String(header)]));
-}
-
-const custom_model = env('CUSTOM_MODEL');
-if (custom_model) SDK_CONFIG.models = { custom: custom_model };
-const custom_wire = custom_wire_from_env();
-if (custom_wire) SDK_CONFIG.wires = { custom: custom_wire };
-const custom_headers = custom_headers_from_env();
-if (Object.keys(custom_headers).length > 0) SDK_CONFIG.headers = { custom: custom_headers };
+// API keys / base URLs are injected into the SDK (it never reads
+// process.env). The mapping is owned by `@tell-ai/core` — the server uses the
+// synchronous builder (no token files, the fallback the CLI keeps) so the
+// boot stays a plain module evaluation. Invalid `CUSTOM_API`/`CUSTOM_HEADERS`
+// throw here, failing the boot.
+const SDK_CONFIG = build_sdk_config_from_env(process.env);
 const RETAINED_SERVER_ENV = new Set([
   'COLORTERM',
   'FORCE_COLOR',
@@ -518,7 +443,7 @@ app.get('/api/file', (req, res) => {
     return res.status(400).json({ error: 'File path is required' });
   }
 
-  const resolvedPath = resolveWithin(CWD, filePath);
+  const resolvedPath = canonical_path(CWD, filePath);
   if (!resolvedPath) {
     return res.status(403).json({ error: 'Access denied: Directory traversal blocked' });
   }
@@ -552,7 +477,7 @@ app.get('/api/file/raw', (req, res) => {
     return res.status(400).json({ error: 'File path is required' });
   }
 
-  const resolvedPath = resolveWithin(CWD, filePath);
+  const resolvedPath = canonical_path(CWD, filePath);
   if (!resolvedPath) {
     return res.status(403).json({ error: 'Access denied: Directory traversal blocked' });
   }
@@ -601,7 +526,7 @@ app.post('/api/save-file', (req, res) => {
     return res.status(400).json({ error: 'expectedMtime must be a number' });
   }
 
-  const resolvedPath = resolveWithin(CWD, filePath);
+  const resolvedPath = canonical_write_path(CWD, filePath, { create_parents: true });
   if (!resolvedPath) {
     return res.status(403).json({ error: 'Access denied: Directory traversal blocked' });
   }
@@ -616,7 +541,7 @@ app.post('/api/save-file', (req, res) => {
       return res.status(409).json({ error: 'File was deleted since it was loaded. Reload before saving.' });
     }
     if (!hasExpectedMtime) fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
-    if (!resolveWithin(CWD, filePath)) {
+    if (!canonical_write_path(CWD, filePath, { create_parents: true })) {
       return res.status(403).json({ error: 'Access denied: Directory traversal blocked' });
     }
     const writeFlags = fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK;
@@ -690,25 +615,22 @@ app.post('/api/execute', async (req, res) => {
   serverState.commandsRun += 1;
   activeExecutions += 1;
   try {
-    const { stdout, stderr } = await execAsync(command, {
+    // One executor for the sandbox: the core owns the shell, the timeout and
+    // the output cap, and kills the whole process group on timeout — `cmd &`
+    // can no longer outlive the request.
+    const result = await core_execute({
+      script: command,
       cwd: CWD,
-      maxBuffer: EXEC_MAX_BUFFER,
-      shell: '/bin/bash',
-      timeout: EXEC_TIMEOUT_MS,
-      env: sanitizeChildEnv(process.env),
+      timeout_ms: EXEC_TIMEOUT_MS,
+      max_output_bytes: EXEC_MAX_BUFFER,
     });
     const truncate = (text: string) =>
       text.length > EXEC_OUTPUT_LIMIT ? `${text.slice(0, EXEC_OUTPUT_LIMIT)}\n[truncated]` : text;
-    return res.json({ output: truncate(stdout) + truncate(stderr) });
+    return res.json({ output: truncate(result.stdout) + truncate(result.stderr) });
   } catch (error: any) {
-    const output = [
-      error.stdout || '',
-      error.stderr || '',
-      error.killed ? `Process timed out after ${EXEC_TIMEOUT_MS}ms` : error.message || '',
-    ]
-      .filter(Boolean)
-      .join('\n');
-    return res.json({ output: output.slice(0, EXEC_OUTPUT_LIMIT + 32) });
+    // The executor only throws for spawn/cancellation failures, never for a
+    // command exit status — report the message the same way the old path did.
+    return res.json({ output: String(error?.message ?? error).slice(0, EXEC_OUTPUT_LIMIT + 32) });
   } finally {
     activeExecutions -= 1;
   }
@@ -1229,7 +1151,7 @@ app.post('/api/chain/:runId/confirm', async (req, res) => {
     dropContinuationIfTerminal(runId, snapshot);
     return res.status(403).json({ error: 'high-risk script blocked without execution', run: snapshot });
   } else if (validation.value.decision === 'skip') {
-    chainStore.pushMessage(runId, { role: 'user', content: `Skipped by user:\n${script}` });
+    chainStore.pushMessage(runId, { role: 'user', content: format_command_skipped(script) });
     const skipped = chainStore.finishConfirm(runId, decisionId, {
       type: 'skipped',
       script,
@@ -1255,25 +1177,29 @@ app.post('/api/chain/:runId/confirm', async (req, res) => {
     serverState.commandsRun += 1;
     activeExecutions += 1;
     try {
-      const { stdout, stderr } = await execAsync(script, {
+      // Same core executor as /api/execute: the exit status never throws, so
+      // success and failure share one feedback path (the message keeps the
+      // executed wording in both cases, the snapshot carries the real code).
+      const result = await core_execute({
+        script,
         cwd: CWD,
-        maxBuffer: EXEC_MAX_BUFFER,
-        shell: '/bin/bash',
-        timeout: EXEC_TIMEOUT_MS,
-        env: sanitizeChildEnv(process.env),
+        timeout_ms: EXEC_TIMEOUT_MS,
+        max_output_bytes: EXEC_MAX_BUFFER,
       });
       const truncate = (text: string) =>
         text.length > EXEC_OUTPUT_LIMIT ? `${text.slice(0, EXEC_OUTPUT_LIMIT)}\n[truncated]` : text;
-      const output = truncate(stdout) + truncate(stderr);
+      const output = truncate(result.stdout) + truncate(result.stderr);
       chainStore.pushMessage(runId, {
         role: 'user',
-        content: `Executed command:\n${script}\nOutput:\n${truncateChainFeedbackTail(output)}`,
+        content: format_executed_command(script, truncateChainFeedbackTail(output)),
       });
+      // A failing command self-heals through the next model turn (same
+      // protocol as the CLI chain), it does not fail the run.
       const executed = chainStore.finishConfirm(runId, decisionId, {
         type: 'executed',
         script,
         output,
-        exitCode: 0,
+        exitCode: result.exit_code,
         status: 'running',
       });
       if (executed === null) {
@@ -1289,39 +1215,11 @@ app.post('/api/chain/:runId/confirm', async (req, res) => {
         return res.json(settled ?? continued ?? executed);
       }
     } catch (error: any) {
-      const output = [
-        error.stdout || '',
-        error.stderr || '',
-        error.killed ? `Process timed out after ${EXEC_TIMEOUT_MS}ms` : error.message || '',
-      ]
-        .filter(Boolean)
-        .join('\n');
-      const capped = output.slice(0, EXEC_OUTPUT_LIMIT + 32);
-      chainStore.pushMessage(runId, {
-        role: 'user',
-        content: `Executed command:\n${script}\nOutput:\n${truncateChainFeedbackTail(capped)}`,
-      });
-      // A failing command self-heals through the next model turn (same
-      // protocol as the CLI chain), it does not fail the run.
-      const failed = chainStore.finishConfirm(runId, decisionId, {
-        type: 'executed',
-        script,
-        output: capped,
-        exitCode: typeof error.code === 'number' ? error.code : 1,
-        status: 'running',
-      });
-      if (failed === null) {
-        return res.status(404).json({ error: 'Unknown or expired chain run' });
-      } else if (failed.status === 'cancelled') {
-        const settled = chainStore.settleDecision(runId, decisionId);
-        dropContinuationIfTerminal(runId, settled ?? failed);
-        return res.json(settled ?? failed);
-      } else {
-        const continued = await continueChainAfterConfirm(runId);
-        const settled = chainStore.settleDecision(runId, decisionId);
-        dropContinuationIfTerminal(runId, settled ?? continued);
-        return res.json(settled ?? continued ?? failed);
-      }
+      // Spawn/cancellation failure only (exit statuses never throw): fail
+      // closed without recording a fabricated execution.
+      const snapshot = denyChainScript(runId, decisionId, script, 'executor-error', String(error?.message ?? error));
+      dropContinuationIfTerminal(runId, snapshot);
+      return res.status(500).json({ error: 'command executor failed', run: snapshot });
     } finally {
       activeExecutions -= 1;
     }
@@ -1396,7 +1294,7 @@ app.get('/api/session/history/:name', (req, res) => {
   if (!name.endsWith('.json')) {
     return res.status(400).json({ error: 'Invalid snapshot name' });
   }
-  const full = resolveWithin(CWD, path.join('.tell', 'history', name));
+  const full = canonical_path(CWD, path.join('.tell', 'history', name));
   if (!full) {
     return res.status(400).json({ error: 'Invalid snapshot name' });
   }
@@ -1421,7 +1319,7 @@ app.delete('/api/session/history/:name', (req, res) => {
   if (!name.endsWith('.json')) {
     return res.status(400).json({ error: 'Invalid snapshot name' });
   }
-  const full = resolveWithin(CWD, path.join('.tell', 'history', name));
+  const full = canonical_path(CWD, path.join('.tell', 'history', name));
   if (!full) {
     return res.status(400).json({ error: 'Invalid snapshot name' });
   }
