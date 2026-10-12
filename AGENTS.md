@@ -96,7 +96,7 @@ Single-file Node entry point for the `tell` binary (CJS bundle, `#!/usr/bin/env 
 - `-l` lists saved contexts (`@N`, id, age, preview) and conversations (`%N`, date, model, preview) via `--history`; `--history @N`/`%N` reprints an entry, any other value searches both stores (`src/history.ts`)
 - `-y` auto-executes commands (high-risk commands still require confirmation)
 - `--no-exec` disables all command execution
-- Chain/exec run on `@tell-ai/core`: `run_response_loop` delegates to `create_core_runtime().run()` (`max_rounds: 1`, 8 with `--chain`) through the ports in `src/core-adapters.ts` (permissive risk, scrubbed env, promisified-`exec` transport, approval port, host-`cli` config default `g`, streaming model port, seeded storage). `mentions.ts`/`history.ts` stay CLI-owned; `env.ts` keeps keys/URLs until the tellkey handoff
+- Chain/exec run on `@tell-ai/core`: `run_response_loop` delegates to `create_core_runtime().run()` (`max_rounds: 1`, 8 with `--chain`) through the ports in `src/core-adapters.ts` (permissive risk, scrubbed env, the core `create_node_executor` transport with process-group kill, approval port, host-`cli` config default `g`, streaming model port, seeded storage). `mentions.ts`/`history.ts` stay CLI-owned; `env.ts` is a thin client of the core SDK-config owner until the tellkey handoff
 
 **Security**: `isHighRiskScript()` blocks patterns like `sudo`, `rm -rf`, `dd of=`, `curl|sh` (and pipes into any interpreter: `python3`, `node`, …), process substitution (`bash <(curl …)`, `x <(wget …)`), network-coupled interpreter one-liners (`node -e "require('https')…"`, `python3 -c "…urllib…"`), `mkfs`, writes to system paths (`/etc`, `/boot`, `/usr`, systemd units), crontab manipulation, etc. Local-only interpreter one-liners (e.g. `node -e "console.log(1)"`) are allowed by design. Execution timeout is 120s.
 
@@ -105,12 +105,11 @@ Files:
 - `src/core-adapters.ts` — core ports for the CLI (risk/env/exec/approval/config/model/storage); the only bridge to `@tell-ai/core`
 - `src/mentions.ts` — `expand_mentions()` + `is_outside_cwd()` read gate, called in `run_tell()` before context/log assembly
 - `src/history.ts` — read-only history module: `list_sessions()`, `search_contexts()`/`search_sessions()`, `print_history_list()`, `show_entry()` (backs `-l/--history`)
-- `src/systemPrompt.ts` — the `<RUN>`/injection-policy execution system prompt (`get_system_prompt()`), with `PromptOptions`
-- `src/env.ts` — Node-only: reads `process.env` + `~/.config/<vendor>.token` files, assembles the `SDKConfig` passed to `create_ask_ai()` (including the optional `CUSTOM_*` knobs, validated so a bad value fails the run)
+- `src/env.ts` — thin client of the core SDK-config owner: `load_sdk_config()` calls `load_sdk_config_from_env(process.env, { token_files: true })`; the system prompt comes straight from the SDK (`get_system_prompt` in `Tell.ts`)
 
 ### WEB: `packages/web` (`@tell-ai/web` — browser sandbox + `tell-web` server)
 
-Browser-based terminal + AI console (`tell-web` bin → `dist/server.js`), anchored to a working directory (`--cwd`). Built by tsup (`src/server/server.ts` → `dist/server.js`, ESM) + vite frontend assets into the same `dist/` (`--emptyOutDir false`, served from `__dirname` in production; vite middleware in dev). `node-pty` (native), `ws` and `vite` stay external. Requires Node `>=22`. Depends on `@tell-ai/sdk` (workspace) for model resolution (`MODELS`, `resolve_model_spec`, `get_model`) and the shared system prompt (`get_system_prompt({ chain: true })` composed with the project context); depends on `@tell-ai/core` (workspace, external in the server bundle) for the chain-confirm validator (`validate_chain_decision_payload`); keys/URLs are captured from `process.env` in `server.ts` and the credential environment is then purged; workspace `.env` loads only with `TELL_TRUST_WORKSPACE_ENV=true` (no token files).
+Browser-based terminal + AI console (`tell-web` bin → `dist/server.js`), anchored to a working directory (`--cwd`). Built by tsup (`src/server/server.ts` → `dist/server.js`, ESM) + vite frontend assets into the same `dist/` (`--emptyOutDir false`, served from `__dirname` in production; vite middleware in dev). `node-pty` (native), `ws` and `vite` stay external. Requires Node `>=22`. Depends on `@tell-ai/sdk` (workspace) for model resolution (`MODELS`, `resolve_model_spec`, `get_model`) and the shared system prompt (`get_system_prompt({ chain: true })` composed with the project context); depends on `@tell-ai/core` (workspace, external in the server bundle) for the chain-confirm validator (`validate_chain_decision_payload`), the executor (`create_node_executor`, with process-group kill), the fail-closed paths (`canonical_path`/`canonical_write_path`), the project scan (`build_project_context`), the feedback wording (`format_*`/`parse_command_feedback`), the timeout message (`format_timeout_message`) and the SDK-config mapping (`build_sdk_config_from_env`); keys/URLs are captured from `process.env` through the core owner and the credential environment is then purged; workspace `.env` loads only with `TELL_TRUST_WORKSPACE_ENV=true` (no token files).
 
 Key behaviors:
 - Real PTY panes (`node-pty` + WebSocket + xterm.js, up to 8 sessions max, scrollback persisted)
@@ -127,9 +126,9 @@ Key behaviors:
 Files:
 - `src/server/server.ts` — express app + `/api/*` routes + vite/static serving (~1400 lines)
 - `src/server/chain-store.ts` — pure in-memory chain runs (version, event sequence, TTL, command hash, idempotent decisions, cancel); loaded directly by `test/test-web-backend.js`, keep dependency-light
-- `src/server/guards.ts` — pure guards (sensitive paths, rate limiter, PTY/auth guards, payload validation, risk patterns); loaded directly by `test/test-web-backend.js`, keep dependency-light
-- `src/server/context-builder.ts` — project tree (4 levels) + README/AGENTS system-prompt context
-- `src/server/cli-args.ts`, `src/server/paths.ts`, `src/server/pty.ts`, `src/server/session.ts` — flags, traversal guard, terminal server, `.tell/` persistence
+- `src/server/guards.ts` — pure guards (sensitive paths, rate limiter, PTY/auth guards, payload validation, risk patterns); the child-env scrub and the payload caps re-export the core owners; loaded directly by `test/test-web-backend.js`, keep dependency-light
+- `src/server/context-builder.ts` — `buildSystemPrompt` calls the core `build_project_context` directly (tree 4 levels + README/AGENTS caps owned there) and keeps only the host-side composition; no local wrapper
+- `src/server/cli-args.ts`, `src/server/pty.ts`, `src/server/session.ts` — flags, terminal server, `.tell/` persistence (paths resolve through the core `canonical_*` helpers; no local traversal module)
 - `src/shared/` — `chain-feedback.ts`, `chat-threads.ts`, `terminal-layout.ts` (pure, shared by UI + tests)
 - `src/App.tsx`, `src/components/`, `src/api.ts`, `src/auth.ts`, `src/theme.tsx` — React frontend (execution toggles live in `ChatSection.tsx`)
 
@@ -160,7 +159,7 @@ The provider packages above are dependencies of `@tell-ai/sdk`; `commander` live
 
 ## API key configuration
 
-API keys are resolved in the CLI (`packages/cli/src/env.ts`): env vars (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `ALIBABA_API_KEY`, `CUSTOM_API_KEY`, etc.) with fallback to `~/.config/<vendor>.token` files, then injected into the SDK as `SDKConfig`. The `custom` vendor adds five optional knobs that mirror each other in both layers: `CUSTOM_BASE_URL` (`urls.custom`), `CUSTOM_API_KEY` (`keys.custom`), `CUSTOM_MODEL` (`models.custom`), `CUSTOM_API` (`wires.custom`, validated against `WIRE_APIS`) and `CUSTOM_HEADERS` (`headers.custom`, JSON object) — invalid values fail the run instead of degrading to a default. The web server resolves keys from `process.env` only (`load_sdk_config_from_env` in `packages/web/src/server/server.ts`, no token files). The SDK never touches the environment itself.
+API keys are resolved by the core owner (`load_sdk_config_from_env` / `build_sdk_config_from_env` in `packages/core/src/sdk-config.ts`): env vars (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `ALIBABA_API_KEY`, `CUSTOM_API_KEY`, etc.) with fallback to `~/.config/<vendor>.token` files when the host enables it (CLI `token_files: true`, Web `false`), then injected into the SDK as `SDKConfig`. Every vendor honors its `*_BASE_URL` override. The `custom` vendor adds five optional knobs: `CUSTOM_BASE_URL` (`urls.custom`), `CUSTOM_API_KEY` (`keys.custom`), `CUSTOM_MODEL` (`models.custom`), `CUSTOM_API` (`wires.custom`, validated against `WIRE_APIS`) and `CUSTOM_HEADERS` (`headers.custom`, JSON object) — invalid values fail the run instead of degrading to a default. The SDK never touches the environment itself.
 
 ## Related docs
 

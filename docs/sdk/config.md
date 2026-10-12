@@ -48,8 +48,8 @@ Every other vendor has a built-in default (e.g. `zai` → `https://api.z.ai/api/
 
 ## Who assembles `SDKConfig`
 
-* The **CLI** owns environment resolution: `packages/cli/src/env.ts` reads `process.env` (`{VENDOR}_API_KEY`) with `~/.config/<vendor>.token` fallbacks and builds the config for `create_ask_ai`. The `custom` vendor adds `CUSTOM_BASE_URL`, `CUSTOM_MODEL`, `CUSTOM_API` and `CUSTOM_HEADERS`.
-* The **web server** reads `process.env` only (no token files) via `load_sdk_config_from_env` in `packages/web/src/server/server.ts`, including the same four `CUSTOM_*` variables (an invalid `CUSTOM_API`/`CUSTOM_HEADERS` fails the boot instead of degrading silently).
+* The **core** owns environment resolution (`packages/core/src/sdk-config.ts`): `load_sdk_config_from_env(env, { token_files })` maps every vendor to its key/URL, honoring each `*_BASE_URL` override. The `custom` vendor adds `CUSTOM_BASE_URL`, `CUSTOM_MODEL`, `CUSTOM_API` and `CUSTOM_HEADERS`.
+* The **CLI** enables the `~/.config/<vendor>.token` fallbacks (`token_files: true` in `packages/cli/src/env.ts`); the **web server** reads `process.env` only (no token files) via `build_sdk_config_from_env` in `packages/web/src/server/server.ts`, including the same four `CUSTOM_*` variables (an invalid `CUSTOM_API`/`CUSTOM_HEADERS` fails the boot instead of degrading silently).
 * **Browsers / your code** build the config explicitly and pass it in — see the quick-reference example in `packages/sdk/README.md`.
 
 ## Browser safety contract
