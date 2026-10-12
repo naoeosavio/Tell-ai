@@ -26,13 +26,21 @@ fail-closed Phase 1 gate is `test/test-core-package.js`.
   `packages/web/src/server/cli-args.ts`. Adapters consume these modules —
   the core does not absorb, rewrite or delete them.
 - The core never persists the Web system prompt; `/api/context` remains the
-  server-side project-context origin. The Web `context-builder.ts` stays
-  intact; the core `project-context.ts` is a system-prompt-free port of its
-  tree/docs logic.
+  server-side project-context origin. The Web `context-builder.ts` delegates
+  its scan to the core `build_project_context` and only keeps the host-side
+  system-prompt composition; the scan caps and the `ProjectContext` shape are
+  owned here.
 - Chain approval state is Web-owned (`packages/web/src/server/chain-store.ts`,
   in-memory, TTL, idempotent decisions); the core owns only the pure confirm
   validator (`src/chain-decision.ts`), which the server runs before any
   store transition.
+- The vendor → key/url mapping is owned here (`src/sdk-config.ts`): the CLI
+  (`token_files: true`) and the Web server (`token_files: false`) both build
+  their `SDKConfig` from it, so every vendor honors its `*_BASE_URL`.
+- The command-feedback wording is owned here (`src/loop-feedback.ts`, also
+  published as the browser-safe `@tell-ai/core/loop-feedback` subpath): the
+  CLI log, the Web chain messages and the Web offline fallback loop all
+  format through it, and the Web parser delegates to it.
 
 ## Defaults per host
 
@@ -57,13 +65,15 @@ handoff and are not read here.
 | `src/runtime-api.ts` | Injectable contract + `createTellRuntime` factory , `TellResult`, ports, callbacks, tokens |
 | `src/browser-runtime.ts` | `createLocalStorageAdapter` over injected `StorageLike` |
 | `src/config.ts` | Host defaults, `CoreConfig`/`ConfigLayer`, precedence resolver, base env loader |
-| `src/runtime-limits.ts` | Single owner of every limit value: defaults, range table, `parse_runtime_limits` (flag > env > project tellrc > user tellrc > default), `TELLRC_LIMIT_KEYS`, `truncate_context`/`truncate_output`, `build_execution_options` |
-| `src/paths.ts` | `canonical_path` / `canonical_write_path` (realpath, symlink fail-closed) |
-| `src/project-context.ts` | Bounded project tree + README/AGENTS docs, ported from the Web `context-builder` |
+| `src/runtime-limits.ts` | Single owner of every limit value: defaults, range table, `parse_runtime_limits` (flag > env > project tellrc > user tellrc > default), `TELLRC_LIMIT_KEYS`, `truncate_context`/`truncate_output`, `build_execution_options`, chat-payload caps (`PAYLOAD_MAX_*`) |
+| `src/paths.ts` | `canonical_path` / `canonical_write_path` (realpath, symlink fail-closed, opt-in `create_parents`) |
+| `src/project-context.ts` | Bounded project tree + README/AGENTS docs (the Web `context-builder` delegates here); publishes the tree/doc caps |
+| `src/loop-feedback.ts` | Single owner of the command-feedback wording (`format_*`, `parse_command_feedback`); pure, no `node:*` |
+| `src/sdk-config.ts` | Single owner of the vendor → key/url mapping (`build_sdk_config_from_env` sync + `load_sdk_config_from_env` with token files) |
 | `src/chain-decision.ts` | Pure `validate_chain_decision_payload` for `/api/chain` confirm (no server state) |
 | `src/risk.ts` | Base `assess_base_risk` + `create_base_risk_port` (`permissive` CLI / `strict` Web, `RiskAssessment` only) |
-| `src/exec.ts` | Node `create_node_executor` (`/bin/bash`, real cwd, 120s/exit 124, 32 MB cap, process group, structural token, scrubbed env); the timeout/buffer numbers are aliases of `src/runtime-limits.ts` |
-| `src/loop.ts` | The single primitive exec/loop (≤8 rounds via `DEFAULT_MAX_CHAIN_STEPS`, exit-code feedback, cancel, fail-closed) |
+| `src/exec.ts` | Node `create_node_executor` (`/bin/bash`, real cwd, 120s/exit 124, 32 MB cap, process group, structural token, scrubbed env, `format_timeout_message`); the timeout/buffer numbers are aliases of `src/runtime-limits.ts`; both hosts execute through it |
+| `src/loop.ts` | The single primitive exec/loop (≤8 rounds via `DEFAULT_MAX_CHAIN_STEPS`, exit-code feedback via `src/loop-feedback.ts`, cancel, fail-closed) |
 | `src/runtime.ts` | `create_core_runtime`: injects resolved config into SDK ports, runs the loop |
 
 ## Environment allowlist
@@ -102,11 +112,14 @@ stay stable beside the chain routes.
 ## Adapters
 
 - CLI (`packages/cli/src/core-adapters.ts`): permissive risk port, scrubbed
-  env, promisified-`exec` transport (pinned by the VM harnesses),
+  env, the core `create_node_executor` transport (pinned by the VM harnesses
+  through a recording stand-in, so no command ever runs for real in the
+  sandbox),
   promise-based approval port, `resolve_cli_core_config` (host `cli`,
   default `g`), streaming-capable model port and seeded storage. `Tell.ts`
   keeps prompting, mentions, history, flags, stdin and rendering; its response
-  loop delegates to `create_core_runtime().run()`.
+  loop delegates to `create_core_runtime().run()`. `env.ts` is a thin client
+  of the core SDK-config owner (token files on).
 - Web (`packages/web/src/server/chain-store.ts` + routes in `server.ts`,
   client in `src/App.tsx`): the loop, the pending script and the approval
   state stay server-side; the App submits, renders events incrementally and

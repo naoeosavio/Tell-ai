@@ -22,6 +22,16 @@
         "types": "./dist/index.d.cts",
         "default": "./dist/index.cjs"
       }
+    },
+    "./loop-feedback": {
+      "import": {
+        "types": "./dist/loop-feedback.d.ts",
+        "default": "./dist/loop-feedback.js"
+      },
+      "require": {
+        "types": "./dist/loop-feedback.d.cts",
+        "default": "./dist/loop-feedback.cjs"
+      }
     }
   },
   "files": ["dist"],
