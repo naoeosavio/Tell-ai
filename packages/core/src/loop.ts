@@ -1,3 +1,4 @@
+import { COMMAND_FEEDBACK_INSTRUCTION, format_command_feedback } from './loop-feedback';
 import {
   type CancellationToken,
   createTellRuntime,
@@ -13,8 +14,8 @@ export const LOOP_MAX_ROUNDS = DEFAULT_MAX_CHAIN_STEPS;
 /** Chain-limit notice recorded when rounds run out (CLI `finish_round` wording). */
 export const CHAIN_LIMIT_NOTICE = `Chain limit reached (${LOOP_MAX_ROUNDS}); ignoring further requested commands.`;
 
-/** Follow-up instruction for rounds that may still request a command. */
-const CONTINUE_INSTRUCTION = 'Request another command with <RUN> tags if needed; otherwise answer without <RUN> tags.';
+/** Follow-up instruction for rounds that may still request a command (owned by `./loop-feedback`). */
+export const CONTINUE_INSTRUCTION = COMMAND_FEEDBACK_INSTRUCTION;
 
 /** Options for `run_primitive_loop` (ports arrive inside `runtime_options`). */
 export type CoreLoopOptions = {
@@ -27,11 +28,11 @@ export type CoreLoopOptions = {
 /**
  * Builds the self-healing follow-up prompt from a round command result.
  *
- * Wording converges with the CLI `build_feedback`/`run_script` result lines
- * so every consumer (CLI chain, Web chain) sees one protocol: an
- * `Executed command` (or `Command failed`) header with the redacted script
- * and output, a FAILED prefix when the exit code is non-zero, then the
- * continuation instruction. History itself travels through the storage
+ * Delegates the wording to `format_command_feedback` (`./loop-feedback`, the
+ * single owner) so every consumer (CLI chain, Web chain) sees one protocol:
+ * an `Executed command` (or `Command failed`) header with the redacted
+ * script and output, a FAILED preamble when the exit code is non-zero, then
+ * the continuation instruction. History itself travels through the storage
  * port, so only the new feedback is returned. Raw output never reaches
  * here — the SDK redaction boundary already ran right after the executor
  * returned.
@@ -42,11 +43,7 @@ export type CoreLoopOptions = {
  * @returns The next user message for the model.
  */
 function build_loop_feedback(script: string, output: string, exit_code: number): string {
-  if (exit_code === 0) {
-    return `Executed command:\n${script}\nOutput:\n${output}\n\n${CONTINUE_INSTRUCTION}`;
-  } else {
-    return `The command above FAILED. Analyze the error output and try a corrected approach.\n\nCommand failed (exit code ${exit_code}):\n${script}\nOutput:\n${output}\n\n${CONTINUE_INSTRUCTION}`;
-  }
+  return format_command_feedback(script, output, exit_code, { with_instruction: true });
 }
 
 /**
