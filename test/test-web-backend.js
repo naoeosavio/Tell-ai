@@ -5,9 +5,12 @@ const path = require('node:path');
 const ts = require('typescript');
 
 const WEB_SRC = path.join(__dirname, '..', 'packages', 'web');
+const CORE_SRC = path.join(__dirname, '..', 'packages', 'core', 'src');
 const CACHE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-web-backend-'));
-// Transpiled web modules live in a temp dir, so link the repo node_modules
-// there — web sources import workspace deps (e.g. @tell-ai/sdk).
+// Web sources import workspace deps (e.g. @tell-ai/sdk) and `@tell-ai/core`;
+// the symlink lets Node resolve them, while the bare-specifier rewrite below
+// compiles the core straight from source so this harness never needs the core
+// build (same reason `loadAbsoluteModule` exists for the pure core modules).
 try {
   fs.symlinkSync(path.join(__dirname, '..', 'node_modules'), path.join(CACHE_DIR, 'node_modules'), 'dir');
 } catch {
@@ -16,23 +19,57 @@ try {
 
 const compiledModules = new Map();
 
-function compileModule(name) {
-  if (compiledModules.has(name)) return compiledModules.get(name);
-  const source = fs.readFileSync(path.join(WEB_SRC, name), 'utf8');
-  let js = ts.transpileModule(source, {
+function transpile(js_source) {
+  return ts.transpileModule(js_source, {
     compilerOptions: {
       module: ts.ModuleKind.CommonJS,
       target: ts.ScriptTarget.ES2020,
       esModuleInterop: true,
     },
   }).outputText;
+}
+
+// Compiles a file anywhere on disk, rewriting its relative imports the same
+// way `compileModule` does, so core sources load without a build step.
+function compileSourceModule(absPath) {
+  const key = `src:${absPath}`;
+  if (compiledModules.has(key)) return compiledModules.get(key);
+  const source = fs.readFileSync(absPath, 'utf8');
+  let js = transpile(source);
+  js = js.replace(/require\(["'](\.[^"']*)["']\)/g, (_match, relativePath) => {
+    let resolved = path.normalize(path.join(path.dirname(absPath), relativePath));
+    if (!/\.[a-z]+$/i.test(resolved)) resolved += '.ts';
+    return `require(${JSON.stringify(compileSourceModule(resolved))})`;
+  });
+  const file = path.join(CACHE_DIR, `core_${path.basename(absPath).replace(/\.ts$/, '.cjs')}`);
+  fs.writeFileSync(file, js);
+  compiledModules.set(key, file);
+  return file;
+}
+
+// Bare specifiers web sources are allowed to import, mapped to source modules.
+const BARE_SOURCES = {
+  '@tell-ai/core': compileSourceModule(path.join(CORE_SRC, 'index.ts')),
+};
+
+function compileModule(name) {
+  if (compiledModules.has(name)) return compiledModules.get(name);
+  const source = fs.readFileSync(path.join(WEB_SRC, name), 'utf8');
+  let js = transpile(source);
   js = js.replace(/require\(["'](\.[^"']*)["']\)/g, (_match, relativePath) => {
     let resolved = path.normalize(path.join(path.dirname(name), relativePath));
     if (!/\.[a-z]+$/i.test(resolved)) resolved += '.ts';
     return `require(${JSON.stringify(compileModule(resolved))})`;
   });
+  // Only specifiers with a source mapping are rewritten; the rest (e.g.
+  // @tell-ai/sdk) keep resolving through the linked node_modules.
+  js = js.replace(/require\((["'])(@tell-ai\/[^"']+)\1\)/g, (match, _quote, specifier) => {
+    const mapped = BARE_SOURCES[specifier];
+    return mapped === undefined ? match : `require(${JSON.stringify(mapped)})`;
+  });
   const file = path.join(CACHE_DIR, name.replace(/\//g, '_').replace(/\.ts$/, '.cjs'));
   fs.writeFileSync(file, js);
+  compiledModules.set(file, file);
   compiledModules.set(name, file);
   return file;
 }
@@ -54,13 +91,7 @@ function loadAbsoluteModule(absPath) {
     return require(cached);
   }
   const source = fs.readFileSync(absPath, 'utf8');
-  const js = ts.transpileModule(source, {
-    compilerOptions: {
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2020,
-      esModuleInterop: true,
-    },
-  }).outputText;
+  const js = transpile(source);
   const file = path.join(CACHE_DIR, `abs_${compiledModules.size}.cjs`);
   fs.writeFileSync(file, js);
   compiledModules.set(key, file);
@@ -69,7 +100,6 @@ function loadAbsoluteModule(absPath) {
 }
 
 const { parseCliArgs, printHelp } = loadModule('src/server/cli-args.ts');
-const { resolveWithin } = loadModule('src/server/paths.ts');
 const {
   isSensitiveRelPath,
   isHighRiskScript,
@@ -80,9 +110,16 @@ const {
   isAllowedOrigin,
   normalizeApiPath,
   resolveStreamMode,
-  sanitizeChildEnv,
   validateTellPayload,
+  TELL_MAX_MESSAGES,
+  TELL_MAX_CONTENT_CHARS,
+  TELL_MAX_SYSTEM_CHARS,
 } = loadModule('src/server/guards.ts');
+// The child-environment scrubber is owned by the core (both hosts share it);
+// the web modules import it instead of restating the denylist.
+const { sanitize_exec_env, canonical_path, canonical_write_path, build_project_context } = require(
+  BARE_SOURCES['@tell-ai/core'],
+);
 const {
   emptySession,
   loadSession,
@@ -93,7 +130,7 @@ const {
   historyDir,
   sessionDir,
 } = loadModule('src/server/session.ts');
-const { buildProjectContext } = loadModule('src/server/context-builder.ts');
+const { buildSystemPrompt } = loadModule('src/server/context-builder.ts');
 const { createChainStore, hashChainScript, CHAIN_TTL_MS, CHAIN_MAX_ROUNDS } = loadModule(
   'src/server/chain-store.ts',
 );
@@ -269,23 +306,32 @@ test('chain store cap equals the runtime-limits owner default', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Path traversal guard
+// Path traversal guard (owned by @tell-ai/core — the sandbox has no local
+// resolver anymore, so these cases pin the core path against this host's
+// endpoints: reads resolve existing files, writes allow a missing leaf)
 // ---------------------------------------------------------------------------
 test('paths: relative traversal is rejected', () => {
-  assert.strictEqual(resolveWithin('/base/proj', '../outside.txt'), null);
-  assert.strictEqual(resolveWithin('/base/proj', '../../etc/passwd'), null);
+  assert.strictEqual(canonical_path('/base/proj', '../outside.txt'), null);
+  assert.strictEqual(canonical_path('/base/proj', '../../etc/passwd'), null);
 });
 
 test('paths: absolute path outside base is rejected', () => {
-  assert.strictEqual(resolveWithin('/base/proj', '/etc/passwd'), null);
+  assert.strictEqual(canonical_path('/base/proj', '/etc/passwd'), null);
 });
 
 test('paths: sibling prefix directory is rejected', () => {
-  assert.strictEqual(resolveWithin('/base/proj', '../proj-evil/secret'), null);
+  assert.strictEqual(canonical_path('/base/proj', '../proj-evil/secret'), null);
+  assert.strictEqual(canonical_write_path('/base/proj', '../proj-evil/secret'), null);
 });
 
 test('paths: nested path inside base resolves', () => {
-  assert.strictEqual(resolveWithin('/base/proj', 'src/app.ts'), path.resolve('/base/proj/src/app.ts'));
+  const root = tmpProject();
+  fs.mkdirSync(path.join(root, 'src'));
+  fs.writeFileSync(path.join(root, 'src', 'app.ts'), 'x');
+  assert.strictEqual(
+    canonical_path(root, path.join('src', 'app.ts')),
+    fs.realpathSync(path.join(root, 'src', 'app.ts')),
+  );
 });
 
 test('paths: symlink targets, roots, and intermediate links are rejected', () => {
@@ -297,10 +343,17 @@ test('paths: symlink targets, roots, and intermediate links are rejected', () =>
   fs.symlinkSync(outside, path.join(root, 'linked-dir'), 'dir');
   const linkedRoot = path.join(root, 'root-link');
   fs.symlinkSync(outside, linkedRoot, 'dir');
-  assert.strictEqual(resolveWithin(root, 'link.txt'), null);
-  assert.strictEqual(resolveWithin(root, path.join('linked-dir', 'secret.txt')), null);
-  assert.strictEqual(resolveWithin(linkedRoot, 'secret.txt'), null);
-  assert.strictEqual(resolveWithin(root, 'new-file.txt'), path.join(root, 'new-file.txt'));
+  assert.strictEqual(canonical_path(root, 'link.txt'), null);
+  assert.strictEqual(canonical_path(root, path.join('linked-dir', 'secret.txt')), null);
+  assert.strictEqual(canonical_path(linkedRoot, 'secret.txt'), null);
+  assert.strictEqual(canonical_write_path(root, 'new-file.txt'), path.join(root, 'new-file.txt'));
+});
+
+test('paths: a read needs the target to exist, a write only its parent', () => {
+  const root = tmpProject();
+  assert.strictEqual(canonical_path(root, 'missing.txt'), null);
+  assert.strictEqual(canonical_write_path(root, path.join('missing-dir', 'new.txt')), null);
+  assert.strictEqual(canonical_write_path(root, ''), null);
 });
 
 test('guards: API paths are normalized case-insensitively', () => {
@@ -323,7 +376,7 @@ test('guards: host and origin checks reject DNS rebinding', () => {
 });
 
 test('guards: child environment removes credentials and loader injection', () => {
-  const sanitized = sanitizeChildEnv({
+  const sanitized = sanitize_exec_env({
     PATH: '/usr/bin',
     HOME: '/home/user',
     DISPLAY: ':0',
@@ -646,7 +699,9 @@ test('session: latest symlink cannot point outside history', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Context builder (symlink loop + CLAUDE.md)
+// Context builder (owned by @tell-ai/core — the Web only composes the system
+// prompt on top via buildSystemPrompt; the scan itself is tested against the
+// owner directly)
 // ---------------------------------------------------------------------------
 test('context: symlink loop does not hang and is skipped', () => {
   const dir = tmpProject();
@@ -654,7 +709,7 @@ test('context: symlink loop does not hang and is skipped', () => {
   fs.writeFileSync(path.join(dir, 'a', 'file.txt'), 'hi');
   fs.symlinkSync(path.join(dir, 'a'), path.join(dir, 'a', 'self-loop'));
   fs.symlinkSync(path.join(dir, 'a'), path.join(dir, 'parent-loop'));
-  const ctx = buildProjectContext(dir);
+  const ctx = build_project_context(dir);
   assert.ok(ctx.tree.includes('a/'));
   assert.ok(ctx.tree.includes('file.txt'));
   assert.ok(!ctx.tree.includes('self-loop'));
@@ -664,7 +719,7 @@ test('context: symlink loop does not hang and is skipped', () => {
 test('context: CLAUDE.md is matched as agents doc', () => {
   const dir = tmpProject();
   fs.writeFileSync(path.join(dir, 'CLAUDE.md'), 'claude conventions');
-  const ctx = buildProjectContext(dir);
+  const ctx = build_project_context(dir);
   assert.ok(ctx.agents && ctx.agents.includes('claude conventions'));
 });
 
@@ -674,24 +729,39 @@ test('context: does not follow README symlinks outside the workspace', () => {
   const secret = path.join(outside, 'context-secret.txt');
   fs.writeFileSync(secret, 'CONTEXT_SECRET_CANARY');
   fs.symlinkSync(secret, path.join(dir, 'README.md'));
-  const ctx = buildProjectContext(dir);
+  const ctx = build_project_context(dir);
   assert.strictEqual(ctx.readme, null);
 });
 
 test('context: agents.md is matched as agents doc', () => {
   const dir = tmpProject();
   fs.writeFileSync(path.join(dir, 'agents.md'), 'agents conventions');
-  const ctx = buildProjectContext(dir);
+  const ctx = build_project_context(dir);
   assert.ok(ctx.agents && ctx.agents.includes('agents conventions'));
 });
 
 test('context: oversized doc is partially read, not exploded', () => {
   const dir = tmpProject();
   fs.writeFileSync(path.join(dir, 'README.md'), '# Big\n' + 'a'.repeat(128 * 1024));
-  const ctx = buildProjectContext(dir);
+  const ctx = build_project_context(dir);
   assert.ok(ctx.readme);
   assert.ok(ctx.readme.includes('[truncated'));
   assert.ok(ctx.readme.length < 128 * 1024);
+});
+
+test('context: buildSystemPrompt composes the core owner context', () => {
+  // The Web owns no scan: buildSystemPrompt must embed what
+  // `build_project_context` returns for the same tree (tree + docs).
+  const dir = tmpProject();
+  fs.mkdirSync(path.join(dir, 'src'));
+  fs.writeFileSync(path.join(dir, 'src', 'app.ts'), 'x');
+  fs.writeFileSync(path.join(dir, 'README.md'), '# demo');
+  fs.writeFileSync(path.join(dir, 'AGENTS.md'), 'be kind');
+  const owner = build_project_context(dir);
+  const prompt = buildSystemPrompt(dir);
+  assert.ok(prompt.includes(owner.tree));
+  assert.ok(prompt.includes('# demo'));
+  assert.ok(prompt.includes('be kind'));
 });
 
 // ---------------------------------------------------------------------------

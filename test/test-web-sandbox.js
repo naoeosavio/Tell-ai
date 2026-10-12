@@ -17,7 +17,17 @@ const ts = require('typescript');
 const WebSocket = require('ws');
 
 const WEB_SRC = path.join(__dirname, '..', 'packages', 'web');
+const CORE_SRC = path.join(__dirname, '..', 'packages', 'core', 'src');
 const CACHE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-web-sandbox-'));
+// Bare `@tell-ai/*` specifiers the web sources import: mapped to source
+// modules so this suite never needs the workspace builds (same reason the
+// harness transpiles the web sources instead of requiring the bundle).
+const CORE_SUBPATHS = {
+  '@tell-ai/core/loop-feedback': 'loop-feedback.ts',
+};
+const BARE_SOURCES = Object.fromEntries(
+  Object.entries(CORE_SUBPATHS).map(([specifier, file]) => [specifier, path.join(CORE_SRC, file)]),
+);
 // Transpiled web modules live in a temp dir, so expose dependencies there.
 // Bun workspaces hoist everything to the repo root, while npm keeps native
 // builds (node-pty) under packages/web — overlay both scopes, web wins.
@@ -66,6 +76,29 @@ try {
 
 const compiled = new Map();
 
+// Compiles a file anywhere on disk, rewriting its relative imports, so core
+// sources load here without a build step (they are pure modules).
+function compiledSource(absPath) {
+  if (compiled.has(absPath)) return compiled.get(absPath);
+  const source = fs.readFileSync(absPath, 'utf8');
+  let js = ts.transpileModule(source, {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2020,
+      esModuleInterop: true,
+    },
+  }).outputText;
+  js = js.replace(/require\(["'](\.[^"']*)["']\)/g, (_m, rel) => {
+    let resolved = path.normalize(path.join(path.dirname(absPath), rel));
+    if (!/\.[a-z]+$/i.test(resolved)) resolved += '.ts';
+    return `require(${JSON.stringify(compiledSource(resolved))})`;
+  });
+  const file = path.join(CACHE_DIR, `core_${path.basename(absPath).replace(/\.ts$/, '.cjs')}`);
+  fs.writeFileSync(file, js);
+  compiled.set(absPath, file);
+  return file;
+}
+
 function compiledPath(name) {
   const abs = path.join(WEB_SRC, name);
   if (compiled.has(abs)) return compiled.get(abs);
@@ -82,6 +115,12 @@ function compiledPath(name) {
     let resolved = path.normalize(path.join(path.dirname(name), rel));
     if (!/\.[a-z]+$/i.test(resolved)) resolved += '.ts';
     return `require(${JSON.stringify(compiledPath(resolved))})`;
+  });
+  // Only mapped core subpaths are rewritten; the rest keep resolving through
+  // the linked node_modules (e.g. @tell-ai/sdk).
+  js = js.replace(/require\((["'])(@tell-ai\/[^"']+)\1\)/g, (match, _quote, specifier) => {
+    const source_path = BARE_SOURCES[specifier];
+    return source_path === undefined ? match : `require(${JSON.stringify(compiledSource(source_path))})`;
   });
   const file = path.join(CACHE_DIR, name.replace(/\//g, '_').replace(/\.ts$/, '.cjs'));
   fs.writeFileSync(file, js);
@@ -197,6 +236,8 @@ describe('web sandbox: server guards', () => {
 describe('web sandbox: chain feedback', () => {
   const {
     FEEDBACK_PREFIX_RE,
+    formatExecutedFeedback,
+    formatSkippedFeedback,
     isChainFeedbackMessage,
     parseFeedback,
     findLinkedFeedbackIndex,
@@ -250,6 +291,23 @@ describe('web sandbox: chain feedback', () => {
 
     it('returns null for non-feedback', () => {
       assert.strictEqual(parseFeedback('just a prompt'), null);
+    });
+  });
+
+  describe('formatFeedback (offline fallback loop)', () => {
+    it('emits the wording the core owns', () => {
+      assert.strictEqual(formatExecutedFeedback(CMD, OUT), `Executed command:\n${CMD}\nOutput:\n${OUT}`);
+      assert.strictEqual(formatSkippedFeedback(CMD), `Skipped by user:\n${CMD}`);
+    });
+
+    it('round-trips through the delegated parser', () => {
+      const executed = parseFeedback(formatExecutedFeedback(CMD, OUT));
+      assert.strictEqual(executed.kind, 'executed');
+      assert.strictEqual(executed.command, CMD);
+      assert.strictEqual(executed.output, OUT);
+      const skipped = parseFeedback(formatSkippedFeedback(CMD));
+      assert.strictEqual(skipped.kind, 'skipped');
+      assert.strictEqual(skipped.command, CMD);
     });
   });
 
@@ -2503,7 +2561,7 @@ describe('web sandbox: runtime limits', () => {
       });
       assert.strictEqual(res.status, 200);
       const body = await res.json();
-      assert.match(body.output, /Process timed out after 1000ms/);
+      assert.match(body.output, /Command timed out after 1s:\nsleep 5/);
     });
   });
 });
