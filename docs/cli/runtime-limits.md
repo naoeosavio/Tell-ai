@@ -3,8 +3,10 @@
 Owner único de limites operacionais e truncamento seguro: `packages/core/src/runtime-limits.ts`
 (movido do CLI em 2026-10-10 pela `task_038_limits-home.md` — é o único pacote que
 CLI e Web importam, então é o único lugar onde o número pode ter um dono). A
-casca `packages/cli/src/runtime-limits.ts` só re-exporta o core e mantém o que é
-do processo: `StdinLimitError` e `EXIT_SUCCESS`/`EXIT_MODEL_ERROR`/`EXIT_TIMEOUT`/`EXIT_LIMIT`.
+casca `packages/cli/src/runtime-limits.ts` foi removida — `StdinLimitError`,
+`EXIT_SUCCESS`/`EXIT_MODEL_ERROR`/`EXIT_TIMEOUT`/`EXIT_LIMIT` e o leitor
+`runtime_env_from_process(env)` (ambiente sempre explícito, sem default
+`process.env`) também moram no owner.
 (`parse_runtime_limits`, `truncate_context`, `RuntimeLimits`, `ExecutionOptions`).
 A memória, os adapters CLI/Web e o chat consomem esse contrato; o core possui
 exclusivamente execução, loop e a state machine chain. Sem dependência de
@@ -137,8 +139,8 @@ bun run test:web           # backend (parse/validação) + sandbox live (config/
 bun run ci                 # build + lint + check + tudo
 ```
 
-Fontes: `packages/core/src/runtime-limits.ts` (owner), `packages/cli/src/runtime-limits.ts`
-(casca + stdin/exit status), `Tell.ts` (flags, stdin,
+Fontes: `packages/core/src/runtime-limits.ts` (owner, incluindo stdin/exit
+status), `Tell.ts` (flags, stdin,
 truncamento, loop, `launch_web`), `core-adapters.ts`
 (`create_cli_executor(defaults)`), `packages/web/src/server/server.ts`
 (`EXEC_MAX_BUFFER`, `CHAIN_ROUND_CAP`), `cli-args.ts` (parsing encaminhado).

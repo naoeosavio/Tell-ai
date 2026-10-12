@@ -9,8 +9,7 @@ packages/cli/
   tsconfig.json      # extends ../../tsconfig.base.json, types [node], noEmit
   src/Tell.ts        # CLI (935 lines)
   src/mentions.ts    # @path mention expansion (356 lines)
-  src/env.ts         # load_sdk_config (Node-only)
-  src/systemPrompt.ts# get_system_prompt wrapper (cwd + platform)
+  src/env.ts         # load_sdk_config (thin client of the core SDK-config owner)
   dist/Tell.mjs      # built artifact (chmod +x)
 ```
 
@@ -54,9 +53,9 @@ All CLI suites avoid network/LLM by transpiling the real `Tell.ts` (`typescript.
 
 * `@tell-ai/sdk`: real module spread, but `create_ask_ai` stubbed to replay canned responses while recording `{ message, options }`.
 * `./env`: `load_sdk_config → { keys: {}, urls: {} }`.
-* `./systemPrompt`: delegates to the real SDK `get_system_prompt`.
 * `./mentions`: the real `mentions.ts` compiled **into the same sandbox** (`vm.runInContext`), so it binds to the faked `process`/`stderr`/`cwd` per test.
-* `child_process.exec[promisify.custom]`: records scripts, returns canned stdout/stderr.
+* `./core-adapters`: the real module compiled into the same sandbox, but its `@tell-ai/core` import is a recording stand-in for `create_node_executor` (scripts/options recorded, canned result) — no command ever runs for real.
+* `child_process.exec[promisify.custom]`: legacy recording hook (kept); execution now flows through the core-executor stand-in above.
 * `os.homedir`: redirected into a temp dir; `process.cwd`: temp work dir; `argv/stdin/stdout/stderr/exitCode`: faked.
 
 `test/test-tell-security.js` (426 lines): risky-script skips, injection policy, stdin shapes, `<RUN>`/`<think>` extraction, chain, context hygiene. `test/test-tell-context.js` (42 tests): `--ctx` grammar (`@N`, `%id`, ref + prompt text, bare-token error), use-or-create resume/create, `-n` reset + traversal rejection, `--history` (combined listing, `@N`/`%N` cat, search, exit codes), multi-word semantics, control-char-free context label echo, incremental-save non-duplication, poisoned-context safety. `test/test-tell-mentions.js` (22 tests): unit layer (file/dir/missing/binary/truncation/escape/punctuation/tree limits/`is_outside_cwd`/symlink/FIFO) + integration layer (model/log/context receive the expansion, outside-cwd denial, poisoned-file inertness, stdin + `--ctx` combo).

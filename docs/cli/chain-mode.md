@@ -22,7 +22,7 @@ render result.text once (non-stream); default mode with commands but empty
 text asks once more without `<RUN>` (legacy final answer)
 ```
 
-The first call uses `{ chain: autoContinue }` so the system prompt advertises multi-step behavior only in chain mode; the single fixed system covers every round. The system prompt itself comes from `get_system_prompt({ chain })` (`src/systemPrompt.ts`). Streaming, reasoning display and raw-response capture live inside the model port (`create_cli_model` in `src/core-adapters.ts`); log/context files are mirrored from the runtime callbacks (`Assistant:` raw, legacy result lines, overwrite saves).
+The first call uses `{ chain: autoContinue }` so the system prompt advertises multi-step behavior only in chain mode; the single fixed system covers every round. The system prompt itself comes from the SDK `get_system_prompt({ chain, cwd, platform })`, called in `Tell.ts`. Streaming, reasoning display and raw-response capture live inside the model port (`create_cli_model` in `src/core-adapters.ts`); log/context files are mirrored from the runtime callbacks (`Assistant:` raw, legacy result lines, overwrite saves).
 
 ## Feedback and termination
 

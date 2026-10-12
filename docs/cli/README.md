@@ -19,7 +19,7 @@ Complete reference for the `tell-ai` package (`packages/cli/`): the `tell` binar
 
 ## Sources of truth
 
-* Implementation: `packages/cli/src/Tell.ts`, `packages/cli/src/history.ts`, `packages/cli/src/mentions.ts`, `packages/cli/src/tellrc.ts`, `packages/cli/src/env.ts`, `packages/cli/src/systemPrompt.ts`
+* Implementation: `packages/cli/src/Tell.ts`, `packages/cli/src/history.ts`, `packages/cli/src/mentions.ts`, `packages/cli/src/tellrc.ts`, `packages/cli/src/env.ts`
 * Package metadata: `packages/cli/package.json`, `packages/cli/tsup.config.ts`, `packages/cli/tsconfig.json`
 * Behavior contracts: `test/test-tell-security.js`, `test/test-tell-context.js`, `test/test-tell-mentions.js`, `test/test-tell-tellrc.js`
 * Related docs (not duplicated here): `../usage.md` (user guide), `../integrations.md` (git/CI/editors/bots), `../sdk/imports.md` (SDK build variants), `../web-sandbox.md` (web sandbox guide) + `../../packages/web/README.md` (web package: flags, `/api/*` routes, `.tell/` layout), `../../packages/cli/README.md` (install + keys quick ref), `../../packages/cli/CHANGELOG_AI.md`

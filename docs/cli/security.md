@@ -41,7 +41,7 @@ Guard limits: regex heuristics, not a sandbox. Do not rely on it in production/t
 
 ## Prompt-injection policy
 
-Every model call carries the shared system prompt (`get_system_prompt`, via `src/systemPrompt.ts`), which contains a `Prompt-injection policy:` section: tool/paste/stdin output is untrusted data, command confirmation stays mandatory. The security suite asserts its presence (`assertPromptInjectionPolicy`, `test-tell-security.js:136-140`).
+Every model call carries the shared system prompt (SDK `get_system_prompt`, called in `Tell.ts`), which contains a `Prompt-injection policy:` section: tool/paste/stdin output is untrusted data, command confirmation stays mandatory. The security suite asserts its presence (`assertPromptInjectionPolicy`, `test-tell-security.js:136-140`).
 
 Consequences, all covered by tests:
 
@@ -74,4 +74,4 @@ Consequences, all covered by tests:
 
 Run: `npm run test:security`, `npm run test:mentions`, `npm run test` (all suites, builds SDK first). See [development.md](development.md).
 
-Sources: `Tell.ts:368-427`, `src/mentions.ts`, `src/systemPrompt.ts`, `test/test-tell-security.js`, `test/test-tell-context.js`, `test/test-tell-mentions.js`.
+Sources: `Tell.ts:368-427`, `src/mentions.ts`, `test/test-tell-security.js`, `test/test-tell-context.js`, `test/test-tell-mentions.js`.

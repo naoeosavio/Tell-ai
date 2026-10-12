@@ -1,10 +1,10 @@
 # Environment and configuration
 
-The CLI is the only layer that touches the environment. It assembles an `SDKConfig { keys, urls }` (both partial) and injects it into `create_ask_ai`. The SDK never reads `process.env` itself.
+The vendor → key/URL mapping is owned by `@tell-ai/core` (`packages/core/src/sdk-config.ts`): `load_sdk_config_from_env(env, { token_files })` / `build_sdk_config_from_env(env)`. The CLI enables the token-file fallback (`token_files: true`); the Web server uses the sync builder (no token files). The hosts hand over the environment record — the SDK never reads `process.env` itself.
 
-## `load_sdk_config` (`src/env.ts:19-47`)
+## `load_sdk_config` (`src/env.ts`)
 
-Keys: env var first, `~/.config/<vendor>.token` file fallback (trimmed, empty ignored via `read_token_file`, `src/env.ts:10-18`).
+Keys: env var first, `~/.config/<vendor>.token` file fallback (trimmed, empty ignored; every vendor honors its `*_BASE_URL` override).
 
 | SDK key | Env var(s) | Token file |
 |---------|-----------|------------|
@@ -106,14 +106,14 @@ profile warns. `[limits]` takes the seven runtime keys (`context_chars`,
 receives only non-secret forwarded fields (model, profile, system-file,
 temperature, numeric limits); keys/URLs/secrets never cross the boundary.
 
-## System prompt wiring (`src/systemPrompt.ts:6-12`)
+## System prompt wiring (SDK `get_system_prompt`, called in `Tell.ts`)
 
 ```ts
-sdk_get_system_prompt({ ...(chain !== undefined ? { chain } : {}), cwd: process.cwd(), platform: `${os.platform()} ${os.release()}` })
+get_system_prompt({ chain, cwd: process.cwd(), platform: `${os.platform()} ${os.release()}` })
 ```
 
-Thin wrapper: same shared prompt the SDK `tell()` uses, plus live cwd and `platform release` so the model proposes correct local commands. `tell_silently` passes `{ chain: autoContinue }` on the first call and `{ chain: true }` on chain follow-ups (`Tell.ts:600-625`); the non-chain final-answer call uses `{ chain: false }`.
+Same shared prompt the SDK `tell()` uses, plus live cwd and `platform release` so the model proposes correct local commands. `tell_silently` passes `{ chain: autoContinue }` on the first call and `{ chain: true }` on chain follow-ups (`Tell.ts:600-625`); the non-chain final-answer call uses `{ chain: false }`.
 
 All providers honor `config.urls.*` as `baseURL`, so a proxy URL works for any vendor that defines one.
 
-Sources: `src/env.ts`, `src/systemPrompt.ts`, `Tell.ts:24`, `Tell.ts:460-471`, `packages/sdk/src/models.ts:273-306`.
+Sources: `src/env.ts`, `Tell.ts`, `packages/sdk/src/models.ts:273-306`, `packages/core/src/sdk-config.ts`.
