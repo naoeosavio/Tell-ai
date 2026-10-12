@@ -1,6 +1,10 @@
 // Pure chain-feedback helpers (no React): shared by ChatSection rendering and tests.
 // Chain-loop execution outputs are appended as role:'user' messages so the LLM
 // keeps the tool output in context; the UI renders them on the LLM side.
+// The wording itself is owned by @tell-ai/core (browser-safe subpath, no
+// `node:*`), so the offline fallback loop can never drift from the server.
+
+import { format_command_skipped, format_executed_command, parse_command_feedback } from '@tell-ai/core/loop-feedback';
 
 export const FEEDBACK_PREFIX_RE = /^(Executed command|Skipped by user):/;
 
@@ -33,20 +37,25 @@ export function isChainFeedbackMessage(m: { role: string; content: string }): bo
   return m.role === 'user' && isChainFeedback(m.content);
 }
 
+/** Formats the `Executed command` record for the local (offline) chain loop. */
+export function formatExecutedFeedback(command: string, output: string): string {
+  return format_executed_command(command, output);
+}
+
+/** Formats the `Skipped by user` record for the local (offline) chain loop. */
+export function formatSkippedFeedback(command: string): string {
+  return format_command_skipped(command);
+}
+
 /** Split `Executed command:\n{cmd}\nOutput:\n{out}` / `Skipped by user:\n{cmd}`. */
 export function parseFeedback(content: string): ParsedFeedback | null {
   if (!isChainFeedback(content)) return null;
-  if (content.startsWith('Skipped by user:')) {
-    return { kind: 'skipped', command: content.slice('Skipped by user:'.length).trim(), output: '' };
-  }
-  const body = content.slice('Executed command:'.length);
-  const sep = '\nOutput:\n';
-  const idx = body.indexOf(sep);
-  if (idx === -1) return { kind: 'executed', command: body.trim(), output: '' };
+  const parsed = parse_command_feedback(content);
+  if (parsed === null) return null;
   return {
-    kind: 'executed',
-    command: body.slice(0, idx).trim(),
-    output: body.slice(idx + sep.length),
+    kind: parsed.kind === 'skipped' ? 'skipped' : 'executed',
+    command: parsed.script,
+    output: parsed.output,
   };
 }
 

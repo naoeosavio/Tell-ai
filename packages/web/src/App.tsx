@@ -26,6 +26,7 @@ import SettingsPanel from './components/SettingsPanel.tsx';
 import Terminal, { type TerminalLayout, type TerminalLine, type TerminalTabMeta } from './components/Terminal.tsx';
 import { useToast } from './components/Toast.tsx';
 import { resolve_agent_notification } from './shared/agent-feed.ts';
+import { formatExecutedFeedback, formatSkippedFeedback } from './shared/chain-feedback.ts';
 import { consume_chat_stream } from './shared/chat-stream.ts';
 import { loadExecToggles, saveExecToggles } from './shared/exec-toggles.ts';
 import {
@@ -1195,7 +1196,7 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
       }
 
       if (chainMode) {
-        const feedback = `Executed command:\n${script}\nOutput:\n${truncateOutputTail(output)}`;
+        const feedback = formatExecutedFeedback(script, truncateOutputTail(output));
         const feedbackMessage: ChatMessage = {
           id: crypto.randomUUID(),
           role: 'user',
@@ -1294,7 +1295,7 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
       setRefreshFileTreeTrigger((prev) => prev + 1);
 
       if (chainMode) {
-        const feedback = `Executed command:\n${command}\nOutput:\n${truncateOutputTail(output)}`;
+        const feedback = formatExecutedFeedback(command, truncateOutputTail(output));
         const feedbackMessage: ChatMessage = {
           id: crypto.randomUUID(),
           role: 'user',
@@ -1346,7 +1347,7 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
 
     if (chainMode) {
       setLoading(true);
-      const feedback = `Skipped by user:\n${cmd}`;
+      const feedback = formatSkippedFeedback(cmd);
       const feedbackMessage: ChatMessage = {
         id: crypto.randomUUID(),
         role: 'user',
