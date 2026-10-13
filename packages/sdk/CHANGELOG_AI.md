@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Features
+- New generic `custom` vendor for any user-supplied OpenAI/Anthropic-shaped endpoint — OpenRouter, vLLM, Ollama, HuggingFace, Fireworks, LiteLLM, an OpenAI-compatible proxy. Use `custom:<model>`; there is no alias and no product-specific code in the SDK.
+- `custom` resolves its **wire per model id** through `resolve_wire(model)`: `gpt-`/`grok-`/`muse-` → OpenAI Responses, `claude-` → Anthropic Messages, everything else → Chat Completions. Auth follows the wire (bearer on chat/responses, `x-api-key` on messages), and `WIRE_APIS` / `is_wire_api()` expose the accepted set (`chat`, `responses`, `messages`).
+- `SDKConfig` gains three optional per-vendor maps used by `custom`: `models` (default model id, so the spec can be just `custom`), `wires` (pin the wire when an endpoint routes an id differently) and `headers` (extra request headers — routing ids, tenant tags, gateway auth — merged into every request).
+- A bare `custom` spec is now valid: `resolve_model_spec('custom')` returns `{ vendor: 'custom', model: '' }` and `get_model` fills the id from `config.models.custom`, raising a message naming the slot and the env var when neither is present.
+- New `list_custom_models(config)` reads `GET {urls.custom}/models` and annotates every id with the wire it would be called with — the discovery path for a user-supplied endpoint.
+- `get_wire_provider(spec)` replaces the two-branch factory inside `get_openai_wire_factory` and builds all three wires; `resolve_reasoning` maps a `custom` wire to a reasoning dialect (`messages` → Anthropic rules, so `max` still sends `effort: 'max'` + adaptive thinking; `responses` → OpenAI, plus `forceReasoning` for unknown model ids).
+- `models`, `wires` and `headers` also join the provider cache key, so two configs of the same endpoint with different injected headers no longer share a provider.
+
+### Notes
+- `resolve_wire` takes only the model id (no base URL): wire selection is a property of the model, not of the endpoint. An endpoint that routes one id differently is handled by `config.wires`, not by a table in the SDK.
+
 ## v0.3.0 — 2026-10-01
 
 ### Features
