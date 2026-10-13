@@ -1913,15 +1913,15 @@ describe('web sandbox: api routes', () => {
       const res = await fetch(`${base}/api/models`);
       assert.strictEqual(res.status, 200);
       const body = await res.json();
-      assert.strictEqual(body.models.length, 142);
+      assert.strictEqual(body.models.length, 146);
       const by_alias = new Map(body.models.map((entry) => [entry.alias, entry]));
       for (const [alias, vendor, model] of [
         ['g', 'openai', 'gpt-6.1-sol'],
         ['p', 'openai', 'gpt-6.1-sol-pro'],
         ['r', 'openai', 'gpt-6-astra-pro'],
         ['s', 'anthropic', 'claude-sonnet-5-5'],
-        ['h', 'anthropic', 'claude-haiku-4-5'],
-        ['i', 'google', 'gemini-3.1-pro'],
+        ['h', 'anthropic', 'claude-haiku-5-5'],
+        ['i', 'google', 'gemini-4-argon'],
         ['at', 'alibaba', 'qwen3.8-27b'],
         ['m', 'meta', 'muse-spark-1.3'],
         ['mc', 'meta', 'muse-spark-1.3-contributor'],
@@ -1936,6 +1936,9 @@ describe('web sandbox: api routes', () => {
       assert.strictEqual(by_alias.get('m++').thinking, 'max');
       assert.strictEqual(by_alias.get('mif+').thinking, 'high');
       assert.strictEqual(by_alias.get('K').thinking, 'high');
+      assert.strictEqual(by_alias.get('h-').thinking, 'low');
+      assert.strictEqual(by_alias.get('h++').thinking, 'max');
+      assert.strictEqual(by_alias.has('h--'), false);
       assert.strictEqual(body.keysStatus.minimax, undefined);
       for (const vendor of ['alibaba', 'zhipu', 'meta', 'xiaomi', 'custom']) {
         assert.strictEqual(typeof body.keysStatus[vendor], 'boolean', vendor);

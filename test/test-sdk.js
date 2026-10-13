@@ -60,8 +60,8 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
     ['s', 'anthropic', 'claude-sonnet-5-5'],
     ['o', 'anthropic', 'claude-opus-5-5'],
     ['f', 'anthropic', 'claude-fable-5-1'],
-    ['h', 'anthropic', 'claude-haiku-4-5'],
-    ['i', 'google', 'gemini-3.1-pro'],
+    ['h', 'anthropic', 'claude-haiku-5-5'],
+    ['i', 'google', 'gemini-4-argon'],
     ['x', 'xai', 'grok-4.7'],
     ['at', 'alibaba', 'qwen3.8-27b'],
     ['m', 'meta', 'muse-spark-1.3'],
@@ -92,6 +92,18 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
     }
     assert.strictEqual(sdk.resolve_model_spec(prefix.toUpperCase()).thinking, 'high', `${prefix} (uppercase)`);
   }
+  // Haiku 5.5 is the first Haiku with an adjustable effort (thinking is always
+  // on), so `h` walks `low`..`max` and exposes no `none` tier.
+  for (const [suffix, thinking] of [
+    ['-', 'low'],
+    ['', 'medium'],
+    ['+', 'high'],
+    ['++', 'max'],
+  ]) {
+    assert.strictEqual(sdk.resolve_model_spec(`h${suffix}`).thinking, thinking, `h${suffix}`);
+  }
+  assert.strictEqual(sdk.resolve_model_spec('H').thinking, 'high', 'H (uppercase)');
+  assert.throws(() => sdk.resolve_model_spec('h--'), /Unsupported vendor/);
   assert.strictEqual(sdk.resolve_model_spec('meta:muse-spark-1.3:high').vendor, 'meta');
   assert.strictEqual(sdk.resolve_model_spec('mimo-v2.6-pro:low').vendor, 'xiaomi');
   for (const raw of [
@@ -122,7 +134,7 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
   assert.throws(() => sdk.resolve_model_spec('notamodelatall'), /./);
 
   // MODELS table invariant: every alias value parses back through the resolver.
-  assert.strictEqual(Object.keys(sdk.MODELS).length, 142);
+  assert.strictEqual(Object.keys(sdk.MODELS).length, 146);
   for (const [alias, spec] of Object.entries(sdk.MODELS)) {
     if (!spec.includes(':')) continue; // thinking-level/vendor-name helpers, not model specs
     const resolved = sdk.resolve_model_spec(spec);

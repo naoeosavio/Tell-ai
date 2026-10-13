@@ -6,7 +6,7 @@ The SDK has zero `node:*` imports and zero `process.env` reads. All environment 
 
 ## Features
 
-- **`MODELS` / `resolve_model_spec(model)`** — 142 short aliases (e.g. `g` → `openai:gpt-6.1-sol:medium`) resolving to `vendor:model:thinking_budget` specs, with dot-prefix fast mode (`.g`).
+- **`MODELS` / `resolve_model_spec(model)`** — 146 short aliases (e.g. `g` → `openai:gpt-6.1-sol:medium`) resolving to `vendor:model:thinking_budget` specs, with dot-prefix fast mode (`.g`).
 - **`create_ask_ai(spec, config)`** — returns an `AskInstance` with `ask()` (one-shot, backed by `generateText()`) and `ask_stream()` (token-by-token, backed by `streamText()`), over the `openai`, `anthropic`, `google`, `xai`, `deepseek`, `cerebras`, `moonshotai`, `openrouter`, `alibaba`, `zai`, `meta` and `xiaomi` vendors plus the self-hosted `vast`/`local` endpoints.
 - **`get_model(spec, config)`** — the lower-level handle (`{ model, reasoning, fast, providerOptions? }`) behind `create_ask_ai()`, for consumers that need a `ModelHandle` for their own `generateText()`/`streamText()` calls (e.g. multi-turn chat in a server).
 - **`tell(message, options)`** — one-shot `tell --no-exec` as a library call: builds the tell system prompt (execution disabled by default), calls the model, and returns the answer with ` thinking`/`<RUN>` tags stripped.

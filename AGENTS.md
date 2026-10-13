@@ -47,7 +47,7 @@ The codebase has five layers:
 Browser-safe AI provider layer: **zero `node:*` imports, zero `process.env` reads**. All environment concerns are injected via `SDKConfig` (`{ keys, urls }` both partial, plus optional `models`/`wires`/`headers` per vendor for the `custom` vendor). Built by tsup to ESM + CJS + `.d.ts`/`.d.cts`.
 
 Key exports from `packages/sdk/src/index.ts`:
-- **`MODELS`** — Record of 142 short aliases (e.g., `g` → `openai:gpt-6.1-sol:medium`)
+- **`MODELS`** — Record of 146 short aliases (e.g., `g` → `openai:gpt-6.1-sol:medium`)
 - **`resolve_model_spec(model)`** — Parses `vendor:model:thinking` specs, handles dot-prefix fast mode
 - **`get_model(spec, config)`** — Returns a `ModelHandle` (`{ model, reasoning, fast}`) backed by the vendor provider; used by `create_ask_ai()` and directly by the web server for multi-turn `generateText()` calls
 - **`create_ask_ai(spec, config)`** — Returns an `AskInstance` with an `ask()` method (one-shot, `generateText()`) and an `ask_stream()` method (token-by-token, `streamText()`). Streaming yields `AskStreamEvent`s (`reasoning`/`reasoning_end`/`text`) as a **lazy** `AsyncIterable`; input is a prompt string or a multi-turn message array (`AskStreamInput`)
@@ -134,7 +134,7 @@ Files:
 
 ### Model alias conventions
 
-- **First character(s)** = vendor+model: `g` = GPT-6.1 Sol, `o` = Claude Opus 5.5, `s` = Claude Sonnet 5.5, `f` = Claude Fable 5.1, `h` = Claude Haiku 4.5, `l` = Gemini 3.8 Flash, `j` = Gemini 3.5 Flash Lite, `d` = DeepSeek V4.1 Flash, `z` = GLM-5.3 (Z.ai)
+- **First character(s)** = vendor+model: `g` = GPT-6.1 Sol, `o` = Claude Opus 5.5, `s` = Claude Sonnet 5.5, `f` = Claude Fable 5.1, `h` = Claude Haiku 5.5, `i` = Gemini 4 Argon, `l` = Gemini 3.8 Flash, `j` = Gemini 3.5 Flash Lite, `d` = DeepSeek V4.1 Flash, `z` = GLM-5.3 (Z.ai)
 - **Suffix** = thinking budget: `--` none, `-` low, (none) medium, `+` high, `++` xhigh/max; documented vendor exceptions apply
 - **Dot prefix** (`.g`) = fast mode
 - **Self-hosted**: `q` = local `/root/model`, `v` = vast `/root/model`

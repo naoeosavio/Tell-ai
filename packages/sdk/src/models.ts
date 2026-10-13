@@ -88,12 +88,16 @@ export const MODELS: Record<string, string> = {
   'f++': 'anthropic:claude-fable-5-1:max',
   F: 'anthropic:claude-fable-5-1:high',
 
-  h: 'anthropic:claude-haiku-4-5:none',
+  'h-': 'anthropic:claude-haiku-5-5:low',
+  h: 'anthropic:claude-haiku-5-5:medium',
+  'h+': 'anthropic:claude-haiku-5-5:high',
+  'h++': 'anthropic:claude-haiku-5-5:max',
+  H: 'anthropic:claude-haiku-5-5:high',
 
-  'i-': 'google:gemini-3.1-pro:low',
-  i: 'google:gemini-3.1-pro:medium',
-  'i+': 'google:gemini-3.1-pro:high',
-  I: 'google:gemini-3.1-pro:high',
+  'i-': 'google:gemini-4-argon:low',
+  i: 'google:gemini-4-argon:medium',
+  'i+': 'google:gemini-4-argon:high',
+  I: 'google:gemini-4-argon:high',
 
   'j--': 'google:gemini-3.5-flash-lite:none',
   'j-': 'google:gemini-3.5-flash-lite:low',

@@ -53,14 +53,14 @@ Fast mode (`.g` or `:fast`) disables reasoning regardless of the tier.
 
 ## Vendors in the alias table
 
-`MODELS` holds 142 aliases across these vendors:
+`MODELS` holds 146 aliases across these vendors:
 
 | Vendor | Aliases | Families |
 |---|---:|---|
 | openai | 34 | `g` GPT-6.1 Sol, `p` GPT-6.1 Sol Pro, `t` Terra, `c` GPT-6 Luna, `e` GPT-6 Astra, `r` GPT-6 Astra Pro |
 | alibaba | 18 | `a` Qwen3.8 Max, `at` Qwen3.8 27B, `af` Qwen3.8 Flash |
-| anthropic | 19 | `s` Sonnet 5.5, `o` Opus 5.5, `f` Fable 5.1, `h` Haiku 4.5 |
-| google | 15 | `i` Gemini 3.1 Pro, `j` 3.5 Flash Lite, `l` 3.8 Flash |
+| anthropic | 23 | `s` Sonnet 5.5, `o` Opus 5.5, `f` Fable 5.1, `h` Haiku 5.5 |
+| google | 15 | `i` Gemini 4 Argon, `j` 3.5 Flash Lite, `l` 3.8 Flash |
 | meta | 12 | `m` Muse Spark 1.3, `mc` Muse Spark 1.3 Contributor |
 | xiaomi | 12 | `mi` MiMo-V2.6 Pro, `mif` MiMo-V2.6 Flash |
 | zai | 12 | `z` GLM-5.3, `zf` GLM-5.3 Flash |
@@ -75,6 +75,7 @@ Fast mode (`.g` or `:fast`) disables reasoning regardless of the tier.
 ### Tier quirks
 
 * `gpt-6.1-sol` and the GPT-6 families do not support `none`; legacy `g--`, `e--` and `r--` therefore map to `low`.
+* `h` walks the Haiku 5.5 effort ladder: `h-` low, `h` medium, `h+` high, `h++` max, `H` high. Haiku 5.5 is the first Haiku with an adjustable effort and its thinking is always on, so the family has no `none` tier.
 * The lowercase DeepSeek series skips `medium`: `d` → `high`, `d-` → `low`, `d--` → `none`, `d+` → `max`.
 * `k` is the Kimi K2.7 Code model at `none`. K3 supports only official `low`, `high` and `max` efforts: `K-` low, `K` high, `K+` max.
 * Gemini `max` maps to `high`; Grok and Alibaba cap `++` at `xhigh`.
@@ -91,6 +92,8 @@ Short aliases are retained for muscle memory while pointing at published models:
 | `e*` | `openai:gpt-6-astra` |
 | `r*` | `openai:gpt-6-astra-pro` (confirmed on OpenRouter) |
 | `at*` | `alibaba:qwen3.8-27b` (confirmed on OpenRouter) |
+| `h*` | `anthropic:claude-haiku-5-5` |
+| `i*` | `google:gemini-4-argon` |
 
 ## Vendor inference (`infer_vendor`)
 
