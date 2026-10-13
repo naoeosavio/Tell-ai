@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.7.0 — 2026-10-13
 
 ### Refactors
 - `src/runtime-limits.ts` deleted: the whole limit contract (including `StdinLimitError`, the `EXIT_*` statuses and the env reader, now with a required env parameter) lives in `@tell-ai/core`. `Tell.ts`/`tellrc.ts` import the owner directly (`runtime_env_from_process(process.env)` at the two call sites, so the `vm` sandboxes keep seeing the fake process env). No flag, env, tellrc key, default, range, message or exit status changed.
@@ -26,6 +26,8 @@
 
 ### Notes
 - `load_sdk_config` returns `models`/`wires`/`headers` only for the knobs that are set, so a missing value keeps raising the SDK's own error instead of picking a default.
+
+- Requires `@tell-ai/sdk` 0.4.0 (`custom` vendor, wire resolution and the per-vendor `models`/`wires`/`headers` config slots); the `^0.3.0` floor in `cli`/`web`/`core` was raised accordingly.
 
 ## v0.6.0 — 2026-10-01
 

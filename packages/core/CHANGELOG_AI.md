@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.1.1 — 2026-10-13
 
 ### Features
 - Browser condition on the main entry (`task_042_core-browser-condition.md`): new `src/browser.ts` re-exports the pure surface only (loop-feedback, risk, chain-decision, runtime-limits, config, browser-runtime + erased port types), built to `dist/browser.js`/`.d.ts` and served as the FIRST `exports["."]` condition so Vite clients resolve it while Node keeps `import`/`require`. `runtime-api` values stay out (they import `@tell-ai/sdk`); the `./loop-feedback` subpath was removed in Phase 4 once nothing imported it (wording travels via the main entry + `browser` condition).
@@ -13,6 +13,10 @@
 
 ### Refactors
 - No `PolicyDecision` is fabricated while `task_00N_policy-sandbox.md` is BLOCKED: base risk returns `RiskAssessment` only; the future policy engine composes it and owns the verdict.
+
+
+### Notes
+- Requires `@tell-ai/sdk` 0.4.0 (`custom` vendor, wire resolution and the per-vendor `models`/`wires`/`headers` config slots); the `^0.3.0` floor in `cli`/`web`/`core` was raised accordingly.
 
 ## v0.1.0 — 2026-10-07
 

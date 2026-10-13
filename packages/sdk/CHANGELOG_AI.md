@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.4.0 — 2026-10-13
 
 ### Features
 - New generic `custom` vendor for any user-supplied OpenAI/Anthropic-shaped endpoint — OpenRouter, vLLM, Ollama, HuggingFace, Fireworks, LiteLLM, an OpenAI-compatible proxy. Use `custom:<model>`; there is no alias and no product-specific code in the SDK.

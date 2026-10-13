@@ -1,6 +1,6 @@
 {
   "name": "@tell-ai/core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Shared Node runtime for tell-ai: base config, fail-closed paths, project context and (later) the single exec/loop owner",
   "license": "MIT",
   "repository": {
@@ -48,6 +48,6 @@
     "ci": "npm run lint && npm run check && npm run build"
   },
   "dependencies": {
-    "@tell-ai/sdk": "^0.3.0"
+    "@tell-ai/sdk": "^0.4.0"
   }
 }
