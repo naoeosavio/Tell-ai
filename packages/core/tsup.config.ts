@@ -13,10 +13,10 @@ export default defineConfig([
     target: 'es2020',
   },
   {
-    // Pure text helpers with no `node:*` import, published as a subpath so the
-    // browser bundles (Web frontend) can own the same wording without pulling
-    // the Node runtime into the client build.
-    entry: { 'loop-feedback': 'src/loop-feedback.ts' },
+    // Browser-safe surface (`src/browser.ts`, pure modules only, no builtin
+    // imports). Resolvers with an active `browser` condition (Vite client)
+    // take `exports["."].browser`; Node skips it and falls to import/require.
+    entry: { browser: 'src/browser.ts' },
     format: ['esm', 'cjs'],
     dts: true,
     sourcemap: false,

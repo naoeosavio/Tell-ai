@@ -11,9 +11,21 @@
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
+  "browser": "./dist/browser.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "browser": {
+        "import": {
+          "types": "./dist/browser.d.ts",
+          "default": "./dist/browser.js"
+        },
+        "require": {
+          "types": "./dist/browser.d.cts",
+          "default": "./dist/browser.cjs"
+        },
+        "default": "./dist/browser.js"
+      },
       "import": {
         "types": "./dist/index.d.ts",
         "default": "./dist/index.js"
@@ -21,16 +33,6 @@
       "require": {
         "types": "./dist/index.d.cts",
         "default": "./dist/index.cjs"
-      }
-    },
-    "./loop-feedback": {
-      "import": {
-        "types": "./dist/loop-feedback.d.ts",
-        "default": "./dist/loop-feedback.js"
-      },
-      "require": {
-        "types": "./dist/loop-feedback.d.cts",
-        "default": "./dist/loop-feedback.cjs"
       }
     }
   },

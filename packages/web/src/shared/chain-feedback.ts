@@ -2,9 +2,9 @@
 // Chain-loop execution outputs are appended as role:'user' messages so the LLM
 // keeps the tool output in context; the UI renders them on the LLM side.
 // The wording itself is owned by @tell-ai/core (browser-safe subpath, no
-// `node:*`), so the offline fallback loop can never drift from the server.
+// builtin imports), so the offline fallback loop can never drift from the server.
 
-import { format_command_skipped, format_executed_command, parse_command_feedback } from '@tell-ai/core/loop-feedback';
+import { format_command_skipped, format_executed_command, parse_command_feedback } from '@tell-ai/core';
 
 export const FEEDBACK_PREFIX_RE = /^(Executed command|Skipped by user):/;
 

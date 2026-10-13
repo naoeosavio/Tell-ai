@@ -1,10 +1,10 @@
 /**
  * One owner for the command-feedback protocol shared by every host.
  *
- * Pure text helpers on purpose: no `node:*`, no environment, no I/O. The Node
+ * Pure text helpers on purpose: no builtin imports, no environment, no I/O. The Node
  * hosts (CLI, Web server) import this through `@tell-ai/core`; the browser
- * bundle imports the same module through `@tell-ai/core/loop-feedback`, so the
- * Web fallback loop can never drift from the server wording.
+ * bundle imports the same module through the `browser` condition of the main
+ * entry, so the Web fallback loop can never drift from the server wording.
  */
 
 /** Follow-up instruction for rounds that may still request a command. */

@@ -37,9 +37,9 @@ fail-closed Phase 1 gate is `test/test-core-package.js`.
 - The vendor → key/url mapping is owned here (`src/sdk-config.ts`): the CLI
   (`token_files: true`) and the Web server (`token_files: false`) both build
   their `SDKConfig` from it, so every vendor honors its `*_BASE_URL`.
-- The command-feedback wording is owned here (`src/loop-feedback.ts`, also
-  published as the browser-safe `@tell-ai/core/loop-feedback` subpath): the
-  CLI log, the Web chain messages and the Web offline fallback loop all
+- The command-feedback wording is owned here (`src/loop-feedback.ts`, served to
+  browsers through the `browser` condition of the main entry, `src/browser.ts`):
+  the CLI log, the Web chain messages and the Web offline fallback loop all
   format through it, and the Web parser delegates to it.
 
 ## Defaults per host
@@ -64,11 +64,12 @@ handoff and are not read here.
 |---|---|
 | `src/runtime-api.ts` | Injectable contract + `createTellRuntime` factory , `TellResult`, ports, callbacks, tokens |
 | `src/browser-runtime.ts` | `createLocalStorageAdapter` over injected `StorageLike` |
+| `src/browser.ts` | Browser-safe surface (loop-feedback, risk, chain-decision, runtime-limits, config, browser-runtime + erased port types; never `runtime-api` values, `loop`, `runtime`, or Node-only modules); built to `dist/browser.js` and served through the `browser` condition of the main entry so Vite never bundles Node builtins |
 | `src/config.ts` | Host defaults, `CoreConfig`/`ConfigLayer`, precedence resolver, base env loader |
 | `src/runtime-limits.ts` | Single owner of every limit value: defaults, range table, `parse_runtime_limits` (flag > env > project tellrc > user tellrc > default), `TELLRC_LIMIT_KEYS`, `truncate_context`/`truncate_output`, `build_execution_options`, chat-payload caps (`PAYLOAD_MAX_*`) |
 | `src/paths.ts` | `canonical_path` / `canonical_write_path` (realpath, symlink fail-closed, opt-in `create_parents`) |
 | `src/project-context.ts` | Bounded project tree + README/AGENTS docs (the Web `context-builder` delegates here); publishes the tree/doc caps |
-| `src/loop-feedback.ts` | Single owner of the command-feedback wording (`format_*`, `parse_command_feedback`); pure, no `node:*` |
+| `src/loop-feedback.ts` | Single owner of the command-feedback wording (`format_*`, `parse_command_feedback`); pure, no builtin imports |
 | `src/sdk-config.ts` | Single owner of the vendor → key/url mapping (`build_sdk_config_from_env` sync + `load_sdk_config_from_env` with token files) |
 | `src/chain-decision.ts` | Pure `validate_chain_decision_payload` for `/api/chain` confirm (no server state) |
 | `src/risk.ts` | Base `assess_base_risk` + `create_base_risk_port` (`permissive` CLI / `strict` Web, `RiskAssessment` only) |
