@@ -38,9 +38,6 @@ export default defineConfig([
         path: './src/shims/node.cjs',
         fs: './src/shims/node.cjs',
         os: './src/shims/node.cjs',
-        'node:path': './src/shims/node.cjs',
-        'node:fs': './src/shims/node.cjs',
-        'node:os': './src/shims/node.cjs',
       };
     },
     banner: {
@@ -74,9 +71,6 @@ export default defineConfig([
         path: './src/shims/node.cjs',
         fs: './src/shims/node.cjs',
         os: './src/shims/node.cjs',
-        'node:path': './src/shims/node.cjs',
-        'node:fs': './src/shims/node.cjs',
-        'node:os': './src/shims/node.cjs',
       };
     },
     banner: {
