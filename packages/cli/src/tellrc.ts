@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import { TELLRC_LIMIT_KEYS, validate_tellrc_limit_value } from '@tell-ai/core';
+import { compose_custom_system, TELLRC_LIMIT_KEYS, validate_tellrc_limit_value } from '@tell-ai/core';
 
 /** Max bytes of a `.tellrc` file read before it is ignored with a warning. */
 export const TELLRC_MAX_BYTES = 256 * 1024;
@@ -947,19 +947,16 @@ export function load_system_file_text(
  * Composes tellrc custom instructions before the safety system prompt.
  *
  * Config can only prepend context — it never replaces `<RUN>`, approval,
- * injection or deny rules, which stay last in the safety prompt.
+ * injection or deny rules, which stay last in the safety prompt. The wording is
+ * owned by `@tell-ai/core` (`compose_custom_system`), so the CLI and the Web
+ * sandbox emit the same preamble.
  *
  * @param safety_prompt - The canonical safety/execution system prompt.
  * @param custom_text - Custom instructions (inline system, file, profile).
  * @returns The composed prompt with safety last.
  */
 export function compose_system_prompt(safety_prompt: string, custom_text?: string): string {
-  const custom = (custom_text ?? '').trim();
-  if (!custom) {
-    return safety_prompt;
-  } else {
-    return `Custom instructions:\n${custom}\n\n${safety_prompt}`;
-  }
+  return compose_custom_system(custom_text ?? '', safety_prompt);
 }
 
 /**

@@ -18,6 +18,7 @@ import {
   EXIT_MODEL_ERROR,
   EXIT_TIMEOUT,
   format_command_result,
+  HOST_DEFAULT_MODEL,
   format_command_skipped,
   MAX_CHAIN_STEPS,
   parse_runtime_limits,
@@ -80,7 +81,7 @@ import {
   validate_temperature,
 } from './tellrc';
 
-const DEFAULT_MODEL = process.env['TELL_MODEL'] || 'g';
+const DEFAULT_MODEL = process.env['TELL_MODEL'] || HOST_DEFAULT_MODEL.cli;
 const STDIN_TIMEOUT = DEFAULT_STDIN_TIMEOUT_MS;
 // Chars of accumulated conversation context; beyond this the oldest part is
 // summarized away (LLM windows are far below 64K chars of raw history).
@@ -925,6 +926,7 @@ async function launch_web(opts: {
   temperature?: number | undefined;
   maxChainSteps?: number | undefined;
   maxBufferBytes?: number | undefined;
+  outputMaxBytes?: number | undefined;
   contextChars?: number | undefined;
   stdinTimeoutMs?: number | undefined;
   execTimeout?: number | undefined;
@@ -978,6 +980,7 @@ async function launch_web(opts: {
     }
     if (opts.maxChainSteps !== undefined) child_args.push('--max-chain-steps', String(opts.maxChainSteps));
     if (opts.maxBufferBytes !== undefined) child_args.push('--max-buffer-bytes', String(opts.maxBufferBytes));
+    if (opts.outputMaxBytes !== undefined) child_args.push('--output-max-bytes', String(opts.outputMaxBytes));
     if (opts.contextChars !== undefined) child_args.push('--context-chars', String(opts.contextChars));
     if (opts.stdinTimeoutMs !== undefined) child_args.push('--stdin-timeout-ms', String(opts.stdinTimeoutMs));
     if (opts.execTimeout !== undefined) child_args.push('--exec-timeout', String(opts.execTimeout));
@@ -1306,9 +1309,9 @@ async function main() {
     const web_system_text = opts.system ?? early_tellrc.system;
     // Limit forwarding prefers explicit CLI flags/env (already validated
     // into `early_limits`) over tellrc; absent layers stay absent so the web
-    // server keeps its own defaults. `--stdin-max-bytes`/`--output-max-bytes`
-    // have no web target and stay CLI-only; a disabled stdin deadline (0) is
-    // omitted because the web parser drops non-positive values.
+    // server keeps its own defaults. `--stdin-max-bytes` stays CLI-only (the
+    // sandbox has no piped stdin); a disabled stdin deadline (0) is omitted
+    // because the web parser drops non-positive values.
     const web_env = runtime_env_from_process(process.env);
     const web_stdin_flag_set =
       (opts.stdinTimeout !== undefined && (opts.stdinTimeout as unknown) !== false) ||
@@ -1340,6 +1343,10 @@ async function main() {
         opts.maxBuffer !== undefined || web_env.TELL_MAX_BUFFER_BYTES !== undefined
           ? early_limits.max_buffer_bytes
           : early_tellrc.limits.max_buffer_bytes,
+      outputMaxBytes:
+        opts.outputMaxBytes !== undefined || web_env.TELL_OUTPUT_MAX_BYTES !== undefined
+          ? early_limits.output_max_bytes
+          : early_tellrc.limits.output_max_bytes,
       contextChars:
         opts.contextMaxChars !== undefined || web_env.TELL_CONTEXT_MAX_CHARS !== undefined
           ? early_limits.context_max_chars

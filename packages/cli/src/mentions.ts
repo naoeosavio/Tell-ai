@@ -2,6 +2,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
 
+import { DEFAULT_EXEC_TIMEOUT_MS } from '@tell-ai/core';
+
 /** Max bytes of file content injected per mention before truncation. */
 export const MAX_MENTION_BYTES = 64 * 1024;
 /** Prefix bytes probed for NUL when deciding a file is binary. */
@@ -16,8 +18,14 @@ export const SKIP_DIR_NAMES: ReadonlySet<string> = new Set(['node_modules', '.gi
 export const TRAILING_PUNCT_CHARS = '.,;:!?)]}';
 /** Placeholder shielding an escaped `\@` from the mention regex. */
 const ESCAPED_AT_PLACEHOLDER = '\u0000AT_ESCAPED\u0000';
-/** Timeout for the outside-cwd read confirmation prompt. */
-const CONFIRM_TIMEOUT_MS = 120_000;
+/**
+ * Timeout for the outside-cwd read confirmation prompt.
+ *
+ * Mirrors the command execution deadline: same owner
+ * (`DEFAULT_EXEC_TIMEOUT_MS` in `@tell-ai/core`), so the read gate and the
+ * exec budget move together.
+ */
+const CONFIRM_TIMEOUT_MS = DEFAULT_EXEC_TIMEOUT_MS;
 
 /** Options for {@link expand_mentions}. */
 export type ExpandMentionsOptions = {

@@ -9,8 +9,6 @@ import {
   create_core_runtime,
   create_node_executor,
   EXEC_DEFAULT_TIMEOUT_MS,
-  type ExecutorOptions,
-  type ExecutorResult,
   LOOP_MAX_ROUNDS,
   type ModelPort,
   type RiskAssessment,
@@ -20,7 +18,6 @@ import {
   SENSITIVE_ENV_NAMES,
   SENSITIVE_ENV_SUFFIX,
   type StoragePort,
-  sanitize_exec_env,
   type TellResult,
 } from '@tell-ai/core';
 import { type AskInstance, sanitize_reasoning } from '@tell-ai/sdk';
@@ -35,9 +32,6 @@ export const READLINE_CONFIRM_TIMEOUT_MS = EXEC_DEFAULT_TIMEOUT_MS;
 
 /** Effective execution mode, resolved once from the flags (fail-closed). */
 export type ExecMode = 'no-exec' | 'confirm-all' | 'auto-risk';
-
-/** CLI command result shape (output text plus numeric exit code). */
-export type CliCommandResult = { output: string; exitCode: number };
 
 /** User confirmation callback (readline prompt in the CLI, stubbed in tests). */
 export type CliConfirmFn = (script: string) => Promise<boolean>;
@@ -86,19 +80,6 @@ export function is_high_risk_script(script: string): boolean {
  */
 export function cli_risk_port(): RiskPort {
   return create_base_risk_port('permissive');
-}
-
-/**
- * Returns a scrubbed environment for a child process.
- *
- * Delegates to the core allowlist: provider keys, `TELL_KEY`,
- * `TELL_TOKEN`, package tokens and loader/preload variables never reach
- * an executed command; non-secret content is preserved verbatim.
- *
- * @returns The sanitized environment forwarded to `exec`.
- */
-export function sanitized_command_env(): NodeJS.ProcessEnv {
-  return sanitize_exec_env(process.env);
 }
 
 /**
@@ -182,41 +163,6 @@ export function script_touches_outside_cwd(script: string, cwd: string): boolean
 }
 
 /**
- * Runs one script through the core Node executor.
- *
- * The CLI keeps no transport of its own: `create_node_executor` owns the
- * explicit shell, the canonical timeout/cap, the scrubbed environment and
- * the process-group kill on timeout, overflow or cancellation. The result
- * contract (`stdout`, `stderr`, `exit_code`) is unchanged, so the historical
- * CLI output shape below is preserved byte for byte.
- *
- * @param options - Executor options (script plus cwd/timeout/cap/env overrides).
- * @returns The raw process result (redaction happens at the runtime boundary).
- */
-async function run_exec_transport(options: ExecutorOptions): Promise<ExecutorResult> {
-  return create_node_executor()(options);
-}
-
-/**
- * Executes one script through the CLI transport (historical output shape).
- *
- * Maps the transport result onto `{ output, exitCode }`: success
- * concatenates `stdout + stderr` raw; failures join the non-empty parts
- * with newlines — byte for byte what the CLI always produced.
- *
- * @param script - Approved script to run in `process.cwd()`.
- * @returns The combined output plus the numeric exit code.
- */
-export async function execute_command(script: string): Promise<CliCommandResult> {
-  const result = await run_exec_transport({ script });
-  if (result.exit_code === 0) {
-    return { output: result.stdout + result.stderr, exitCode: 0 };
-  } else {
-    return { output: [result.stdout, result.stderr].filter(Boolean).join('\n'), exitCode: result.exit_code };
-  }
-}
-
-/**
  * Creates the CLI command executor port (the core Node executor).
  *
  * Honors per-call `cwd`/`timeout_ms`/`max_output_bytes`/`env`/`cancellation`
@@ -224,8 +170,7 @@ export async function execute_command(script: string): Promise<CliCommandResult>
  * 32 MB) while per-call values win. A pre-cancelled token rejects without
  * spawning.
  *
- * @returns A `CommandExecutor` for runtime wiring (the loop still calls
- * `execute_command` until its own migration).
+ * @returns A `CommandExecutor` for runtime wiring (the only CLI executor).
  */
 export function create_cli_executor(defaults?: { timeout_ms?: number; max_output_bytes?: number }): CommandExecutor {
   return create_node_executor({
