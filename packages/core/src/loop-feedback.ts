@@ -16,7 +16,7 @@ export const COMMAND_FEEDBACK_FAILED_PREAMBLE =
   'The command above FAILED. Analyze the error output and try a corrected approach.';
 
 /** Kind of command outcome a feedback text describes. */
-export type CommandFeedbackKind = 'executed' | 'failed' | 'skipped';
+export type CommandFeedbackKind = 'executed' | 'failed' | 'skipped' | 'cancelled';
 
 /** Parsed pieces of a command-feedback text. */
 export type ParsedCommandFeedback = {
@@ -37,11 +37,13 @@ export type CommandFeedbackOptions = {
 };
 
 /** Header of the executed-command record. */
-const EXECUTED_HEADER = 'Executed command:';
+export const EXECUTED_HEADER = 'Executed command:';
+/** Header of the cancelled-command record. */
+export const CANCELLED_HEADER = 'Command cancelled:';
 /** Header of the skipped-command record. */
-const SKIPPED_HEADER = 'Skipped by user:';
+export const SKIPPED_HEADER = 'Skipped by user:';
 /** Separator between the script and the output inside a record. */
-const OUTPUT_SEPARATOR = '\nOutput:\n';
+export const OUTPUT_SEPARATOR = '\nOutput:\n';
 /** Matches the failed-command header with its optional exit code. */
 const FAILED_HEADER_PATTERN = /^Command failed(?: \(exit code (\d+)\))?:\n/;
 
@@ -107,6 +109,31 @@ export function format_command_result(script: string, output: string, exit_code:
  */
 export function format_command_skipped(script: string): string {
   return `${SKIPPED_HEADER}\n${script}`;
+}
+
+/**
+ * Formats the record of one command cancelled before it produced output.
+ *
+ * @param script - Script whose execution was cancelled.
+ * @returns The cancelled record text.
+ */
+export function format_cancelled_command(script: string): string {
+  return `${CANCELLED_HEADER}\n${script}`;
+}
+
+/**
+ * Formats a non-execution status marker for one requested script.
+ *
+ * Approval/denial/no-executor states carry a `Command <status>:` header with no
+ * output — the same wording vocabulary the hosts render. Keeping it here means
+ * one module owns every header a timeline can contain.
+ *
+ * @param status - Command status (`denied`, `awaiting_approval`, `requested`, `skipped`).
+ * @param script - Script that was not executed.
+ * @returns The status marker text.
+ */
+export function format_command_status(status: string, script: string): string {
+  return `Command ${status}:\n${script}`;
 }
 
 /**
@@ -183,8 +210,9 @@ function split_record(record: string): { script: string; output: string } {
  * Parses a command-feedback text back into its pieces.
  *
  * Recognizes every wording this module formats: executed, failed (with or
- * without an exit code) and skipped records, plus the full round feedback
- * with its preamble and continuation line. Anything else is not feedback.
+ * without an exit code), skipped and cancelled records, plus the full round
+ * feedback with its preamble and continuation line. Anything else is not
+ * feedback.
  *
  * @param text - Candidate feedback text.
  * @returns The parsed pieces, or null when the text is not a feedback record.
@@ -193,6 +221,8 @@ export function parse_command_feedback(text: string): ParsedCommandFeedback | nu
   const bare = strip_feedback_extras(text);
   if (bare.startsWith(`${SKIPPED_HEADER}\n`)) {
     return { kind: 'skipped', script: bare.slice(SKIPPED_HEADER.length).trim(), output: '', exit_code: null };
+  } else if (bare.startsWith(`${CANCELLED_HEADER}\n`)) {
+    return { kind: 'cancelled', script: bare.slice(CANCELLED_HEADER.length).trim(), output: '', exit_code: null };
   } else if (bare.startsWith(`${EXECUTED_HEADER}\n`)) {
     const parts = split_record(bare.slice(EXECUTED_HEADER.length));
     return { kind: 'executed', script: parts.script, output: parts.output, exit_code: 0 };

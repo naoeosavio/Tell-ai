@@ -7,6 +7,7 @@ export {
   load_env_layer,
   resolve_core_config,
 } from './config';
+export { CUSTOM_SYSTEM_PREFIX, compose_custom_system } from './custom-system';
 export type { NodeExecutorDefaults } from './exec';
 export {
   collect_exec_secrets,
@@ -33,17 +34,27 @@ export type {
   ParsedCommandFeedback,
 } from './loop-feedback';
 export {
+  CANCELLED_HEADER,
   COMMAND_FEEDBACK_FAILED_PREAMBLE,
   COMMAND_FEEDBACK_INSTRUCTION,
+  EXECUTED_HEADER,
+  format_cancelled_command,
   format_command_feedback,
   format_command_result,
   format_command_skipped,
   format_executed_command,
   format_failed_command,
+  OUTPUT_SEPARATOR,
   parse_command_feedback,
+  SKIPPED_HEADER,
 } from './loop-feedback';
 export type { CanonicalWriteOptions } from './paths';
-export { canonical_path, canonical_write_path } from './paths';
+export {
+  canonical_path,
+  canonical_write_path,
+  has_lexical_target,
+  is_path_inside_base,
+} from './paths';
 export type { ProjectContext } from './project-context';
 export {
   build_project_context,

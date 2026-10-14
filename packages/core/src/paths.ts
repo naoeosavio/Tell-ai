@@ -62,6 +62,52 @@ export function canonical_path(base_dir: string, candidate: string): string | nu
   }
 }
 
+/**
+ * Reports whether a candidate stays lexically inside a base directory.
+ *
+ * Pure and I/O-free: it answers only "is this path inside the base" for the
+ * purpose of choosing an error message. Containment is still decided by
+ * `canonical_path` (fail-closed, realpath); a false from this helper must
+ * never be read as "outside", and a true never authorizes a read.
+ *
+ * @param base_dir - Anchor directory the candidate must stay inside.
+ * @param candidate - User path, resolved against `base_dir` when relative.
+ * @returns Whether the lexical resolution stays inside the base.
+ */
+export function is_path_inside_base(base_dir: string, candidate: string): boolean {
+  const base = path.resolve(base_dir);
+  const resolved = path.resolve(base, candidate);
+  const relative = path.relative(base, resolved);
+  if (relative === '') {
+    return true;
+  } else {
+    return !relative.startsWith('..') && !path.isAbsolute(relative);
+  }
+}
+
+/**
+ * Reports whether a candidate has any filesystem target on its lexical path.
+ *
+ * Answers "does something exist here" without judging containment, so a host
+ * can tell an absent file from a symlink that escapes (both rejected by
+ * `canonical_path`) when choosing between 404 and 403. Never authorizes a
+ * read: containment stays with `canonical_path`.
+ *
+ * @param base_dir - Anchor directory the candidate resolves against.
+ * @param candidate - User path, resolved against `base_dir` when relative.
+ * @returns Whether `lstat` finds a target on the lexical path.
+ */
+export function has_lexical_target(base_dir: string, candidate: string): boolean {
+  const base = path.resolve(base_dir);
+  const resolved = path.resolve(base, candidate);
+  try {
+    fs.lstatSync(resolved);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Options for `canonical_write_path`. */
 export type CanonicalWriteOptions = {
   /**

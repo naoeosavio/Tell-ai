@@ -452,8 +452,10 @@ export function runtime_env_from_process(env: Record<string, string | undefined>
  * Splits conversation text into atomic turns.
  *
  * A turn starts at a `User:`, `Assistant:`, `Executed command:`,
- * `Command failed`, `Skipped by user` or `Command execution disabled` line;
- * text before the first marker is its own leading turn so nothing is lost.
+ * `Command failed`, `Command cancelled:`, `Skipped by user` or
+ * `Command execution disabled` line; text before the first marker is its own
+ * leading turn so nothing is lost. Every command header listed here is owned
+ * by `loop-feedback.ts`, so a runtime timeline splits record by record.
  *
  * @param text - Full conversation text.
  * @returns The atomic turns in order.
@@ -468,6 +470,10 @@ export function split_context_turns(text: string): string[] {
     } else if (/^Executed command:\s*$/.test(line)) {
       return true;
     } else if (/^Command failed/.test(line)) {
+      return true;
+    } else if (/^Command cancelled:\s*$/.test(line)) {
+      return true;
+    } else if (/^Command [a-z_]+:\s*$/.test(line)) {
       return true;
     } else if (/^Skipped by user:\s*$/.test(line)) {
       return true;

@@ -1,5 +1,11 @@
 import { extract_runs, get_system_prompt, strip_run_tags, strip_think_tags } from '@tell-ai/sdk';
 
+import {
+  format_cancelled_command,
+  format_command_status,
+  format_executed_command,
+  format_failed_command,
+} from './loop-feedback';
 import { DEFAULT_EXEC_TIMEOUT_MS, DEFAULT_MAX_BUFFER_BYTES } from './runtime-limits';
 
 // Default key for the single conversation slot kept through StoragePort.
@@ -490,7 +496,7 @@ export function createTellRuntime(options: TellRuntimeOptions): TellRuntime {
       } else {
         // No skip observer — the status is still recorded below.
       }
-      timeline.push(`Command ${status}:\n${script}`);
+      timeline.push(format_command_status(status, script));
       await save_turn(message, text);
       return { status: 'completed', text, timeline, commands: [command] };
     }
@@ -505,14 +511,14 @@ export function createTellRuntime(options: TellRuntimeOptions): TellRuntime {
       } else {
         // No skip observer.
       }
-      timeline.push(`Command denied:\n${script}`);
+      timeline.push(format_command_status('denied', script));
       await save_turn(message, text);
       return { status: 'completed', text, timeline, commands: [denied] };
     } else if (options.executor === undefined) {
       return skip_command('requested', 'no-executor');
     } else if (options.approval === undefined) {
       // Fail-closed: an executor without an explicit approval never runs.
-      timeline.push(`Command awaiting_approval:\n${script}`);
+      timeline.push(format_command_status('awaiting_approval', script));
       await save_turn(message, text);
       return { status: 'awaiting_approval', text, timeline, commands: [{ script, status: 'awaiting_approval' }] };
     } else {
@@ -529,7 +535,7 @@ export function createTellRuntime(options: TellRuntimeOptions): TellRuntime {
     }
 
     if (token.cancelled) {
-      timeline.push(`Command cancelled:\n${script}`);
+      timeline.push(format_cancelled_command(script));
       await save_turn(message, text);
       return { status: 'cancelled', text, timeline, commands: [{ script, status: 'cancelled' }] };
     } else {
@@ -559,7 +565,7 @@ export function createTellRuntime(options: TellRuntimeOptions): TellRuntime {
       } else {
         // No error observer — the failure is still recorded below.
       }
-      timeline.push(`Command failed:\n${redact(script)}`);
+      timeline.push(format_failed_command(redact(script), redacted_error, null));
       await save_turn(message, text);
       return {
         status: 'failed',
@@ -580,7 +586,11 @@ export function createTellRuntime(options: TellRuntimeOptions): TellRuntime {
     } else {
       // No output observer.
     }
-    timeline.push(`Command ${command_status}:\n${redacted_script}\nOutput:\n${output}`);
+    const command_record =
+      result.exit_code === 0
+        ? format_executed_command(redacted_script, output)
+        : format_failed_command(redacted_script, output, result.exit_code);
+    timeline.push(command_record);
     await save_turn(message, text);
     return {
       status: 'completed',

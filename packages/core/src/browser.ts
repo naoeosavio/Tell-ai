@@ -17,14 +17,18 @@ export type { ChainDecision, ChainDecisionPayload, ChainDecisionValidation } fro
 export { validate_chain_decision_payload } from './chain-decision';
 export type { ConfigLayer, CoreConfig, CoreHost, ResolvedConfigInput } from './config';
 export { HOST_DEFAULT_MODEL, load_env_layer, resolve_core_config } from './config';
+export { CUSTOM_SYSTEM_PREFIX, compose_custom_system } from './custom-system';
 export type {
   CommandFeedbackKind,
   CommandFeedbackOptions,
   ParsedCommandFeedback,
 } from './loop-feedback';
 export {
+  CANCELLED_HEADER,
   COMMAND_FEEDBACK_FAILED_PREAMBLE,
   COMMAND_FEEDBACK_INSTRUCTION,
+  EXECUTED_HEADER,
+  format_cancelled_command,
   format_command_feedback,
   format_command_result,
   format_command_skipped,
