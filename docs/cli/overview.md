@@ -65,4 +65,4 @@ Execution uses `/bin/bash` with `cwd: process.cwd()` (`Tell.ts:116-143`). Non-ze
 * stderr: `Thinking...` spinner, `Using context:` / `Created context:` notices, command echoes, warnings, errors (red).
 * Files: `~/.ai/tell_history/conversation_<timestamp>.txt` (always), `~/.ai/tell_context/*.txt` (only with context flags). See [input-logging.md](input-logging.md).
 
-Sources: `Tell.ts:1-31`, `Tell.ts:820-884`, `src/mentions.ts`, `src/env.ts`, `src/systemPrompt.ts`, `package.json`, `tsup.config.ts`.
+Sources: `Tell.ts:1-31`, `Tell.ts:820-884`, `src/mentions.ts`, `src/env.ts`, `src/tellrc.ts`, `package.json`, `tsup.config.ts`. The CLI has no local system-prompt module: the prompt comes from the SDK (`get_system_prompt`) and the custom-instructions preamble from `@tell-ai/core` (`compose_custom_system`).

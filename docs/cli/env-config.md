@@ -68,7 +68,7 @@ CUSTOM_MODEL=kimi-k3 tell -m custom "hi"
 | `CUSTOM_API` | `wires.custom` | Wire override; must be one of `chat`, `responses`, `messages` or boot fails. Without it the model id prefix decides and `chat` is the default. |
 | `CUSTOM_HEADERS` | `headers.custom` | JSON object merged into every request (routing ids, tenant tags, gateway auth). Non-object or invalid JSON fails the run. |
 
-`CUSTOM_API_KEY` matches `SENSITIVE_ENV_SUFFIX` in `Tell.ts`, so it is stripped from the process environment and from the environment of executed commands, exactly like the other vendor keys. The web sandbox reads the same five variables (`load_sdk_config_from_env`), so `tell --web` needs no extra setup. Wire rules and the SDK surface: [../sdk/models.md](../sdk/models.md) and [../sdk/api.md](../sdk/api.md).
+`CUSTOM_API_KEY` matches `SENSITIVE_ENV_SUFFIX` owned by `packages/core/src/exec.ts`, so it is stripped from the process environment and from the environment of executed commands, exactly like the other vendor keys. The web sandbox reads the same five variables (`load_sdk_config_from_env`), so `tell --web` needs no extra setup. Wire rules and the SDK surface: [../sdk/models.md](../sdk/models.md) and [../sdk/api.md](../sdk/api.md).
 
 ## CLI-only variables
 

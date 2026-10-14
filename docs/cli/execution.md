@@ -19,7 +19,7 @@ Per command (single `<RUN>` block per round; only the first block runs):
 
 * `--no-exec`: stderr `Command execution disabled (--no-exec).`, result recorded as `Command execution disabled — not run:\n<script>`, `failed: false`. No confirmation, no process. Overrides `-y`.
 * Confirmation (`confirm_command`): skip → stderr `Command skipped by user.`, result `Skipped by user:\n<script>`, `failed: false`.
-* Execute (CLI executor port, `create_cli_executor` in `src/core-adapters.ts`): `/bin/bash`, `cwd: process.cwd()`, `maxBuffer: 32MiB`, `timeout: 120s`, scrubbed env. Stdout+stderr echoed to stderr. Success → `Executed command:\n<script>\nOutput:\n<output>`; failure → `Command failed (exit code N):\n<script>\nOutput:\n<output>`, `failed: true`. `SIGTERM`-on-timeout reports exit 124 with `Command timed out after 120s`.
+* Execute (CLI executor port, `create_cli_executor` in `src/core-adapters.ts`, a thin seam over the core `create_node_executor`): `/bin/bash`, `cwd: process.cwd()`, buffer cap 32 MiB (`--max-buffer-bytes`), `timeout: 120s`, scrubbed env. Stdout+stderr echoed to stderr. Success → `Executed command:\n<script>\nOutput:\n<output>`; failure → `Command failed (exit code N):\n<script>\nOutput:\n<output>`, `failed: true`. `SIGTERM`-on-timeout reports exit 124 with `Command timed out after 120s`.
 * Results append to the history log file; chain feedback carries the converged `Executed command:` header plus the failure directive (`packages/core/src/loop.ts`).
 
 ## Confirmation (`confirm_command` + approval port)
