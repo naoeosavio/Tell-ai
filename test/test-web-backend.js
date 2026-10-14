@@ -117,9 +117,16 @@ const {
 } = loadModule('src/server/guards.ts');
 // The child-environment scrubber is owned by the core (both hosts share it);
 // the web modules import it instead of restating the denylist.
-const { sanitize_exec_env, canonical_path, canonical_write_path, build_project_context } = require(
-  BARE_SOURCES['@tell-ai/core'],
-);
+const {
+  sanitize_exec_env,
+  canonical_path,
+  canonical_write_path,
+  build_project_context,
+  is_path_inside_base,
+  has_lexical_target,
+  DEFAULT_OUTPUT_MAX_BYTES,
+  truncate_output,
+} = require(BARE_SOURCES['@tell-ai/core']);
 const {
   emptySession,
   loadSession,
@@ -1106,3 +1113,57 @@ if (failures > 0) {
   process.exit(1);
 }
 console.log('\nAll web backend tests passed.');
+
+// ---------------------------------------------------------------------------
+// Path containment answers: a missing file inside the workspace is 404, an
+// escape (including a symlink pointing outside) is 403. The route reads
+// `canonical_path` for the decision and the pure helpers for the message.
+// ---------------------------------------------------------------------------
+test('paths: absent inside-cwd target is told apart from an escape', () => {
+  const base = tmpProject();
+  try {
+    assert.strictEqual(is_path_inside_base(base, 'missing.txt'), true);
+    assert.strictEqual(is_path_inside_base(base, '../outside.txt'), false);
+    assert.strictEqual(is_path_inside_base(base, `${base}-evil`), false);
+    assert.strictEqual(has_lexical_target(base, 'missing.txt'), false);
+    fs.writeFileSync(path.join(base, 'present.txt'), 'hi');
+    assert.strictEqual(has_lexical_target(base, 'present.txt'), true);
+    // Symlink inside the base pointing outside: lexically inside, but the
+    // containment answer must stay a denial.
+    const outside = tmpProject();
+    try {
+      fs.writeFileSync(path.join(outside, 'secret.txt'), 'x');
+      fs.symlinkSync(path.join(outside, 'secret.txt'), path.join(base, 'link.txt'));
+      assert.strictEqual(is_path_inside_base(base, 'link.txt'), true);
+      assert.strictEqual(has_lexical_target(base, 'link.txt'), true);
+      assert.strictEqual(canonical_path(base, 'link.txt'), null);
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('cli args: --output-max-bytes is parsed and forwarded', () => {
+  const parsed = parseCliArgs(['--cwd', process.cwd(), '--output-max-bytes', '4096'], process.cwd());
+  assert.strictEqual(parsed.outputMaxBytes, 4096);
+  assert.strictEqual(parseCliArgs(['--cwd', process.cwd()], process.cwd()).outputMaxBytes, undefined);
+  assert.strictEqual(
+    parseCliArgs(['--cwd', process.cwd(), '--output-max-bytes', 'nope'], process.cwd()).outputMaxBytes,
+    undefined,
+  );
+  assert.ok(printHelp.toString().length > 0);
+  const help = printHelp.toString();
+  assert.ok(help.includes('--output-max-bytes'), 'help must list the new flag');
+});
+
+test('delivered output cap uses the core marker once', () => {
+  const big = 'a'.repeat(300 * 1024);
+  const capped = truncate_output(big, DEFAULT_OUTPUT_MAX_BYTES);
+  assert.ok(Buffer.byteLength(capped) <= DEFAULT_OUTPUT_MAX_BYTES);
+  assert.match(capped, /\[output truncated at 204800 bytes\]/);
+  const server = fs.readFileSync(path.join(WEB_SRC, 'src', 'server', 'server.ts'), 'utf8');
+  assert.ok(server.includes('cap_execution_output'), 'server must cap through the core owner');
+  assert.ok(!server.includes('EXEC_OUTPUT_LIMIT ='), 'server must not restate the cap literal');
+});

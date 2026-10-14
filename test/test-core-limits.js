@@ -335,3 +335,67 @@ describe('runtime limits: the timeout message has one wording', () => {
     assert.ok(!/timed out after \$\{/s.test(server), 'server must not build the message inline');
   });
 });
+describe('convergence guards: no host restates a core owner', () => {
+  it('keeps the runtime timeline on the loop-feedback owner', () => {
+    const runtime_api = source('packages/core/src/runtime-api.ts');
+    assert.ok(
+      runtime_api.includes('format_executed_command') && runtime_api.includes('format_cancelled_command'),
+      'runtime-api must import the record owner',
+    );
+    assert.ok(!/timeline\.push\(`Command /.test(runtime_api), 'runtime-api must not assemble a record inline');
+    assert.ok(!/timeline\.push\(`Command /.test(runtime_api), 'status markers must come from the owner too');
+  });
+
+  it('splits every command record the hosts emit (task 046)', () => {
+    const timeline = [
+      core.format_executed_command('ls', 'out'),
+      core.format_cancelled_command('sleep 10'),
+      core.format_failed_command('false', 'boom', 2),
+      core.format_command_skipped('rm -rf build'),
+    ].join('\n\n');
+    assert.strictEqual(core.split_context_turns(timeline).length, 4);
+  });
+
+  it('keeps one producer for the custom-instructions wording', () => {
+    for (const file of ['packages/cli/src/tellrc.ts', 'packages/web/src/server/server.ts']) {
+      const text = source(file);
+      assert.ok(!text.includes('Custom instructions:'), `${file} must call the core owner`);
+    }
+    const custom_system = source('packages/core/src/custom-system.ts');
+    assert.ok(custom_system.includes('Custom instructions:'), 'the core must own the wording');
+    assert.strictEqual(core.compose_custom_system('be terse', 'BASE'), 'Custom instructions:\nbe terse\n\nBASE');
+  });
+
+  it('keeps the delivered output cap and the round cap as core aliases in the web', () => {
+    const server = source('packages/web/src/server/server.ts');
+    assert.ok(!server.includes('200 * 1024'), 'server must not restate the delivered output cap');
+    assert.ok(!/EXEC_OUTPUT_LIMIT\s*=|const truncate =/.test(server), 'server must not keep the local cap helper');
+    assert.ok(!server.includes(', EXEC_OUTPUT_LIMIT + 32'), 'server must not slice the error message locally');
+    assert.ok(server.includes('truncate_output'), 'server must truncate through the core owner');
+    const app = source('packages/web/src/App.tsx');
+    assert.ok(!app.includes('= 8'), 'the offline loop must not restate the round cap');
+  });
+
+  it('keeps the chain round cap equal to the core default in both web producers', () => {
+    const backend = fs.readFileSync(path.join(REPO, 'test', 'test-web-backend.js'), 'utf8');
+    assert.ok(
+      backend.includes('CHAIN_MAX_ROUNDS, DEFAULT_MAX_CHAIN_STEPS'),
+      'chain-store round cap must stay pinned to the core default',
+    );
+    assert.ok(
+      /assert\.strictEqual\(MAX_CHAIN_ITERATIONS, DEFAULT_MAX_CHAIN_STEPS\)/.test(
+        source('packages/web/src/App.tsx'),
+      ) || source('packages/web/src/App.tsx').includes('const MAX_CHAIN_ITERATIONS = DEFAULT_MAX_CHAIN_STEPS'),
+      'the offline loop cap must be the core alias',
+    );
+  });
+
+  it('keeps the CLI readline confirmation timeout as a core alias', () => {
+    const mentions = source('packages/cli/src/mentions.ts');
+    assert.ok(!mentions.includes('120_000'), 'mentions must not restate the exec timeout');
+    assert.ok(
+      mentions.includes('DEFAULT_EXEC_TIMEOUT_MS') || mentions.includes('EXEC_DEFAULT_TIMEOUT_MS'),
+      'mentions must import the core timeout owner',
+    );
+  });
+});

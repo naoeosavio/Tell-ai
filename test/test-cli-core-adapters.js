@@ -119,10 +119,6 @@ describe('cli environment scrubbing delegates to core', () => {
     process.env['TELL_KEY'] = 'sk-probe-secret';
     process.env['OPENAI_API_KEY'] = 'sk-probe-openai';
     try {
-      const sanitized = adapters.sanitized_command_env();
-      assert.strictEqual(sanitized['TELL_CLI_ADAPTER_PROBE'], 'visible');
-      assert.strictEqual(sanitized['TELL_KEY'], undefined);
-      assert.strictEqual(sanitized['OPENAI_API_KEY'], undefined);
       adapters.lock_process_environment();
       assert.strictEqual(process.env['TELL_CLI_ADAPTER_PROBE'], 'visible');
       assert.strictEqual(process.env['TELL_KEY'], undefined);
@@ -135,17 +131,19 @@ describe('cli environment scrubbing delegates to core', () => {
   });
 });
 
-describe('cli executor preserves the historical output shape', () => {
-  it('runs a benign command with concatenated stdout', async () => {
-    const result = await adapters.execute_command('echo hello');
-    assert.strictEqual(result.exitCode, 0);
-    assert.match(result.output, /hello/);
+describe('cli executor is the only CLI transport', () => {
+  it('runs a benign command and reports stdout', async () => {
+    const executor = adapters.create_cli_executor();
+    const result = await executor({ script: 'echo hello' });
+    assert.strictEqual(result.exit_code, 0);
+    assert.match(result.stdout, /hello/);
   });
 
-  it('reports non-zero exits with the exit code', async () => {
-    const result = await adapters.execute_command("node -e \"console.error('boom'); process.exit(3)\"");
-    assert.strictEqual(result.exitCode, 3);
-    assert.match(result.output, /boom/);
+  it('reports non-zero exits with stderr preserved', async () => {
+    const executor = adapters.create_cli_executor();
+    const result = await executor({ script: "node -e \"console.error('boom'); process.exit(3)\"" });
+    assert.strictEqual(result.exit_code, 3);
+    assert.match(result.stderr, /boom/);
   });
 
   it('honors per-call env, cwd, timeout and cancellation overrides', async () => {
@@ -356,7 +354,9 @@ describe('cli memory storage seeds previous context', () => {
 describe('Tell.ts migration boundaries', () => {
   it('keeps defaults, modules and layers while owning no risk/exec duplication', () => {
     const tell = fs.readFileSync('packages/cli/src/Tell.ts', 'utf8');
-    assert.match(tell, /const DEFAULT_MODEL = process\.env\['TELL_MODEL'\] \|\| 'g'/);
+    assert.match(tell, /const DEFAULT_MODEL = process\.env\['TELL_MODEL'\] \|\| HOST_DEFAULT_MODEL\.cli/);
+    assert.ok(tell.includes('HOST_DEFAULT_MODEL'), 'Tell.ts takes the CLI default model from the core owner');
+    assert.strictEqual(core.HOST_DEFAULT_MODEL.cli, 'g');
     assert.ok(tell.includes("from './core-adapters'"), 'Tell.ts consumes the core adapters');
     assert.ok(tell.includes("from './env'"), 'Tell.ts keeps the env/token layer until the tellkey handoff');
     assert.ok(tell.includes("from './mentions'"), 'Tell.ts keeps mentions');

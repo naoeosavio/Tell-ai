@@ -138,4 +138,34 @@ describe('command feedback round-trip', () => {
   it('keeps the instruction as an alias of the loop constant', () => {
     assert.strictEqual(core.CONTINUE_INSTRUCTION, core.COMMAND_FEEDBACK_INSTRUCTION);
   });
+
+  it('owns every record header the runtime timeline can emit', () => {
+    assert.strictEqual(core.EXECUTED_HEADER, 'Executed command:');
+    assert.strictEqual(core.SKIPPED_HEADER, 'Skipped by user:');
+    assert.strictEqual(core.CANCELLED_HEADER, 'Command cancelled:');
+    assert.strictEqual(core.OUTPUT_SEPARATOR, '\nOutput:\n');
+    const cancelled = core.format_cancelled_command('sleep 10');
+    assert.strictEqual(cancelled, `Command cancelled:\nsleep 10`);
+    const parsed_cancelled = core.parse_command_feedback(cancelled);
+    if (parsed_cancelled === null) {
+      assert.fail('a cancelled record must stay recognizable as feedback');
+    } else {
+      assert.strictEqual(parsed_cancelled.script, 'sleep 10');
+    }
+  });
+});
+
+describe('split_context_turns over a runtime timeline', () => {
+  it('never merges two command records into one turn', () => {
+    const timeline = [
+      core.format_executed_command('ls -la', 'total 0'),
+      core.format_executed_command('whoami', 'root'),
+      core.format_cancelled_command('sleep 10'),
+      core.format_failed_command('false', 'boom', 2),
+      core.format_command_skipped('rm -rf build'),
+      'Command execution disabled — not run.',
+    ].join('\n\n');
+    const turns = core.split_context_turns(timeline);
+    assert.strictEqual(turns.length, 6, `one turn per record, got ${turns.length}`);
+  });
 });

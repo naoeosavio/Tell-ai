@@ -2495,7 +2495,7 @@ describe('web sandbox: runtime limits', () => {
       assert.strictEqual(body.temperature, null);
     });
 
-    it('/api/execute caps delivered output with an explicit marker', async () => {
+    it('/api/execute caps delivered output with the core marker', async () => {
       const res = await fetch(`${base}/api/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2503,8 +2503,11 @@ describe('web sandbox: runtime limits', () => {
       });
       assert.strictEqual(res.status, 200);
       const body = await res.json();
-      assert.ok(body.output.length <= 200 * 1024 + 64);
-      assert.match(body.output, /\[truncated]/);
+      // One cap over the combined output, not one per stream: the marker is the
+      // core `truncate_output` one and the total stays inside the byte budget.
+      assert.ok(Buffer.byteLength(body.output) <= 200 * 1024);
+      assert.match(body.output, /\[output truncated at 204800 bytes\]/);
+      assert.strictEqual(body.output.match(/\[output truncated/g)?.length, 1);
     });
   });
 

@@ -127,7 +127,7 @@ describe('core primitive loop', () => {
     assert.strictEqual(executor.calls(), 1);
     assert.strictEqual(executor.seen()[0].timeout_ms, 5000);
     assert.strictEqual(executor.seen()[0].max_output_bytes, 32 * 1024 * 1024);
-    assert.ok(result.timeline.some((line) => line.includes('Command executed')));
+    assert.ok(result.timeline.some((line) => line.includes(core.EXECUTED_HEADER)));
   });
 
   it('stops on pending approval without executing', async () => {

@@ -168,12 +168,6 @@ async function run_tell(args, response, opts = {}) {
     exitCode: undefined,
   };
 
-  function mock_exec() {}
-  mock_exec[util.promisify.custom] = async (script) => {
-    exec_calls.push(script);
-    return { stdout: opts.execStdout || '', stderr: opts.execStderr || '' };
-  };
-
   // The CLI transport is the real core executor (`create_node_executor`), so
   // the vm-loaded `core-adapters` gets a recording stand-in for it: the rest
   // of `@tell-ai/core` stays real, but no command ever runs for real inside
@@ -262,7 +256,7 @@ async function run_tell(args, response, opts = {}) {
     if (name === './systemPrompt') {
       return { get_system_prompt: (options) => sdk.get_system_prompt(options) };
     }
-    if (name === 'child_process' || name === 'node:child_process') return { exec: mock_exec, spawn: mock_spawn };
+    if (name === 'child_process' || name === 'node:child_process') return { spawn: mock_spawn };
     if (name === 'os' || name === 'node:os') return { ...require('node:os'), homedir: () => home };
     return require(name);
   }

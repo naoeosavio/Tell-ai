@@ -93,3 +93,33 @@ describe('canonical_write_path', () => {
     );
   });
 });
+
+describe('is_path_inside_base', () => {
+  it('accepts the base itself and anything lexically inside it', () => {
+    const base = make_base();
+    assert.strictEqual(core.is_path_inside_base(base, ''), true);
+    assert.strictEqual(core.is_path_inside_base(base, '.'), true);
+    assert.strictEqual(core.is_path_inside_base(base, 'inside.txt'), true);
+    assert.strictEqual(core.is_path_inside_base(base, 'sub/new.txt'), true);
+    assert.strictEqual(core.is_path_inside_base(base, './sub/../inside.txt'), true);
+  });
+
+  it('rejects traversal, absolute escapes and sibling prefixes', () => {
+    const base = make_base();
+    const sibling = `${base}-evil`;
+    fs.mkdirSync(sibling);
+    assert.strictEqual(core.is_path_inside_base(base, '../outside.txt'), false);
+    assert.strictEqual(core.is_path_inside_base(base, path.join('..', 'evil.txt')), false);
+    assert.strictEqual(core.is_path_inside_base(base, sibling), false);
+    assert.strictEqual(core.is_path_inside_base(base, path.join(sibling, 'x')), false);
+    assert.strictEqual(core.is_path_inside_base(base, '/etc/passwd'), false);
+    assert.strictEqual(core.is_path_inside_base(base, '..'), false);
+  });
+
+  it('never authorizes a read: containment is still canonical_path', () => {
+    const base = make_base();
+    fs.symlinkSync('/etc', path.join(base, 'linkdir'));
+    assert.strictEqual(core.is_path_inside_base(base, 'linkdir/passwd'), true);
+    assert.strictEqual(core.canonical_path(base, 'linkdir/passwd'), null);
+  });
+});
