@@ -23,6 +23,8 @@ export interface CliArgs {
   maxChainSteps?: number | undefined;
   /** Validated max buffer bytes forwarded by the CLI (`--max-buffer-bytes`). */
   maxBufferBytes?: number | undefined;
+  /** Validated delivered output cap bytes forwarded by the CLI (`--output-max-bytes`). */
+  outputMaxBytes?: number | undefined;
   /** Validated context chars forwarded by the CLI (`--context-chars`). */
   contextChars?: number | undefined;
   /** Validated stdin timeout ms forwarded by the CLI (`--stdin-timeout-ms`). */
@@ -87,6 +89,7 @@ export function parseCliArgs(argv: string[], defaultCwd: string): CliArgs {
   const temperatureRaw = argValue(argv, '--temperature');
   const maxChainStepsRaw = argValue(argv, '--max-chain-steps');
   const maxBufferBytesRaw = argValue(argv, '--max-buffer-bytes');
+  const outputMaxBytesRaw = argValue(argv, '--output-max-bytes');
   const contextCharsRaw = argValue(argv, '--context-chars');
   const stdinTimeoutMsRaw = argValue(argv, '--stdin-timeout-ms');
   const toPositiveInt = (raw: string | undefined): number | undefined => {
@@ -110,6 +113,7 @@ export function parseCliArgs(argv: string[], defaultCwd: string): CliArgs {
     temperature: toTemperature(temperatureRaw),
     maxChainSteps: toPositiveInt(maxChainStepsRaw),
     maxBufferBytes: toPositiveInt(maxBufferBytesRaw),
+    outputMaxBytes: toPositiveInt(outputMaxBytesRaw),
     contextChars: toPositiveInt(contextCharsRaw),
     stdinTimeoutMs: toPositiveInt(stdinTimeoutMsRaw),
     chain,
@@ -143,6 +147,8 @@ Options:
                     Limit override forwarded by the CLI
   --max-buffer-bytes <n>
                     Limit override forwarded by the CLI
+  --output-max-bytes <n>
+                    Delivered output cap bytes forwarded by the CLI
   --context-chars <n>
                     Limit override forwarded by the CLI
   --stdin-timeout-ms <n>

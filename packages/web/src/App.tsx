@@ -1,3 +1,4 @@
+import { DEFAULT_MAX_CHAIN_STEPS } from '@tell-ai/core';
 import {
   Maximize2,
   MessagesSquare as MessagesSquareIcon,
@@ -69,7 +70,9 @@ IMPORTANT: Be CONCISE and DIRECT in your answers.
 `.trim();
 
 // Max <RUN> chain iterations per user prompt before the loop stops itself.
-const MAX_CHAIN_ITERATIONS = 8;
+// The cap is owned by `@tell-ai/core` (browser entry, no builtin imports) so
+// the offline fallback loop and the server chain cannot drift.
+const MAX_CHAIN_ITERATIONS = DEFAULT_MAX_CHAIN_STEPS;
 // Output tail (bytes, roughly) fed back to the LLM in "Executed command" feedback messages.
 const FEEDBACK_OUTPUT_LIMIT = 4 * 1024;
 // beforeunload keepalive body budget: browsers reject keepalive bodies > 64KB.

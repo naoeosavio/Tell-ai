@@ -50,6 +50,7 @@ tell-web --help
 | `--exec-timeout <ms>` | `120000` (max `600000`) | Timeout per command |
 | `--max-chain-steps <n>` | server default (clamped `1..8`; the CLI accepts up to 128, larger forwarded values clamp down here) | Server chain round cap override (forwarded by `tell --web --max-chain`) |
 | `--max-buffer-bytes <n>` | `33554432` | Internal exec buffer override (forwarded by `tell --web --max-buffer`) |
+| `--output-max-bytes <n>` | `204800` | Delivered output cap in bytes; truncated once over the combined stdout+stderr with the core `[output truncated at N bytes]` marker (forwarded by `tell --web --output-max-bytes`) |
 | `--context-chars <n>` | — | Context chars override, exposed on `/api/config` (forwarded by `tell --web --context-max-chars`) |
 | `--profile <name>` | — | Tellrc profile name, exposed on `/api/config` (forwarded by `tell --web --profile`) |
 | `--system-file <path>` | — | Custom instructions file (64 KB cap), composed into the system prompt (forwarded by `tell --web --system-file`) |

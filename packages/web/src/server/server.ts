@@ -8,10 +8,16 @@ import {
   canonical_path,
   canonical_write_path,
   create_node_executor,
+  compose_custom_system,
   DEFAULT_EXEC_TIMEOUT_MS,
+  HOST_DEFAULT_MODEL,
   DEFAULT_MAX_BUFFER_BYTES,
+  DEFAULT_OUTPUT_MAX_BYTES,
   format_command_skipped,
   format_executed_command,
+  has_lexical_target,
+  is_path_inside_base,
+  truncate_output,
   validate_chain_decision_payload,
 } from '@tell-ai/core';
 import { create_ask_ai, extract_runs, get_model, MODELS, resolve_model_spec } from '@tell-ai/sdk';
@@ -79,7 +85,7 @@ if (process.env['TELL_TRUST_WORKSPACE_ENV'] === 'true') {
 const INITIAL_PROMPT = cliArgs.initialPrompt;
 const AUTO_EXECUTE = cliArgs.autoExecute;
 const NO_EXEC = cliArgs.noExec;
-const DEFAULT_MODEL = (cliArgs.model || process.env['TELL_MODEL'] || 'l').trim();
+const DEFAULT_MODEL = (cliArgs.model || process.env['TELL_MODEL'] || HOST_DEFAULT_MODEL.web).trim();
 const CHAIN = cliArgs.chain;
 const YES = cliArgs.yes;
 const REQUIRE_APPROVAL = cliArgs.requireApproval;
@@ -93,11 +99,13 @@ const FORWARDED_TEMPERATURE = cliArgs.temperature;
 const FORWARDED_LIMITS = {
   ...(cliArgs.maxChainSteps !== undefined ? { maxChainSteps: cliArgs.maxChainSteps } : {}),
   ...(cliArgs.maxBufferBytes !== undefined ? { maxBufferBytes: cliArgs.maxBufferBytes } : {}),
+  ...(cliArgs.outputMaxBytes !== undefined ? { outputMaxBytes: cliArgs.outputMaxBytes } : {}),
   ...(cliArgs.contextChars !== undefined ? { contextChars: cliArgs.contextChars } : {}),
   ...(cliArgs.stdinTimeoutMs !== undefined ? { stdinTimeoutMs: cliArgs.stdinTimeoutMs } : {}),
 } as {
   maxChainSteps?: number;
   maxBufferBytes?: number;
+  outputMaxBytes?: number;
   contextChars?: number;
   stdinTimeoutMs?: number;
 };
@@ -106,6 +114,17 @@ const FORWARDED_LIMITS = {
 const EXEC_DEFAULT_MAX_BUFFER = DEFAULT_MAX_BUFFER_BYTES;
 /** Effective exec buffer: the forwarded CLI override wins, default otherwise. */
 const EXEC_MAX_BUFFER = FORWARDED_LIMITS.maxBufferBytes ?? EXEC_DEFAULT_MAX_BUFFER;
+/**
+ * Effective delivered output cap in bytes. The number and the truncation
+ * (`truncate_output`, byte budget plus the core marker) belong to
+ * `@tell-ai/core`; the forwarded CLI override wins, default otherwise.
+ */
+const EXEC_OUTPUT_MAX_BYTES = FORWARDED_LIMITS.outputMaxBytes ?? DEFAULT_OUTPUT_MAX_BYTES;
+
+/** Combines and caps one executed result exactly like the core owner does. */
+function cap_execution_output(stdout: string, stderr: string): string {
+  return truncate_output(`${stdout}${stderr}`, EXEC_OUTPUT_MAX_BYTES);
+}
 /**
  * Effective chain round cap: the forwarded CLI override wins, clamped to the
  * server `1..CHAIN_MAX_ROUNDS` contract. The CLI accepts up to
@@ -147,7 +166,7 @@ const FORWARDED_SYSTEM_TEXT = load_forwarded_system_text(cliArgs.systemFile);
 /** Composes forwarded custom instructions before the built project prompt (safety stays last in the base). */
 function compose_forwarded_system(base: string): string {
   if (!FORWARDED_SYSTEM_TEXT) return base;
-  return `Custom instructions:\n${FORWARDED_SYSTEM_TEXT}\n\n${base}`;
+  return compose_custom_system(FORWARDED_SYSTEM_TEXT, base);
 }
 const TELL_TOKEN = process.env['TELL_TOKEN'] || '';
 const ALLOWED_HOSTS = new Set(
@@ -195,7 +214,6 @@ for (const name of Object.keys(process.env)) {
 }
 
 const EXEC_MAX_CONCURRENCY = 2;
-const EXEC_OUTPUT_LIMIT = 200 * 1024;
 // Feedback tail fed back to the model after a chain command (mirrors the
 // App `FEEDBACK_OUTPUT_LIMIT`: huge outputs must not explode the context).
 const CHAIN_FEEDBACK_TAIL_CHARS = 4 * 1024;
@@ -443,9 +461,20 @@ app.get('/api/file', (req, res) => {
     return res.status(400).json({ error: 'File path is required' });
   }
 
+  const deniedPath = (res: express.Response): express.Response =>
+    res.status(403).json({ error: 'Access denied: Directory traversal blocked' });
+
   const resolvedPath = canonical_path(CWD, filePath);
   if (!resolvedPath) {
-    return res.status(403).json({ error: 'Access denied: Directory traversal blocked' });
+    // `canonical_path` rejects escapes and missing targets alike. A path that
+    // stays lexically inside the workspace AND has no target there is simply
+    // absent (404); everything else — traversal, absolute escape, a symlink
+    // pointing outside — keeps the containment denial (403).
+    if (is_path_inside_base(CWD, filePath) && !has_lexical_target(CWD, filePath)) {
+      return res.status(404).json({ error: 'File not found' });
+    } else {
+      return deniedPath(res);
+    }
   }
   if (isSensitiveRelPath(path.relative(CWD, resolvedPath))) {
     return res.status(403).json({ error: 'Access denied: Sensitive file' });
@@ -479,7 +508,13 @@ app.get('/api/file/raw', (req, res) => {
 
   const resolvedPath = canonical_path(CWD, filePath);
   if (!resolvedPath) {
-    return res.status(403).json({ error: 'Access denied: Directory traversal blocked' });
+    // Same rule as `/api/file`: a missing file inside the workspace is 404,
+    // only an escape (including a symlink pointing outside) is a denial.
+    if (is_path_inside_base(CWD, filePath) && !has_lexical_target(CWD, filePath)) {
+      return res.status(404).json({ error: 'File not found' });
+    } else {
+      return res.status(403).json({ error: 'Access denied: Directory traversal blocked' });
+    }
   }
   if (isSensitiveRelPath(path.relative(CWD, resolvedPath))) {
     return res.status(403).json({ error: 'Access denied: Sensitive file' });
@@ -624,13 +659,11 @@ app.post('/api/execute', async (req, res) => {
       timeout_ms: EXEC_TIMEOUT_MS,
       max_output_bytes: EXEC_MAX_BUFFER,
     });
-    const truncate = (text: string) =>
-      text.length > EXEC_OUTPUT_LIMIT ? `${text.slice(0, EXEC_OUTPUT_LIMIT)}\n[truncated]` : text;
-    return res.json({ output: truncate(result.stdout) + truncate(result.stderr) });
+    return res.json({ output: cap_execution_output(result.stdout, result.stderr) });
   } catch (error: any) {
     // The executor only throws for spawn/cancellation failures, never for a
     // command exit status — report the message the same way the old path did.
-    return res.json({ output: String(error?.message ?? error).slice(0, EXEC_OUTPUT_LIMIT + 32) });
+    return res.json({ output: truncate_output(String(error?.message ?? error), EXEC_OUTPUT_MAX_BYTES) });
   } finally {
     activeExecutions -= 1;
   }
@@ -1186,9 +1219,7 @@ app.post('/api/chain/:runId/confirm', async (req, res) => {
         timeout_ms: EXEC_TIMEOUT_MS,
         max_output_bytes: EXEC_MAX_BUFFER,
       });
-      const truncate = (text: string) =>
-        text.length > EXEC_OUTPUT_LIMIT ? `${text.slice(0, EXEC_OUTPUT_LIMIT)}\n[truncated]` : text;
-      const output = truncate(result.stdout) + truncate(result.stderr);
+      const output = cap_execution_output(result.stdout, result.stderr);
       chainStore.pushMessage(runId, {
         role: 'user',
         content: format_executed_command(script, truncateChainFeedbackTail(output)),
