@@ -1,9 +1,8 @@
-import { execFile } from 'node:child_process';
-import fs from 'node:fs';
-import path from 'node:path';
-import { promisify } from 'node:util';
-import { sanitizeChildEnv } from './guards';
-import { resolveWithin } from './paths';
+import { execFile } from 'child_process';
+import fs from 'fs';
+import path from 'path';
+import { promisify } from 'util';
+import { canonical_path, canonical_write_path, sanitize_exec_env } from '@tell-ai/core';
 
 const execFileAsync = promisify(execFile);
 
@@ -72,10 +71,10 @@ const PRIVATE_DIR_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
 
 function ensurePrivateDirectory(cwd: string, relativePath: string): string {
-  const full = resolveWithin(cwd, relativePath);
+  const full = canonical_write_path(cwd, relativePath, { create_parents: true });
   if (!full) throw new Error('Session path escapes the workspace');
   fs.mkdirSync(full, { recursive: true, mode: PRIVATE_DIR_MODE });
-  const safePath = resolveWithin(cwd, relativePath);
+  const safePath = canonical_write_path(cwd, relativePath, { create_parents: true });
   if (!safePath || !fs.lstatSync(safePath).isDirectory()) throw new Error('Session path is not a directory');
   fs.chmodSync(safePath, PRIVATE_DIR_MODE);
   return safePath;
@@ -119,15 +118,15 @@ function readPrivateFile(filePath: string): string {
 }
 
 function repairPrivateModes(cwd: string): void {
-  const tell = resolveWithin(cwd, '.tell');
+  const tell = canonical_path(cwd, '.tell');
   if (tell && fs.lstatSync(tell).isDirectory()) fs.chmodSync(tell, PRIVATE_DIR_MODE);
-  const session = resolveWithin(cwd, path.join('.tell', 'session.json'));
+  const session = canonical_path(cwd, path.join('.tell', 'session.json'));
   if (session && fs.lstatSync(session).isFile()) fs.chmodSync(session, PRIVATE_FILE_MODE);
-  const history = resolveWithin(cwd, path.join('.tell', 'history'));
+  const history = canonical_path(cwd, path.join('.tell', 'history'));
   if (!history || !fs.lstatSync(history).isDirectory()) return;
   fs.chmodSync(history, PRIVATE_DIR_MODE);
   for (const name of fs.readdirSync(history)) {
-    const file = resolveWithin(cwd, path.join('.tell', 'history', name));
+    const file = canonical_path(cwd, path.join('.tell', 'history', name));
     if (file && fs.lstatSync(file).isFile()) fs.chmodSync(file, PRIVATE_FILE_MODE);
   }
 }
@@ -185,7 +184,7 @@ export function loadSession(cwd: string): TellSession | null {
   try {
     repairPrivateModes(cwd);
   } catch {}
-  const file = resolveWithin(cwd, path.join('.tell', 'session.json'));
+  const file = canonical_path(cwd, path.join('.tell', 'session.json'));
   if (!file || !fs.existsSync(file)) return null;
   try {
     const raw = JSON.parse(readPrivateFile(file));
@@ -211,8 +210,8 @@ export function saveSession(cwd: string, session: TellSession): boolean {
     const json = serializeBounded(session, 'saveSession');
     if (!json) return false;
     ensurePrivateDirectory(cwd, '.tell');
-    const target = resolveWithin(cwd, path.join('.tell', 'session.json'));
-    const tmp = resolveWithin(cwd, path.join('.tell', 'session.json.tmp'));
+    const target = canonical_write_path(cwd, path.join('.tell', 'session.json'), { create_parents: true });
+    const tmp = canonical_write_path(cwd, path.join('.tell', 'session.json.tmp'), { create_parents: true });
     if (!target || !tmp) return false;
     writePrivateFile(tmp, json);
     fs.renameSync(tmp, target);
@@ -228,7 +227,7 @@ export function listHistory(cwd: string): Array<{ name: string; createdAt: strin
     repairPrivateModes(cwd);
   } catch {}
   repairLatestSymlink(cwd);
-  const dir = resolveWithin(cwd, path.join('.tell', 'history'));
+  const dir = canonical_path(cwd, path.join('.tell', 'history'));
   if (!dir || !fs.existsSync(dir) || !fs.lstatSync(dir).isDirectory()) return [];
   let names: string[];
   try {
@@ -239,7 +238,7 @@ export function listHistory(cwd: string): Array<{ name: string; createdAt: strin
   return names
     .filter((n) => n.endsWith('.json'))
     .map((name) => {
-      const full = resolveWithin(cwd, path.join('.tell', 'history', name));
+      const full = canonical_path(cwd, path.join('.tell', 'history', name));
       if (!full) return null;
       let stat: fs.Stats | undefined;
       try {
@@ -263,7 +262,7 @@ export function createSnapshot(cwd: string, session: TellSession): string | null
     if (!json) return null;
     ensurePrivateDirectory(cwd, path.join('.tell', 'history'));
     const name = `${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
-    const full = resolveWithin(cwd, path.join('.tell', 'history', name));
+    const full = canonical_write_path(cwd, path.join('.tell', 'history', name), { create_parents: true });
     if (!full) return null;
     writePrivateFile(full, json);
     updateLatestSymlink(cwd, name);
@@ -274,7 +273,7 @@ export function createSnapshot(cwd: string, session: TellSession): string | null
 }
 
 function updateLatestSymlink(cwd: string, snapshotName: string): void {
-  const tell = resolveWithin(cwd, '.tell');
+  const tell = canonical_path(cwd, '.tell');
   if (!tell) return;
   const latest = path.join(tell, 'latest');
   try {
@@ -291,7 +290,7 @@ function updateLatestSymlink(cwd: string, snapshotName: string): void {
 
 /** Drop a dangling `latest` symlink; ignore if missing or valid. */
 export function repairLatestSymlink(cwd: string): void {
-  const tell = resolveWithin(cwd, '.tell');
+  const tell = canonical_path(cwd, '.tell');
   if (!tell) return;
   const latest = path.join(tell, 'latest');
   let isSymlink = false;
@@ -303,7 +302,7 @@ export function repairLatestSymlink(cwd: string): void {
   if (!isSymlink) return;
   try {
     const target = fs.readlinkSync(latest);
-    const history = resolveWithin(cwd, path.join('.tell', 'history'));
+    const history = canonical_path(cwd, path.join('.tell', 'history'));
     if (!history) throw new Error('Invalid history directory');
     const targetPath = path.resolve(tell, target);
     const relative = path.relative(history, targetPath);
@@ -325,7 +324,7 @@ export async function listGitChanges(cwd: string): Promise<string[]> {
     const { stdout } = await execFileAsync('git', ['status', '--porcelain'], {
       cwd,
       timeout: 5000,
-      env: sanitizeChildEnv(process.env),
+      env: sanitize_exec_env(process.env),
     });
     return stdout
       .split('\n')

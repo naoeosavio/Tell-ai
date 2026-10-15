@@ -20,6 +20,8 @@ export type TellOptions = {
   context?: string;
   /** Override the system prompt entirely. */
   system?: string;
+  /** Sampling temperature 0..2, forwarded only when present. */
+  temperature?: number;
   /** Reuse an existing AskInstance instead of creating a new one. */
   ask?: AskInstance;
   /** Return the raw model response without stripping <think>/<RUN> tags or trimming. */
@@ -42,6 +44,11 @@ export async function tell(message: string, options: TellOptions = {}): Promise<
   const prompt = options.context ? `Previous context:\n${options.context}\n\nUser:\n${message}` : message;
   const ai =
     options.ask ?? (await create_ask_ai(options.model ?? 'g', { keys: options.keys ?? {}, urls: options.urls ?? {} }));
-  const response = await ai.ask(prompt, { system, stream: false });
+  const response = await ai.ask(
+    prompt,
+    options.temperature !== undefined
+      ? { system, stream: false, temperature: options.temperature }
+      : { system, stream: false },
+  );
   return options.raw ? response : strip_run_tags(strip_think_tags(response)).trim();
 }

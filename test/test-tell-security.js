@@ -8,6 +8,32 @@ const util = require('node:util');
 const vm = require('node:vm');
 
 const sdk = require('@tell-ai/sdk');
+const core = require('@tell-ai/core');
+
+// The sandbox copies the host environment so the CLI sees a realistic one, but
+// a `TELL_*` limit exported by the caller's shell would silently change the
+// chain cap / timeouts under test. Purge them: only an explicit `opts.env`
+// entry may introduce a limit, so the suite stays hermetic.
+const tellLimitKeys = core.TELL_LIMIT_ENV_KEYS;
+
+/**
+ * Builds the fake process environment for one sandbox run.
+ *
+ * Copies the host env (the CLI expects a realistic one) minus every `TELL_*`
+ * runtime-limit key, so only an explicit `opts.env` entry can set a limit.
+ *
+ * @param home - Fake home directory for this test.
+ * @param overrides - Extra env entries for this specific test.
+ * @returns The sanitized environment record.
+ */
+function sanitizedFakeEnv(home, overrides) {
+  const env = { ...process.env };
+  for (const key of tellLimitKeys) {
+    delete env[key];
+  }
+  return { ...env, HOME: home, ...(overrides || {}) };
+}
+
 
 const tellSource = ts.transpileModule(
   fs.readFileSync(path.join(__dirname, '..', 'packages', 'cli', 'src', 'Tell.ts'), 'utf8'),
@@ -27,6 +53,23 @@ const mentionsSource = ts.transpileModule(
 // vm sandbox on demand, like `./mentions`.
 const historySource = ts.transpileModule(
   fs.readFileSync(path.join(__dirname, '..', 'packages', 'cli', 'src', 'history.ts'), 'utf8'),
+  { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } },
+).outputText;
+
+// `./core-adapters` is required by Tell.js at load time (core-owned risk,
+// env and exec ports); compile it into the same vm sandbox on demand, like
+// `./mentions`. Its `@tell-ai/core` import falls through to the real built
+// package, so the sandboxed CLI exercises the real core classifiers.
+const coreAdaptersSource = ts.transpileModule(
+  fs.readFileSync(path.join(__dirname, '..', 'packages', 'cli', 'src', 'core-adapters.ts'), 'utf8'),
+  { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } },
+).outputText;
+
+// `./tellrc` is required by Tell.js at load time (INI-only owner of schema,
+// precedence and profile data); compile it into the same vm sandbox on
+// demand, like `./mentions`.
+const tellrcSource = ts.transpileModule(
+  fs.readFileSync(path.join(__dirname, '..', 'packages', 'cli', 'src', 'tellrc.ts'), 'utf8'),
   { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } },
 ).outputText;
 
@@ -76,7 +119,7 @@ async function runTell(args, response, opts = {}) {
   };
   const fakeProcess = {
     argv: ['node', 'Tell.js', ...args],
-    env: { ...process.env, HOME: home, ...(opts.env || {}) },
+    env: sanitizedFakeEnv(home, opts.env),
     stdin: fakeStdin(opts.stdin || ''),
     stdout: { isTTY: false, write: writeStdout },
     stderr: { isTTY: false, write: writeStderr },
@@ -91,6 +134,21 @@ async function runTell(args, response, opts = {}) {
     execOptions.push(options);
     return { stdout: opts.execStdout || '', stderr: opts.execStderr || '' };
   };
+
+  // The CLI transport is the real core executor (`create_node_executor`), so
+  // the vm-loaded `core-adapters` gets a recording stand-in for it: the rest
+  // of `@tell-ai/core` stays real (risk, config, scrub), but no command ever
+  // runs for real inside the sandbox. The env is merged over the fake process
+  // env and scrubbed exactly like the core does, so the scrub assertions keep
+  // proving the CLI forwards a clean environment.
+  function mockCreateNodeExecutor(defaults = {}) {
+    return async (options) => {
+      execCalls.push(options.script);
+      const merged = { ...fakeProcess.env, ...(defaults.env ?? {}), ...(options.env ?? {}) };
+      execOptions.push({ ...options, env: core.sanitize_exec_env(merged) });
+      return { stdout: opts.execStdout || '', stderr: opts.execStderr || '', exit_code: opts.execExitCode ?? 0 };
+    };
+  }
 
   const spawnCalls = [];
   function mockSpawn(cmd, args, options) {
@@ -117,6 +175,31 @@ async function runTell(args, response, opts = {}) {
       const factory = vm.runInContext(`(function(require, module, exports) {${historySource}\n})`, activeContext);
       factory(mockRequire, historyModule, historyModule.exports);
       return historyModule.exports;
+    }
+    if (name === './core-adapters') {
+      const adaptersModule = { exports: {} };
+      const adaptersRequire = (specifier) => {
+        if (specifier === '@tell-ai/core') return { ...core, create_node_executor: mockCreateNodeExecutor };
+        return mockRequire(specifier);
+      };
+      const factory = vm.runInContext(
+        `(function(require, module, exports) {${coreAdaptersSource}\n})`,
+        activeContext,
+      );
+      factory(adaptersRequire, adaptersModule, adaptersModule.exports);
+      return adaptersModule.exports;
+    }
+    if (name === './tellrc') {
+      const tellrcModule = { exports: {} };
+      const factory = vm.runInContext(`(function(require, module, exports) {${tellrcSource}\n})`, activeContext);
+      factory(mockRequire, tellrcModule, tellrcModule.exports);
+      return tellrcModule.exports;
+    }
+    if (name === '@tell-ai/core') {
+      // Tell.js reads the limit contract straight from the owner; the pure
+      // helpers are real, and `runtime_env_from_process` always receives the
+      // fake process env explicitly from Tell.js, never a default binding.
+      return core;
     }
     if (name === '@tell-ai/sdk') {
       return {
@@ -462,6 +545,27 @@ function assertPromptInjectionPolicy(result) {
     Array.from({ length: 8 }, (_, index) => `echo STEP_${index}`),
   );
   assert.match(result.stderr, /Chain limit reached \(8\); asking for final answer/);
+  assert.match(result.stderr, /Chain limit reached \(8\); ignoring further requested commands/);
+  assert.strictEqual(result.stdout, '');
+
+  result = await runTell(
+    ['--yes', '--chain', 'd', 'resume respects the total cap'],
+    [
+      ...Array.from({ length: 6 }, (_, index) => runBlock(`echo EARLY_${index}`)),
+      runBlock('sudo ls /'),
+      runBlock('echo LATE_7'),
+      runBlock('echo LATE_8'),
+      'final answer',
+    ],
+    { execStdout: 'OK\n' },
+  );
+  // 6 executed + 1 skipped = 7 commands: the resume gets a budget of 1, so
+  // only LATE_7 runs and the total stays capped at 8 like the legacy counter.
+  assert.deepStrictEqual(result.execCalls, [
+    ...Array.from({ length: 6 }, (_, index) => `echo EARLY_${index}`),
+    'echo LATE_7',
+  ]);
+  assert.match(result.stderr, /Command skipped by user\./);
   assert.match(result.stderr, /Chain limit reached \(8\); ignoring further requested commands/);
   assert.strictEqual(result.stdout, '');
 

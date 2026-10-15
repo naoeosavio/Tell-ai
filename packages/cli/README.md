@@ -125,6 +125,61 @@ tell -w --cwd ~/project -m s --stream
 `--stream`, `--think`, `--chain`, `-y`, `--no-exec` and `--require-approval` are
 forwarded to it. See [`@tell-ai/web`](../web/README.md).
 
+### `.tellrc` — profiles, aliases, temperature and limits
+
+The only persisted config file is INI (there is deliberately no
+`tell.config.json`; JSON appears only as `--json` data output, a different
+contract). Two sources merge: `~/.tellrc` (user) and `<cwd>/.tellrc`
+(project). Scalar precedence is
+`flag > env > project .tellrc > user ~/.tellrc > default`; deny entries are
+union-only — the most restrictive set always wins and no flag or lower layer
+can remove an entry.
+
+```ini
+model = s
+temperature = 0.7
+profile = node
+
+[aliases]
+work = openai:gpt-6.1-sol:high
+
+[profiles.node]
+prompt = Prefer bun and TypeScript.
+
+[policy]
+denyCommands = rm -rf /, mkfs
+
+[limits]
+max_chain_steps = 4
+```
+
+Custom aliases resolve per invocation without mutating the built-in table
+(`-m`, `--model` and a valid positional model all accept them; dot-prefix
+fast and full `vendor:model:thinking` specs keep working). `system` /
+`system-file` compose as custom instructions *before* the safety prompt —
+config can never replace `<RUN>`, approval, injection or deny rules.
+`system-file` is capped at 64 KB, must be a regular file, and a project file
+may not escape the cwd via symlink. Profiles `node`, `security` and `devops`
+carry prompt/style/model/temperature/deny/limits data, and any
+`[profiles.<name>]` is a valid custom profile (own `system`/`system-file`,
+own aliases via `[profiles.<name>.aliases]`, fill-if-empty semantics —
+explicit layers always win, file aliases beat profile aliases); enforcement
+stays in
+the policy sandbox. `[limits]` accepts all seven runtime keys
+(`context_chars`, `stdin_timeout_ms`, `stdin_max_bytes`, `exec_timeout_ms`,
+`max_chain_steps`, `max_buffer_bytes`, `output_max_bytes`); the parser imports
+the ranges from `runtime-limits` instead of keeping its own table, so a bad
+value warns and is dropped without ever failing the run. `tell --web` forwards
+only non-secret fields (model via `-m`, profile, system via `--system-file`,
+temperature via `--temperature`, numeric limits); keys, URLs and secrets never
+enter args, files or `/api/config`. Env layer: `TELL_MODEL`,
+`TELL_SYSTEM`, `TELL_SYSTEM_FILE`, `TELL_TEMPERATURE`, `TELL_PROFILE`.
+New flags: `--profile`, `--system`, `--system-file`, `--temperature` (0..2).
+
+### Runtime limits
+
+Operational caps live in `@tell-ai/core` (`src/runtime-limits.ts` — single owner of `parse_runtime_limits`, `truncate_context`, `RuntimeLimits`, `ExecutionOptions`); `src/runtime-limits.ts` here is a facade over it that keeps only `StdinLimitError` and the process exit-status family: context 64 Ki (`--context-max-chars` / `TELL_CONTEXT_MAX_CHARS`), stdin 30 s (`--stdin-timeout` / `--no-stdin-timeout` / `TELL_STDIN_TIMEOUT_MS`) and 1 MiB (`--stdin-max-bytes` / `TELL_STDIN_MAX_BYTES`), exec 120 s (`--exec-timeout` / `TELL_EXEC_TIMEOUT_MS`), 8 chain rounds by default (`--max-chain` / `TELL_MAX_CHAIN_STEPS`, range `1..128`), 32 Mi buffer (`--max-buffer` / `TELL_MAX_BUFFER_BYTES`), 200 Ki delivered output (`--output-max-bytes` / `TELL_OUTPUT_MAX_BYTES`). Precedence `flag > env > project .tellrc > user ~/.tellrc > default`; bad flag/env fails with exit `2` before any model call, stdin timeout is `124`, overflow is `125`. Context is cut by whole turns with balanced `<think>`/`<RUN>` blocks — no tokenizer, no stdout monkey-patch. Covered by `bun run test:runtime`.
+
 ### Flag interactions
 
 | Flags | Reads context? | Deletes? | Writes? | Loop? |
@@ -202,6 +257,7 @@ npm run test:security
 npm run test:mentions   # @path expansion + outside-cwd read gate
 npm run test:context    # --ctx grammar + --history
 npm run test:stream     # --stream / --think
+npm run test:tellrc     # .tellrc parser, precedence, profiles, aliases, temperature, limits (28 tests; part of the aggregate)
 ```
 
 License

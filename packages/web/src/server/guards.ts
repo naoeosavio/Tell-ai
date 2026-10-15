@@ -1,7 +1,11 @@
 /**
  * Pure security guards for Tell Web.
  * No runtime dependencies — loaded directly by test/test-web-backend.js.
+ * Confinement policies that both hosts share (child-environment scrubbing,
+ * payload caps) are owned by `@tell-ai/core` and only re-exported here.
  */
+
+import { PAYLOAD_MAX_CONTENT_CHARS, PAYLOAD_MAX_MESSAGES, PAYLOAD_MAX_SYSTEM_CHARS } from '@tell-ai/core';
 
 // ---------------------------------------------------------------------------
 // Sensitive paths (read/write deny regardless of traversal state)
@@ -29,37 +33,6 @@ export function isSensitiveRelPath(relPath: string): boolean {
 // ---------------------------------------------------------------------------
 // Rate limiting (per-key token timestamps, in memory)
 // ---------------------------------------------------------------------------
-
-const SENSITIVE_ENV_NAMES = new Set([
-  'BASH_ENV',
-  'DYLD_INSERT_LIBRARIES',
-  'DYLD_LIBRARY_PATH',
-  'ENV',
-  'GPG_AGENT_INFO',
-  'GPG_KEY',
-  'LD_AUDIT',
-  'LD_LIBRARY_PATH',
-  'LD_PRELOAD',
-  'NODE_OPTIONS',
-  'PERL5LIB',
-  'PYTHONPATH',
-  'RUBYLIB',
-  'SSH_AUTH_SOCK',
-  'TELL_KEY',
-  'TELL_TOKEN',
-]);
-
-const SENSITIVE_ENV_SUFFIX =
-  /(?:^|_)(?:ACCESS_KEY(?:_ID)?|API_KEY|AUTH_TOKEN|CREDENTIALS?|PASSWORD|PASSWD|PRIVATE_KEY|SECRET(?:_KEY)?|TOKEN)$/;
-
-export function sanitizeChildEnv(env: Record<string, string | undefined>): Record<string, string> {
-  const sanitized: Record<string, string> = {};
-  for (const [name, value] of Object.entries(env)) {
-    if (value === undefined || SENSITIVE_ENV_NAMES.has(name) || SENSITIVE_ENV_SUFFIX.test(name)) continue;
-    sanitized[name] = value;
-  }
-  return sanitized;
-}
 
 export function normalizeApiPath(pathname: string): string {
   const normalized = pathname.toLowerCase();
@@ -221,9 +194,12 @@ export function authFailureMessage(): string {
 // /api/tell payload validation
 // ---------------------------------------------------------------------------
 
-export const TELL_MAX_MESSAGES = 200;
-export const TELL_MAX_CONTENT_CHARS = 50 * 1024;
-export const TELL_MAX_SYSTEM_CHARS = 30 * 1024;
+/** Max items accepted in one `/api/tell` message list (owned by the core). */
+export const TELL_MAX_MESSAGES = PAYLOAD_MAX_MESSAGES;
+/** Max characters per message content (owned by the core). */
+export const TELL_MAX_CONTENT_CHARS = PAYLOAD_MAX_CONTENT_CHARS;
+/** Max characters for the `/api/tell` system prompt (owned by the core). */
+export const TELL_MAX_SYSTEM_CHARS = PAYLOAD_MAX_SYSTEM_CHARS;
 
 /** Returns an error message when the payload is invalid, null when acceptable. */
 export function validateTellPayload(body: unknown): string | null {

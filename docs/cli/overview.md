@@ -26,12 +26,12 @@ main (Tell.ts:886)
  │   ├─ raw_prompt (ctx text + user prompt) → expand_mentions → full_prompt
  │   ├─ load previous context / delete default on 'none'
  │   ├─ load_sdk_config → create_ask_ai
- │   └─ run_response_loop
- │       ├─ tell_silently(firstPrompt)
- │       ├─ remember_assistant + save_incremental_context
- │       ├─ extract_runs → scripts + visible
- │       ├─ should_finish? → finish_round / handle_final_answer
- │       └─ run_scripts → remember_command_result → [chain?] build_feedback → next round
+  │   └─ run_response_loop (core runtime: `max_rounds` 1, or 8 with `--chain`)
+  │       ├─ model port call (live stream inside `ask` with `--stream`)
+  │       ├─ onText → remember_assistant + save_incremental_context
+  │       ├─ wiring strips tags, extracts the first `<RUN>` script, classifies risk
+  │       ├─ no script → render visible text once
+  │       └─ onCommandOutput/Skip → legacy result lines + saves; chain resumes declines
  └─ maybe_summarize_context (if saved context grew past MAX_CONTEXT_CHARS)
 ```
 
@@ -65,4 +65,4 @@ Execution uses `/bin/bash` with `cwd: process.cwd()` (`Tell.ts:116-143`). Non-ze
 * stderr: `Thinking...` spinner, `Using context:` / `Created context:` notices, command echoes, warnings, errors (red).
 * Files: `~/.ai/tell_history/conversation_<timestamp>.txt` (always), `~/.ai/tell_context/*.txt` (only with context flags). See [input-logging.md](input-logging.md).
 
-Sources: `Tell.ts:1-31`, `Tell.ts:820-884`, `src/mentions.ts`, `src/env.ts`, `src/systemPrompt.ts`, `package.json`, `tsup.config.ts`.
+Sources: `Tell.ts:1-31`, `Tell.ts:820-884`, `src/mentions.ts`, `src/env.ts`, `src/tellrc.ts`, `package.json`, `tsup.config.ts`. The CLI has no local system-prompt module: the prompt comes from the SDK (`get_system_prompt`) and the custom-instructions preamble from `@tell-ai/core` (`compose_custom_system`).

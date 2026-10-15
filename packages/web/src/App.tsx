@@ -1,3 +1,4 @@
+import { DEFAULT_MAX_CHAIN_STEPS } from '@tell-ai/core';
 import {
   Maximize2,
   MessagesSquare as MessagesSquareIcon,
@@ -26,6 +27,7 @@ import SettingsPanel from './components/SettingsPanel.tsx';
 import Terminal, { type TerminalLayout, type TerminalLine, type TerminalTabMeta } from './components/Terminal.tsx';
 import { useToast } from './components/Toast.tsx';
 import { resolve_agent_notification } from './shared/agent-feed.ts';
+import { formatExecutedFeedback, formatSkippedFeedback } from './shared/chain-feedback.ts';
 import { consume_chat_stream } from './shared/chat-stream.ts';
 import { loadExecToggles, saveExecToggles } from './shared/exec-toggles.ts';
 import {
@@ -68,7 +70,9 @@ IMPORTANT: Be CONCISE and DIRECT in your answers.
 `.trim();
 
 // Max <RUN> chain iterations per user prompt before the loop stops itself.
-const MAX_CHAIN_ITERATIONS = 8;
+// The cap is owned by `@tell-ai/core` (browser entry, no builtin imports) so
+// the offline fallback loop and the server chain cannot drift.
+const MAX_CHAIN_ITERATIONS = DEFAULT_MAX_CHAIN_STEPS;
 // Output tail (bytes, roughly) fed back to the LLM in "Executed command" feedback messages.
 const FEEDBACK_OUTPUT_LIMIT = 4 * 1024;
 // beforeunload keepalive body budget: browsers reject keepalive bodies > 64KB.
@@ -104,6 +108,47 @@ interface HistoryEntry {
   name: string;
   createdAt: string;
   size: number;
+}
+
+// Server-side chain snapshot (`GET /api/chain/:runId` replay view). The
+// pending script is server-kept: the client answers by decision id only and
+// never sends free scripts back.
+interface ChainSnapshotEvent {
+  seq: number;
+  type:
+    | 'message'
+    | 'approval_requested'
+    | 'approved'
+    | 'skipped'
+    | 'denied'
+    | 'executed'
+    | 'failed'
+    | 'cancelled'
+    | 'completed'
+    | 'error';
+  text?: string;
+  script?: string;
+  output?: string;
+  exitCode?: number;
+  decisionId?: string;
+}
+
+interface ChainSnapshot {
+  runId: string;
+  status: 'running' | 'awaiting_approval' | 'completed' | 'cancelled' | 'failed';
+  version: number;
+  rounds: number;
+  text: string;
+  events: ChainSnapshotEvent[];
+  pending: { decisionId: string; script: string; expectedVersion: number } | null;
+}
+
+// Server-kept approval the confirm card answers (decision id + version, no script).
+interface ServerChainPending {
+  runId: string;
+  decisionId: string;
+  expectedVersion: number;
+  script: string;
 }
 
 export default function App({ onLogout }: { onLogout?: (() => void) | undefined }) {
@@ -202,6 +247,13 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
 
   const [terminalLines, setTerminalLines] = useState<TerminalLine[]>([]);
   const [pendingCommand, setPendingCommand] = useState<string | null>(null);
+  // Server-side chain approval (set only by `/api/chain` snapshots; the local
+  // `runAiTurn` loop below stays as the offline fallback until the removal
+  // criteria in the core task are met). Ref-only: every update site also
+  // touches `pendingCommand`/messages, which already re-render.
+  const serverChainRef = useRef<ServerChainPending | null>(null);
+  // Last rendered event seq per run (incremental feed/message rendering).
+  const chainSeqRef = useRef<{ runId: string; seq: number } | null>(null);
   const lastAgentErrorCountRef = useRef<number>(0);
   useEffect(() => {
     const error_count = terminalLines.filter((line) => line.type === 'error').length;
@@ -572,6 +624,8 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
     abortRef.current?.abort();
     abortRef.current = null;
     chainDepthRef.current = 0;
+    dropServerChain(true);
+    setPendingCommand(null);
     setLoading(false);
     appendAgentLine('system', 'Chain stopped by user.');
   };
@@ -605,18 +659,138 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
     [syncThreadMessages],
   );
 
-  // Thread actions (localStorage)
-  const handleSelectThread = useCallback((id: string) => {
-    setThreadsState((prev) => {
-      const target = prev.threads.find((t) => t.id === id);
-      if (!target) return prev;
-      saveThreads(prev.threads, id);
-      setMessages(target.messages);
-      return { threads: prev.threads, activeId: id };
-    });
-    chainDepthRef.current = 0;
-    setPendingCommand(null);
+  // Drops the client side of a server chain run, cancelling it remotely
+  // first when asked (best-effort: the server TTL reaps anything missed).
+  const dropServerChain = useCallback((cancelRemote: boolean) => {
+    const pending = serverChainRef.current;
+    serverChainRef.current = null;
+    chainSeqRef.current = null;
+    if (cancelRemote && pending) {
+      apiFetch(`/api/chain/${encodeURIComponent(pending.runId)}/cancel`, { method: 'POST' }).catch(() => {});
+    }
   }, []);
+
+  // Renders only the events the client has not seen yet (messages go to the
+  // thread, command facts go to the agent feed). Chat updates flow through
+  // setMessagesAndSync, feed lines through appendAgentLine.
+  const applyChainSnapshot = useCallback(
+    (snapshot: ChainSnapshot) => {
+      const last = chainSeqRef.current;
+      const from = last && last.runId === snapshot.runId ? last.seq : -1;
+      let maxSeq = from;
+      const freshMessages: ChatMessage[] = [];
+      for (const event of snapshot.events) {
+        if (event.seq <= from) continue;
+        maxSeq = Math.max(maxSeq, event.seq);
+        if (event.type === 'message' && event.text) {
+          freshMessages.push({ id: crypto.randomUUID(), role: 'assistant', content: event.text });
+        } else if (event.type === 'approval_requested' && event.script) {
+          appendAgentLine('system', `Agent requested script execution:\n${event.script}`);
+        } else if (event.type === 'executed' && event.output !== undefined) {
+          appendAgentLine('output', event.output);
+        } else if (event.type === 'denied' && event.text) {
+          appendAgentLine('error', `Chain denied: ${event.text}`);
+        } else if (event.type === 'error' && event.text) {
+          appendAgentLine('error', event.text);
+        } else if (event.type === 'completed' && event.text) {
+          appendAgentLine('system', event.text);
+        } else if (event.type === 'skipped' && event.script) {
+          appendAgentLine('system', `Skipped:\n${event.script}`);
+        } else if (event.type === 'cancelled') {
+          appendAgentLine('system', 'Chain run cancelled.');
+        }
+      }
+      chainSeqRef.current = { runId: snapshot.runId, seq: maxSeq };
+      if (freshMessages.length > 0) {
+        setMessagesAndSync((prev) => [...prev, ...freshMessages]);
+      }
+      if (snapshot.pending) {
+        serverChainRef.current = {
+          runId: snapshot.runId,
+          decisionId: snapshot.pending.decisionId,
+          expectedVersion: snapshot.pending.expectedVersion,
+          script: snapshot.pending.script,
+        };
+        setPendingCommand(snapshot.pending.script);
+      } else {
+        serverChainRef.current = null;
+        setPendingCommand(null);
+      }
+      setRefreshFileTreeTrigger((prev) => prev + 1);
+    },
+    [appendAgentLine, setMessagesAndSync],
+  );
+
+  // Starts a server-side chain run (the loop, the pending script and the
+  // approval state all stay on the server). Throws on transport/model errors
+  // so the caller can fall back to the local loop.
+  const runServerChain = useCallback(
+    async (baseMessages: ChatMessage[], signal: AbortSignal): Promise<ChainSnapshot> => {
+      const res = await apiFetch('/api/chain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal,
+        body: JSON.stringify({
+          messages: baseMessages.map((m) => ({ role: m.role, content: m.content })),
+          modelAlias,
+          systemPrompt,
+        }),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error((errData as { error?: string }).error || 'Chain run failed');
+      }
+      return (await res.json()) as ChainSnapshot;
+    },
+    [modelAlias, systemPrompt],
+  );
+
+  // Answers a server-kept approval (approve runs it once, skip continues
+  // without it). Idempotent: retrying the same decision replays the stored
+  // result instead of re-executing.
+  const confirmServerChain = useCallback(
+    async (decision: 'approve' | 'skip'): Promise<ChainSnapshot> => {
+      const pending = serverChainRef.current;
+      if (!pending) throw new Error('No server chain approval is pending');
+      const res = await apiFetch(`/api/chain/${encodeURIComponent(pending.runId)}/confirm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          decisionId: pending.decisionId,
+          expectedVersion: pending.expectedVersion,
+          decision,
+        }),
+      });
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        run?: ChainSnapshot;
+      } & Partial<ChainSnapshot>;
+      if (!res.ok) {
+        // Deny outcomes (403) still carry the run for rendering.
+        if (body.run) applyChainSnapshot(body.run);
+        throw new Error(body.error || 'Chain confirm failed');
+      }
+      return body as ChainSnapshot;
+    },
+    [applyChainSnapshot],
+  );
+
+  // Thread actions (localStorage)
+  const handleSelectThread = useCallback(
+    (id: string) => {
+      setThreadsState((prev) => {
+        const target = prev.threads.find((t) => t.id === id);
+        if (!target) return prev;
+        saveThreads(prev.threads, id);
+        setMessages(target.messages);
+        return { threads: prev.threads, activeId: id };
+      });
+      chainDepthRef.current = 0;
+      dropServerChain(true);
+      setPendingCommand(null);
+    },
+    [dropServerChain],
+  );
 
   const handleNewThread = useCallback(() => {
     const now = new Date().toISOString();
@@ -634,8 +808,9 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
     });
     setMessages([]);
     chainDepthRef.current = 0;
+    dropServerChain(true);
     setPendingCommand(null);
-  }, []);
+  }, [dropServerChain]);
 
   const handleDuplicateThread = useCallback(() => {
     setThreadsState((prev) => {
@@ -694,6 +869,7 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
       abortRef.current = null;
       setLoading(false);
     }
+    dropServerChain(true);
     chainDepthRef.current = 0;
     setPendingCommand(null);
     setMessagesAndSync([]);
@@ -710,6 +886,7 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
     setMessagesAndSync(updated);
     appendAgentLine('system', 'Message edited — resending from this point.');
     chainDepthRef.current = 0;
+    dropServerChain(true);
     await runAiTurn(updated);
   };
 
@@ -722,6 +899,7 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
     setMessagesAndSync(base);
     appendAgentLine('system', 'Retrying from the selected assistant message.');
     chainDepthRef.current = 0;
+    dropServerChain(true);
     await runAiTurn(base);
   };
 
@@ -943,6 +1121,31 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
     setMessagesAndSync(updatedMessages);
 
     appendAgentLine('system', `Prompt received: "${userPrompt}"`);
+    if (chainMode) {
+      // Server-side chain first: the loop and approvals stay on the server.
+      // Any transport/model failure falls back to the local loop below.
+      setLoading(true);
+      const controller = new AbortController();
+      abortRef.current = controller;
+      chainSeqRef.current = null;
+      try {
+        const snapshot = await runServerChain(updatedMessages, controller.signal);
+        applyChainSnapshot(snapshot);
+        setLoading(false);
+        if (abortRef.current === controller) abortRef.current = null;
+        return;
+      } catch (error: any) {
+        if (isAbortError(error)) {
+          appendAgentLine('system', 'Generation stopped by user.');
+          setLoading(false);
+          if (abortRef.current === controller) abortRef.current = null;
+          return;
+        }
+        appendAgentLine('system', `Server chain unavailable, using the local loop: ${error.message}`);
+      } finally {
+        if (abortRef.current === controller) abortRef.current = null;
+      }
+    }
     await runAiTurn(updatedMessages);
   };
 
@@ -996,7 +1199,7 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
       }
 
       if (chainMode) {
-        const feedback = `Executed command:\n${script}\nOutput:\n${truncateOutputTail(output)}`;
+        const feedback = formatExecutedFeedback(script, truncateOutputTail(output));
         const feedbackMessage: ChatMessage = {
           id: crypto.randomUUID(),
           role: 'user',
@@ -1024,6 +1227,34 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
 
   const handleConfirmPending = async (editedCommand: string) => {
     const command = editedCommand.trim() || pendingCommand || '';
+    // Server-kept approval: an unedited confirm answers by decision id (the
+    // server runs its kept script exactly once). An edited command never goes
+    // through the server confirm — it runs on the local path and the server
+    // run is cancelled so its approval dies.
+    const serverPending = serverChainRef.current;
+    if (serverPending && command === serverPending.script && !isNoExec) {
+      setPendingCommand(null);
+      setLoading(true);
+      try {
+        const snapshot = await confirmServerChain('approve');
+        applyChainSnapshot(snapshot);
+      } catch (error: any) {
+        if (isAbortError(error)) {
+          appendAgentLine('system', 'Execution stopped by user.');
+        } else {
+          appendAgentLine('error', `Chain confirm failed: ${error.message}`);
+          toast('error', `Chain confirm failed: ${error.message}`);
+        }
+      } finally {
+        setLoading(false);
+      }
+      return;
+    } else if (serverPending) {
+      // Edited command — or No-Exec mode: the server run dies here. An edited
+      // command runs on the local path below, and No-Exec never reaches any
+      // executor (server confirm included).
+      dropServerChain(true);
+    }
     setPendingCommand(null);
     if (isNoExec) {
       // No-Exec mode: never POST /api/execute — record what would have run.
@@ -1067,7 +1298,7 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
       setRefreshFileTreeTrigger((prev) => prev + 1);
 
       if (chainMode) {
-        const feedback = `Executed command:\n${command}\nOutput:\n${truncateOutputTail(output)}`;
+        const feedback = formatExecutedFeedback(command, truncateOutputTail(output));
         const feedbackMessage: ChatMessage = {
           id: crypto.randomUUID(),
           role: 'user',
@@ -1094,13 +1325,32 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
   };
 
   const handleSkipPending = async () => {
+    const serverPending = serverChainRef.current;
+    if (serverPending) {
+      // Server-kept approval: skip continues the server loop without the script.
+      setPendingCommand(null);
+      appendAgentLine('system', 'Command execution skipped by user.');
+      if (chainMode) {
+        setLoading(true);
+        try {
+          const snapshot = await confirmServerChain('skip');
+          applyChainSnapshot(snapshot);
+        } catch (error: any) {
+          appendAgentLine('error', `Chain skip failed: ${error.message}`);
+          toast('error', `Chain skip failed: ${error.message}`);
+        } finally {
+          setLoading(false);
+        }
+      }
+      return;
+    }
     const cmd = pendingCommand || '';
     setPendingCommand(null);
     appendAgentLine('system', 'Command execution skipped by user.');
 
     if (chainMode) {
       setLoading(true);
-      const feedback = `Skipped by user:\n${cmd}`;
+      const feedback = formatSkippedFeedback(cmd);
       const feedbackMessage: ChatMessage = {
         id: crypto.randomUUID(),
         role: 'user',

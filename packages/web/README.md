@@ -48,6 +48,14 @@ tell-web --help
 | `--port <n>` | `PORT` or `3000` | TCP port |
 | `--host <addr>` | `127.0.0.1` | Bind address (`0.0.0.0` for LAN) |
 | `--exec-timeout <ms>` | `120000` (max `600000`) | Timeout per command |
+| `--max-chain-steps <n>` | server default (clamped `1..8`; the CLI accepts up to 128, larger forwarded values clamp down here) | Server chain round cap override (forwarded by `tell --web --max-chain`) |
+| `--max-buffer-bytes <n>` | `33554432` | Internal exec buffer override (forwarded by `tell --web --max-buffer`) |
+| `--output-max-bytes <n>` | `204800` | Delivered output cap in bytes; truncated once over the combined stdout+stderr with the core `[output truncated at N bytes]` marker (forwarded by `tell --web --output-max-bytes`) |
+| `--context-chars <n>` | — | Context chars override, exposed on `/api/config` (forwarded by `tell --web --context-max-chars`) |
+| `--profile <name>` | — | Tellrc profile name, exposed on `/api/config` (forwarded by `tell --web --profile`) |
+| `--system-file <path>` | — | Custom instructions file (64 KB cap), composed into the system prompt (forwarded by `tell --web --system-file`) |
+| `--temperature <n>` | provider default | Sampling temperature `0..2`, applied to both the one-shot and the streamed reply and exposed on `/api/config` (forwarded by `tell --web --temperature`; out-of-range values are dropped, never clamped) |
+| `--stdin-timeout-ms <n>` | — | Stdin timeout override, exposed on `/api/config` (web has no stdin; a disabled deadline is omitted) |
 | `--chain` | off | Continue after output until final answer |
 | `--stream` | off | Seed the Stream toggle (Settings → Agent Runtime) and keep NDJSON as the server fallback |
 | `--think` | off | Start reasoning headers expanded (manual collapse/expand persists) |
@@ -207,9 +215,13 @@ Bind to `0.0.0.0` only together with both of these: `TELL_TOKEN` and
 | GET | `/api/models` | Models/aliases + `keysStatus` per vendor |
 | GET | `/api/auth/status` | Public: `{authRequired}` only (drives the isolated login screen) |
 | POST | `/api/auth/verify` | Public + rate-limited (5/15min/IP): `{token}` → `200`/`401` generic/`429` + `Retry-After` |
-| GET | `/api/config` | `defaultModel`, `autoExecute`, `requireApproval`, `noExec`, `chain`, `yes`, `stream`, `think`, `cwd`, `initialPrompt` (requires auth when `TELL_TOKEN` is set) |
+| GET | `/api/config` | `defaultModel`, `autoExecute`, `requireApproval`, `noExec`, `chain`, `yes`, `stream`, `think`, `cwd`, `initialPrompt`, plus the forwarded `profile`, `temperature`, `limits` and `hasCustomSystem` (requires auth when `TELL_TOKEN` is set) |
 | GET | `/api/context` | Generated system prompt (tree + README + conventions) |
 | POST | `/api/tell` | `{messages, modelAlias?, systemPrompt?, stream?}` (400 invalid payload, 429); NDJSON event stream when `stream` is `true`, JSON otherwise. Missing `stream` falls back to the server's boot `--stream` |
+| POST | `/api/chain` | Starts a server-side chain run: same payload shape as `/api/tell` (same 400/429 validation). Runs the model loop on the server (≤8 rounds) and pauses with a server-kept approval instead of returning scripts to the browser |
+| GET | `/api/chain/:runId` | Replay: `{runId, status, version, rounds, text, events, pending}` (404 unknown/expired, 429). Event `seq` is monotonic for incremental clients |
+| POST | `/api/chain/:runId/confirm` | `{decisionId\|approvalId, expectedVersion, decision: 'approve'\|'skip'}` — any `script`/`command`/`path` field is 400. Same id + same verdict replays without re-executing; different verdict, stale version or unknown id is 409; high-risk/`--no-exec` is 403 without execution; cancel wins over in-flight confirms |
+| POST | `/api/chain/:runId/cancel` | Invalidates the run and its pending approval (idempotent; 404 unknown/expired) |
 | GET/PUT | `/api/session` | Persisted state + server facts + live scrollbacks |
 | GET | `/api/session/history` | List snapshots |
 | GET/DELETE | `/api/session/history/:name` | Read/delete snapshot (`:name` must end in `.json`) |

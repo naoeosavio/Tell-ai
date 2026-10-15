@@ -1,4 +1,6 @@
-import path from 'node:path';
+import path from 'path';
+
+import { MAX_EXEC_TIMEOUT_MS, MIN_EXEC_TIMEOUT_MS } from '@tell-ai/core';
 
 export interface CliArgs {
   /** Resolved absolute working directory for the sandbox. */
@@ -11,6 +13,22 @@ export interface CliArgs {
   noExec: boolean;
   /** Model shortcode or full spec (`-m/--model`). */
   model: string;
+  /** Tellrc profile name forwarded by the CLI (`--profile`). */
+  profile?: string | undefined;
+  /** File with custom instructions forwarded by the CLI (`--system-file`). */
+  systemFile?: string | undefined;
+  /** Sampling temperature 0..2 forwarded by the CLI (`--temperature`). */
+  temperature?: number | undefined;
+  /** Validated max chain steps forwarded by the CLI (`--max-chain-steps`). */
+  maxChainSteps?: number | undefined;
+  /** Validated max buffer bytes forwarded by the CLI (`--max-buffer-bytes`). */
+  maxBufferBytes?: number | undefined;
+  /** Validated delivered output cap bytes forwarded by the CLI (`--output-max-bytes`). */
+  outputMaxBytes?: number | undefined;
+  /** Validated context chars forwarded by the CLI (`--context-chars`). */
+  contextChars?: number | undefined;
+  /** Validated stdin timeout ms forwarded by the CLI (`--stdin-timeout-ms`). */
+  stdinTimeoutMs?: number | undefined;
   /** Whether to continue after command output until the AI gives a final answer. */
   chain: boolean;
   /** Whether command execution is auto-confirmed (autoExecute on). */
@@ -66,12 +84,38 @@ export function parseCliArgs(argv: string[], defaultCwd: string): CliArgs {
   const host = argValue(argv, '--host');
   const execTimeoutRaw = argValue(argv, '--exec-timeout');
   const execTimeout = execTimeoutRaw !== undefined ? Number(execTimeoutRaw) : undefined;
+  const profile = argValue(argv, '--profile');
+  const systemFile = argValue(argv, '--system-file');
+  const temperatureRaw = argValue(argv, '--temperature');
+  const maxChainStepsRaw = argValue(argv, '--max-chain-steps');
+  const maxBufferBytesRaw = argValue(argv, '--max-buffer-bytes');
+  const outputMaxBytesRaw = argValue(argv, '--output-max-bytes');
+  const contextCharsRaw = argValue(argv, '--context-chars');
+  const stdinTimeoutMsRaw = argValue(argv, '--stdin-timeout-ms');
+  const toPositiveInt = (raw: string | undefined): number | undefined => {
+    if (raw === undefined) return undefined;
+    const value = Math.floor(Number(raw));
+    return Number.isFinite(value) && value > 0 ? value : undefined;
+  };
+  const toTemperature = (raw: string | undefined): number | undefined => {
+    if (raw === undefined) return undefined;
+    const value = Number(raw);
+    return Number.isFinite(value) && value >= 0 && value <= 2 ? value : undefined;
+  };
   return {
     cwd: path.resolve(argCwd || defaultCwd),
     initialPrompt,
     autoExecute: yes && !noExec,
     noExec,
     model,
+    profile,
+    systemFile,
+    temperature: toTemperature(temperatureRaw),
+    maxChainSteps: toPositiveInt(maxChainStepsRaw),
+    maxBufferBytes: toPositiveInt(maxBufferBytesRaw),
+    outputMaxBytes: toPositiveInt(outputMaxBytesRaw),
+    contextChars: toPositiveInt(contextCharsRaw),
+    stdinTimeoutMs: toPositiveInt(stdinTimeoutMsRaw),
     chain,
     yes,
     requireApproval,
@@ -81,7 +125,7 @@ export function parseCliArgs(argv: string[], defaultCwd: string): CliArgs {
     host,
     execTimeout:
       execTimeout !== undefined && Number.isFinite(execTimeout)
-        ? Math.min(600_000, Math.max(1_000, Math.round(execTimeout)))
+        ? Math.min(MAX_EXEC_TIMEOUT_MS, Math.max(MIN_EXEC_TIMEOUT_MS, Math.round(execTimeout)))
         : undefined,
     help: has(argv, '--help', '-h'),
   };
@@ -94,6 +138,21 @@ Options:
   --cwd <path>      Working directory for the sandbox (default: current dir)
   --prompt <text>   Initial chat prompt
   -m, --model <id>  Model shortcode or full spec (default: TELL_MODEL env or "l")
+  --profile <name>  Tellrc profile forwarded by the CLI (node, security, devops)
+  --system-file <path>
+                    File with custom instructions forwarded by the CLI (64 KB cap)
+  --temperature <n>
+                    Sampling temperature 0..2 forwarded by the CLI
+  --max-chain-steps <n>
+                    Limit override forwarded by the CLI
+  --max-buffer-bytes <n>
+                    Limit override forwarded by the CLI
+  --output-max-bytes <n>
+                    Delivered output cap bytes forwarded by the CLI
+  --context-chars <n>
+                    Limit override forwarded by the CLI
+  --stdin-timeout-ms <n>
+                    Limit override forwarded by the CLI
   --port <number>   TCP port for the web server (default: PORT env or 3000)
   --host <address>  Bind address (default: 127.0.0.1; use 0.0.0.0 to expose on LAN)
   --exec-timeout <ms>

@@ -74,11 +74,15 @@ f      anthropic:claude-fable-5-1:medium
 f+     anthropic:claude-fable-5-1:high
 f++    anthropic:claude-fable-5-1:max
 F      anthropic:claude-fable-5-1:high
-h      anthropic:claude-haiku-4-5:none
-i-     google:gemini-3.1-pro:low
-i      google:gemini-3.1-pro:medium
-i+     google:gemini-3.1-pro:high
-I      google:gemini-3.1-pro:high
+h-     anthropic:claude-haiku-5-5:low
+h      anthropic:claude-haiku-5-5:medium
+h+     anthropic:claude-haiku-5-5:high
+h++    anthropic:claude-haiku-5-5:max
+H      anthropic:claude-haiku-5-5:high
+i-     google:gemini-4-argon:low
+i      google:gemini-4-argon:medium
+i+     google:gemini-4-argon:high
+I      google:gemini-4-argon:high
 j--    google:gemini-3.5-flash-lite:none
 j-     google:gemini-3.5-flash-lite:low
 j      google:gemini-3.5-flash-lite:medium
@@ -266,7 +270,7 @@ tell --ctx @0 "resume the most recent one"             # recency index (must exi
 tell --ctx %a1b2c3 "resume by hash prefix"             # unique hex prefix of a saved id
 ```
 
-Context files live at `~/.ai/tell_context/`. Without any context flag, each invocation starts fresh and the default context is cleared. Context is automatically truncated at 64K characters (older turns summarized away).
+Context files live at `~/.ai/tell_context/`. Without any context flag, each invocation starts fresh and the default context is cleared. Context is automatically truncated at 64K characters by `truncate_context` (whole `User:`/`Assistant:` turns, balanced `<think>`/`<RUN>` blocks, `[older context truncated]` marker; tune with `--context-max-chars` / `TELL_CONTEXT_MAX_CHARS`). Stdin (`--stdin-timeout`/`--no-stdin-timeout`, `--stdin-max-bytes`), execution (`--exec-timeout`, `--max-chain`, `--max-buffer`, `--output-max-bytes`) and exit codes (`2` bad limit, `124` timeout, `125` overflow) follow the same `flag > env > tellrc > default` contract — see [cli-reference](cli/cli-reference.md).
 
 **Refs vs prompt text:** naming a context always requires the `%` prefix. A single bare token is prompt text, but only when there is no positional prompt:
 
@@ -374,6 +378,10 @@ Conversations are logged to `~/.ai/tell_history/` with timestamps.
 | Variable          | Description                    | Default |
 |-------------------|--------------------------------|---------|
 | `TELL_MODEL`      | Default model alias            | `g`     |
+| `TELL_SYSTEM`     | Custom instructions (tellrc env layer) | unset |
+| `TELL_SYSTEM_FILE` | File with custom instructions (tellrc env layer) | unset |
+| `TELL_TEMPERATURE` | Sampling temperature 0..2 (tellrc env layer) | unset |
+| `TELL_PROFILE`    | Tellrc profile: `node`, `security`, `devops` | unset |
 | `DEBUG`           | Enable debug output            | unset   |
 | `CUSTOM_BASE_URL` | Base URL for the `custom` vendor | unset |
 | `CUSTOM_API_KEY`  | Key for the `custom` vendor (or `~/.config/custom.token`) | unset |

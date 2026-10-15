@@ -18,7 +18,7 @@ export default defineConfig({
   // bundling it pulls in @vercel/oidc (a transitive dep of `ai`), whose
   // dynamic require() of node builtins crashes in pure ESM at startup
   // (Error: Dynamic require of "path" is not supported).
-  external: ['node-pty', 'ws', 'vite', '@tell-ai/sdk', 'ai', /^@ai-sdk\//, '@vercel/oidc'],
+  external: ['node-pty', 'ws', 'vite', '@tell-ai/sdk', '@tell-ai/core', 'ai', /^@ai-sdk\//, '@vercel/oidc'],
   minify: true,
   banner: {
     js: '#!/usr/bin/env node',

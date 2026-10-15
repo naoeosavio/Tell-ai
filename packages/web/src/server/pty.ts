@@ -1,11 +1,12 @@
-import crypto from 'node:crypto';
-import type http from 'node:http';
-import type { IncomingMessage } from 'node:http';
-import type { Duplex } from 'node:stream';
+import crypto from 'crypto';
+import type http from 'http';
+import type { IncomingMessage } from 'http';
+import type { Duplex } from 'stream';
+import { sanitize_exec_env } from '@tell-ai/core';
 import { type IPty, spawn } from 'node-pty';
 import type { WebSocket } from 'ws';
 import { WebSocketServer } from 'ws';
-import { clampTerminalSize, isAllowedHost, isAllowedOrigin, isValidPaneId, sanitizeChildEnv } from './guards';
+import { clampTerminalSize, isAllowedHost, isAllowedOrigin, isValidPaneId } from './guards';
 import { getMaxScrollbackChars, safeForeground, shouldKeepPane } from './pty-policy';
 
 /** Constant-time WS token check (sha256 both sides so lengths don't leak). */
@@ -126,7 +127,7 @@ function ensureSession(paneId: string, opts: TerminalServerOptions): PaneSession
   if (session) return session;
 
   const env = {
-    ...sanitizeChildEnv(process.env),
+    ...sanitize_exec_env(process.env),
     TERM: 'xterm-256color',
     COLORTERM: 'truecolor',
   };

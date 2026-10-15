@@ -1,0 +1,53 @@
+{
+  "name": "@tell-ai/core",
+  "version": "0.1.1",
+  "description": "Shared Node runtime for tell-ai: base config, fail-closed paths, project context and (later) the single exec/loop owner",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/naoeosavio/Tell-ai.git"
+  },
+  "author": "it is not savio",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "browser": "./dist/browser.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "browser": {
+        "import": {
+          "types": "./dist/browser.d.ts",
+          "default": "./dist/browser.js"
+        },
+        "require": {
+          "types": "./dist/browser.d.cts",
+          "default": "./dist/browser.cjs"
+        },
+        "default": "./dist/browser.js"
+      },
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": ["dist"],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsup",
+    "lint": "tsc -p tsconfig.json",
+    "format": "biome check --write src",
+    "check": "biome check src",
+    "ci": "npm run lint && npm run check && npm run build"
+  },
+  "dependencies": {
+    "@tell-ai/sdk": "^0.4.0"
+  }
+}

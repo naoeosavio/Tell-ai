@@ -1,10 +1,10 @@
 # Environment and configuration
 
-The CLI is the only layer that touches the environment. It assembles an `SDKConfig { keys, urls }` (both partial) and injects it into `create_ask_ai`. The SDK never reads `process.env` itself.
+The vendor → key/URL mapping is owned by `@tell-ai/core` (`packages/core/src/sdk-config.ts`): `load_sdk_config_from_env(env, { token_files })` / `build_sdk_config_from_env(env)`. The CLI enables the token-file fallback (`token_files: true`); the Web server uses the sync builder (no token files). The hosts hand over the environment record — the SDK never reads `process.env` itself.
 
-## `load_sdk_config` (`src/env.ts:19-47`)
+## `load_sdk_config` (`src/env.ts`)
 
-Keys: env var first, `~/.config/<vendor>.token` file fallback (trimmed, empty ignored via `read_token_file`, `src/env.ts:10-18`).
+Keys: env var first, `~/.config/<vendor>.token` file fallback (trimmed, empty ignored; every vendor honors its `*_BASE_URL` override).
 
 | SDK key | Env var(s) | Token file |
 |---------|-----------|------------|
@@ -68,24 +68,52 @@ CUSTOM_MODEL=kimi-k3 tell -m custom "hi"
 | `CUSTOM_API` | `wires.custom` | Wire override; must be one of `chat`, `responses`, `messages` or boot fails. Without it the model id prefix decides and `chat` is the default. |
 | `CUSTOM_HEADERS` | `headers.custom` | JSON object merged into every request (routing ids, tenant tags, gateway auth). Non-object or invalid JSON fails the run. |
 
-`CUSTOM_API_KEY` matches `SENSITIVE_ENV_SUFFIX` in `Tell.ts`, so it is stripped from the process environment and from the environment of executed commands, exactly like the other vendor keys. The web sandbox reads the same five variables (`load_sdk_config_from_env`), so `tell --web` needs no extra setup. Wire rules and the SDK surface: [../sdk/models.md](../sdk/models.md) and [../sdk/api.md](../sdk/api.md).
+`CUSTOM_API_KEY` matches `SENSITIVE_ENV_SUFFIX` owned by `packages/core/src/exec.ts`, so it is stripped from the process environment and from the environment of executed commands, exactly like the other vendor keys. The web sandbox reads the same five variables (`load_sdk_config_from_env`), so `tell --web` needs no extra setup. Wire rules and the SDK surface: [../sdk/models.md](../sdk/models.md) and [../sdk/api.md](../sdk/api.md).
 
 ## CLI-only variables
 
 | Variable | Read at | Default | Meaning |
 |----------|---------|---------|---------|
-| `TELL_MODEL` | `Tell.ts:24` (module scope) | `'g'` | Default model when no positional/`-m` given |
+| `TELL_MODEL` | `Tell.ts` (module scope) + tellrc env layer | `'g'` | Default model when no positional/`-m`/tellrc model given |
+| `TELL_SYSTEM` | tellrc env layer | unset | Custom instructions (compose before the safety prompt) |
+| `TELL_SYSTEM_FILE` | tellrc env layer | unset | File with custom instructions (64 KB cap) |
+| `TELL_TEMPERATURE` | tellrc env layer | unset | Sampling temperature 0..2 |
+| `TELL_PROFILE` | tellrc env layer | unset | Tellrc profile (`node`, `security`, `devops`) |
 | `CUSTOM_BASE_URL`, `CUSTOM_API_KEY`, `CUSTOM_MODEL`, `CUSTOM_API`, `CUSTOM_HEADERS` | `src/env.ts` (`load_sdk_config`) | unset | Custom vendor: see above |
 | `DEBUG` | `src/env.ts:8` (`'true'`/`'1'`) | unset | Exported SDK-config debug flag (currently no verbose logging wired in `Tell.ts`) |
 
-## System prompt wiring (`src/systemPrompt.ts:6-12`)
+## `.tellrc` (INI-only config)
+
+The only persisted config file is INI — `tell.config.json` is deliberately
+out (JSON is data output only). Sources `~/.tellrc` (user) and `<cwd>/.tellrc`
+(project), owned by `packages/cli/src/tellrc.ts`. Scalar precedence:
+`flag > env > project .tellrc > user ~/.tellrc > default`; `denyCommands` is
+union-only and can never be removed by a flag or lower layer. Sections:
+`[aliases]`, `[profiles.<name>]` (any valid name — `node`, `security`,
+`devops` ship defaults — plus an aliases subsection
+`profiles.<name>.aliases`), `[policy]`, `[limits]`; top
+level takes `model`, `system`, `system-file`, `temperature`, `profile`.
+Custom aliases resolve per invocation without mutating `MODELS`. Tellrc
+`system`/`system-file` compose as custom instructions before the safety
+prompt and can never replace `<RUN>`, approval, injection or deny rules.
+Profiles add `system`/`system-file`/own aliases as fill-if-empty defaults
+(file aliases win: project > user > profile); selecting an undefined
+profile warns. `[limits]` takes the seven runtime keys (`context_chars`,
+`stdin_timeout_ms`, `stdin_max_bytes`, `exec_timeout_ms`, `max_chain_steps`,
+`max_buffer_bytes`, `output_max_bytes`), validated by `@tell-ai/core`'s `runtime-limits` itself
+(invalid values warn and are dropped). Full reference: [tellrc.md](tellrc.md).
+`TellOptions.system` stays an explicit library override. `tell --web`
+receives only non-secret forwarded fields (model, profile, system-file,
+temperature, numeric limits); keys/URLs/secrets never cross the boundary.
+
+## System prompt wiring (SDK `get_system_prompt`, called in `Tell.ts`)
 
 ```ts
-sdk_get_system_prompt({ ...(chain !== undefined ? { chain } : {}), cwd: process.cwd(), platform: `${os.platform()} ${os.release()}` })
+get_system_prompt({ chain, cwd: process.cwd(), platform: `${os.platform()} ${os.release()}` })
 ```
 
-Thin wrapper: same shared prompt the SDK `tell()` uses, plus live cwd and `platform release` so the model proposes correct local commands. `tell_silently` passes `{ chain: autoContinue }` on the first call and `{ chain: true }` on chain follow-ups (`Tell.ts:600-625`); the non-chain final-answer call uses `{ chain: false }`.
+Same shared prompt the SDK `tell()` uses, plus live cwd and `platform release` so the model proposes correct local commands. `tell_silently` passes `{ chain: autoContinue }` on the first call and `{ chain: true }` on chain follow-ups (`Tell.ts:600-625`); the non-chain final-answer call uses `{ chain: false }`.
 
 All providers honor `config.urls.*` as `baseURL`, so a proxy URL works for any vendor that defines one.
 
-Sources: `src/env.ts`, `src/systemPrompt.ts`, `Tell.ts:24`, `Tell.ts:460-471`, `packages/sdk/src/models.ts:273-306`.
+Sources: `src/env.ts`, `Tell.ts`, `packages/sdk/src/models.ts:273-306`, `packages/core/src/sdk-config.ts`.

@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.3.1 — 2026-10-13
+
+### Features
+- Core migrations (`task_039_core-migrations.md`): `guards.ts` no longer declares the child-env denylist or the `/api/tell` payload caps (both re-exported from `@tell-ai/core`); `server/paths.ts` deleted (reads → `canonical_path`, writes → `canonical_write_path` with `create_parents`); `buildProjectContext` delegates to the core `build_project_context`; chain/execute feedback and the timeout message come from the core (`Command timed out after Ns` + script, replacing `Process timed out after Nms`); `/api/execute` and the chain confirm run on the core `create_node_executor` (the whole process group dies on timeout — no more orphaned `cmd &` — and chain timeouts record exit 124); the SDK config comes from the core owner (no token files, every `*_BASE_URL` honored); the offline fallback loop and `parseFeedback` share the core wording through the browser-safe `@tell-ai/core/loop-feedback` subpath.
+- `tell-web` accepts `--temperature <n>` (forwarded by `tell --web` from the resolved `.tellrc`, including a profile default): `parseCliArgs` validates `0..2` and drops anything else instead of clamping, the value reaches both the one-shot `generateText` call and the `--stream` `ask_stream` path, and `/api/config` exposes it as `temperature` (`null` when absent). `--profile`/`--system-file` are now documented in the flag table alongside it.
+- Server-side chain (`POST /api/chain`, `GET /api/chain/:runId`, `POST /api/chain/:runId/confirm`, `POST /api/chain/:runId/cancel`, all additive — `/api/tell`, `/api/execute` and `/api/risk-check` unchanged): the model loop (≤8 rounds), the pending script and the approval state stay on the server in the new pure `src/server/chain-store.ts` (in-memory, 15 min TTL, monotonic event sequence, sha256 command hash, idempotent decision ids). Confirm payloads carry only `decisionId`/`approvalId`, `expectedVersion` and `approve`/`skip`, validated by `validate_chain_decision_payload` from `@tell-ai/core` before any transition — any `script`/`command`/`path` field is 400. Same id + same verdict replays without re-executing; different verdict, stale version or unknown id is 409; high-risk/`--no-exec` is 403 without execution (`disabled`/`--no-exec`, never `no-exec`); cancel wins over in-flight confirms and per-run continuations are released on terminal snapshots. Same auth, 10/min rate limit and `validateTellPayload` boundaries as `/api/tell`.
+- The App submits Chain Mode to `/api/chain`, renders events incrementally and answers approvals by decision id (`runServerChain`/`confirmServerChain`/`applyChainSnapshot` in `src/App.tsx`); the local loop stays as the offline fallback, all flags/toggles preserved, `--port/--host/--prompt/--exec-timeout` untouched. An edited confirm cancels the server run and executes locally; the client No-Exec toggle cancels the run instead of approving it. `DEFAULT_SYSTEM_PROMPT` and the local loop are intentionally kept (removal criteria deferred).
+- New `@tell-ai/core` workspace dependency (external in the server bundle, like the SDK); `tsup.config.ts` externalizes it.
+- The sandbox accepts the same custom-endpoint variables as the CLI: `CUSTOM_BASE_URL`, `CUSTOM_API_KEY`, `CUSTOM_MODEL`, `CUSTOM_API` and `CUSTOM_HEADERS` are injected into the SDK config (`load_sdk_config_from_env`), so `tell-web -m custom:<model>` works against a user-supplied OpenAI/Anthropic-shaped endpoint with no extra wiring. An invalid `CUSTOM_API`/`CUSTOM_HEADERS` fails the boot instead of degrading silently.
+- `/api/models` reports `keysStatus.custom`, and the chat header treats `custom` as a keyed vendor (missing-key hint) with the label `Custom endpoint` in Settings → credentials.
+
+
+### Notes
+- Requires `@tell-ai/sdk` 0.4.0 (`custom` vendor, wire resolution and the per-vendor `models`/`wires`/`headers` config slots); the `^0.3.0` floor in `cli`/`web`/`core` was raised accordingly.
+
 ## v0.3.0 — 2026-10-01
 
 ### Features

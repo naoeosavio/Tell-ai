@@ -65,7 +65,7 @@ const result = await generateText({ model: handle.model, prompt: 'hi', reasoning
 
 ## `MODELS`
 
-`models.ts:28`. The 142-entry alias table mapping short aliases to full `vendor:model:thinking` specs (e.g. `g` → `openai:gpt-6.1-sol:medium`). The table is the source of truth for the CLI's `tell -m --help` output.
+`models.ts:28`. The 146-entry alias table mapping short aliases to full `vendor:model:thinking` specs (e.g. `g` → `openai:gpt-6.1-sol:medium`). The table is the source of truth for the CLI's `tell -m --help` output.
 
 ## Custom endpoint helpers (`custom.ts`)
 
