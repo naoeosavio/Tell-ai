@@ -1792,7 +1792,7 @@
   ti.maxLength = 90; ti.spellcheck = false; ti.autocomplete = 'off';
   ti.setAttribute('aria-label', 'demo input');
   const tcur = document.createElement('span'); tcur.className = 'pcur';
-  let history = [], hIdx = -1, busy = false, stream = null, demoBooted = false;
+  let history = [], hIdx = -1, busy = false, stream = null, demoBooted = false, replaying = false;
 
   function scrollBottom(){ tout.scrollTop = tout.scrollHeight; }
   function out(text, cls){
@@ -1856,9 +1856,30 @@
     }
   });
 
+  /* ---------- reprocessa a sessão da demo no idioma atual ----------
+     o terminal é texto puro (sem data-i18n), então trocar de idioma
+     deixava o banner e as respostas na língua antiga: a sessão é
+     reprocessada a partir dos comandos digitados. */
+  async function replayDemo(){
+    if (!demoBooted || busy) return;
+    busy = true; replaying = true;
+    const cmds = history.slice();
+    try {
+      stopLogo(); logoEl = null; logoDotEl = null;
+      tout.innerHTML = '';
+      await banner(false);
+      newPrompt();
+      for (const c of cmds){
+        out(c, 'dim');
+        await process(c);
+        newPrompt();
+      }
+    } finally { replaying = false; busy = false; }
+  }
+
   async function streamText(text, cls){
     const el = out('', cls || '');
-    if (reduced){ el.textContent = text; scrollBottom(); return; }
+    if (reduced || replaying){ el.textContent = text; scrollBottom(); return; }
     for (const ch of text){
       if (stream && stream.cancelled){ out('^C', 'meta'); return; }
       el.textContent += ch;
@@ -2064,6 +2085,7 @@
     /* reanima os terminais que já rodaram, no novo idioma */
     if (heroStarted) runHero();
     if (sboxStarted && !sboxBusy) sboxBoot();
+    if (demoBooted) replayDemo();
   }
   $$('.lng button').forEach(b => b.addEventListener('click', () => setLang(b.dataset.lang)));
 
