@@ -4,6 +4,9 @@
   "type": "module",
   "description": "Tell AI web interface — installs the tell CLI alongside it",
   "license": "GPL-3.0",
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=22"
   },
@@ -24,7 +27,7 @@
     "test": "node --test ../../test/test-web-backend.js && node --test ../../test/test-web-sandbox.js"
   },
   "dependencies": {
-    "@tell-ai/core": "^0.1.0",
+    "@tell-ai/core": "^0.1.1",
     "@tell-ai/sdk": "^0.4.0",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
