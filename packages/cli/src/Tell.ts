@@ -180,10 +180,12 @@ function model_label(model: string): string {
 }
 
 function is_model_spec(value: string, custom_aliases?: Record<string, string>): boolean {
-  if (custom_aliases?.[value] !== undefined) return true;
+  const owns = (record: Record<string, string>, key: string): boolean =>
+    Object.prototype.hasOwnProperty.call(record, key);
+  if (custom_aliases !== undefined && owns(custom_aliases, value)) return true;
   const bare = value.startsWith('.') ? value.slice(1) : value;
-  if (custom_aliases?.[bare] !== undefined) return true;
-  if (MODELS[bare]) return true;
+  if (custom_aliases !== undefined && owns(custom_aliases, bare)) return true;
+  if (Object.prototype.hasOwnProperty.call(MODELS, bare)) return true;
   if (!bare.includes(':')) return false;
   try {
     resolve_model_spec(bare);
@@ -626,14 +628,17 @@ function format_model_error(error: unknown): string {
 
 function parse_args(
   args: string[],
-  optModel: string | undefined,
+  flagModel: string | undefined,
+  fallbackModel: string,
   readPipedInput = false,
   custom_aliases: Record<string, string> = {},
 ): ParsedInput {
-  let model = optModel || DEFAULT_MODEL;
+  let model = fallbackModel;
   let parts = args;
   const first_arg = args[0];
-  const first_is_model = !optModel && typeof first_arg === 'string' && is_model_spec(first_arg, custom_aliases);
+  // A positional alias wins over the env/tellrc model (the flag still wins
+  // over both): `-m` > positional alias > `$TELL_MODEL`/tellrc > default.
+  const first_is_model = !flagModel && typeof first_arg === 'string' && is_model_spec(first_arg, custom_aliases);
   if (first_is_model) {
     model = first_arg;
     parts = args.slice(1);
@@ -847,6 +852,10 @@ async function run_response_loop(
       system,
       callbacks: runtime_callbacks,
       max_rounds: rounds,
+      // The internal exec buffer cap belongs to the executor: the runtime
+      // forwards it per call, so it must carry the resolved limit (not the
+      // core default) or `--max-buffer` would never apply.
+      max_output_bytes: exec_options.max_buffer_bytes,
     });
   }
   let runtime = create_runtime(state.autoContinue ? chain_budget : 1);
@@ -871,9 +880,10 @@ async function run_response_loop(
   } else {
     // Limit not reached — nothing to announce.
   }
-  // Default-mode final answer (legacy `handle_final_answer`): commands ran
-  // but the visible answer is empty — ask once more without `<RUN>`.
-  if (!state.autoContinue && result.commands.length > 0 && !result.text) {
+  // Final answer (legacy `handle_final_answer`): commands ran but the visible
+  // answer is empty — ask once more without `<RUN>`. Chain mode asks too, so
+  // a run that ends at the round cap never leaves stdout empty.
+  if (result.commands.length > 0 && !result.text) {
     const final_prompt = `${strip_think_tags(conversation_text(state))}`;
     const final_response = await model.ask(final_prompt, { system, stream: false });
     const final_text = strip_run_tags(strip_think_tags(final_response));
@@ -1003,9 +1013,25 @@ async function launch_web(opts: {
       }
     });
     await new Promise<void>((resolve) => {
+      let settled = false;
+      const settle = (): void => {
+        if (settled) {
+          return;
+        } else {
+          settled = true;
+          resolve();
+        }
+      };
+      // A failed spawn emits `error` and `close`, never `exit` — without the
+      // `close` listener the promise would never settle and the temp file
+      // would leak.
+      child.on('close', (exit_code: number | null) => {
+        if (exit_code !== null) process.exitCode = exit_code;
+        settle();
+      });
       child.on('exit', (exit_code: number | null) => {
         if (exit_code !== null) process.exitCode = exit_code;
-        resolve();
+        settle();
       });
     });
   } finally {
@@ -1134,7 +1160,9 @@ async function run_tell(
     process.exitCode = EXIT_CONFIG_ERROR;
     return;
   }
-  const effective_model = resolve_model_input(tellrc.model ?? model, tellrc.aliases, MODELS);
+  // The model is already resolved by the caller (flag > positional alias >
+  // env/tellrc > default); re-resolving only expands a tellrc alias.
+  const effective_model = resolve_model_input(model, tellrc.aliases, MODELS);
   let label = '';
   let plan: ContextPlan;
   try {
@@ -1283,7 +1311,13 @@ async function main() {
     return;
   }
   const opt_model = opts.model ?? early_tellrc.model;
-  const input = parse_args(positional_args, opt_model, Boolean(opts.input), early_tellrc.aliases);
+  const input = parse_args(
+    positional_args,
+    opts.model,
+    opt_model ?? DEFAULT_MODEL,
+    Boolean(opts.input),
+    early_tellrc.aliases,
+  );
   const effective_model = resolve_model_input(input.model, early_tellrc.aliases, MODELS);
   let stdin_text = '';
   if (input.readStdin) {

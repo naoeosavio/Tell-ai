@@ -101,9 +101,11 @@ export function lock_process_environment(): void {
 // Matches path-like tokens inside a command script: absolute (`/x`), home
 // (`~/x`, `$HOME/x`, bare `$HOME`), relative with traversal (`../x`, `./x`,
 // bare `..`), optionally after `=` (`--output=/x`) and inside quotes. The
-// token body stops at whitespace or shell separators.
+// token body stops at whitespace or shell separators. The prefix class also
+// covers the redirection operators (`<`, `>`) so `cat</etc/passwd` cannot
+// smuggle an outside path past the gate.
 const OUTSIDE_PATH_TOKEN =
-  /(?:^|[\s;&|("'=`])((?:\/|~\/|(?:\$\{HOME\}|\$HOME)\/?|\.{1,2}\/)[^\s;&|'"]*|\$\{HOME\}|\$HOME|[~.]{1,2})(?=$|[\s;&|'")=])/g;
+  /(?:^|[\s;&|("'`=<>])((?:\/|~\/|(?:\$\{HOME\}|\$HOME)\/?|\.{1,2}\/)[^\s;&|'"]*|\$\{HOME\}|\$HOME|[~.]{1,2})(?=$|[\s;&|'")=<>])/g;
 const FILE_ARGUMENT_TOKEN =
   /(?:^|[\s;&|])(?:cat|head|tail|less|more|file|stat|cp|mv|rm|ln|chmod|chown|truncate|tar)\b([^;&|]*)/g;
 const SHELL_ARGUMENT_TOKEN = /"([^"]*)"|'([^']*)'|([^\s]+)/g;

@@ -798,6 +798,20 @@ export function resolve_tellrc(layers: TellrcLayer[], flags: TellrcFlags = {}, e
 }
 
 /**
+ * True when a record has the key as an **own** property.
+ *
+ * The prototype chain is never consulted, so an alias named `constructor`
+ * cannot resolve to `Object.prototype.constructor`.
+ *
+ * @param record - Record to inspect.
+ * @param key - Key to look for.
+ * @returns Whether the record owns the key.
+ */
+function has_own(record: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, key);
+}
+
+/**
  * Resolves a model input through custom aliases without mutating MODELS.
  *
  * Accepts a custom alias in any position the CLI parser accepts (including
@@ -817,13 +831,13 @@ export function resolve_model_input(
   const trimmed = value.trim();
   if (!trimmed) {
     return value;
-  } else if (custom_aliases[trimmed] !== undefined) {
+  } else if (has_own(custom_aliases, trimmed)) {
     return custom_aliases[trimmed] as string;
-  } else if (known[trimmed] !== undefined) {
+  } else if (has_own(known, trimmed)) {
     return trimmed;
   } else if (trimmed.startsWith('.')) {
     const bare = trimmed.slice(1);
-    if (custom_aliases[bare] !== undefined) {
+    if (has_own(custom_aliases, bare)) {
       return `.${custom_aliases[bare] as string}`;
     } else {
       return trimmed;
