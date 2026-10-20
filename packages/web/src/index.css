@@ -15,53 +15,53 @@
 :root {
   --ui-scale: 1;
 
-  --color-bg-primary: #0a0a0a;
-  --color-bg-secondary: #121212;
-  --color-bg-tertiary: #080808;
-  --color-bg-elevated: #141414;
-  --color-bg-input: #0d0d0d;
+  --color-bg-primary: #0b0a08;
+  --color-bg-secondary: #12110d;
+  --color-bg-tertiary: #080706;
+  --color-bg-elevated: #181611;
+  --color-bg-input: #100f0c;
 
-  --color-text-primary: #f5f5f5;
-  --color-text-secondary: rgba(255, 255, 255, 0.6);
-  --color-text-muted: rgba(255, 255, 255, 0.35);
+  --color-text-primary: #ede7da;
+  --color-text-secondary: rgba(237, 231, 218, 0.62);
+  --color-text-muted: rgba(237, 231, 218, 0.38);
 
-  --color-border-subtle: rgba(255, 255, 255, 0.08);
-  --color-border-medium: rgba(255, 255, 255, 0.15);
-  --color-border-strong: rgba(255, 255, 255, 0.25);
+  --color-border-subtle: rgba(237, 231, 218, 0.09);
+  --color-border-medium: rgba(237, 231, 218, 0.16);
+  --color-border-strong: rgba(237, 231, 218, 0.28);
 
-  --color-accent: #e11d48;
-  --color-accent-hover: #f43f5e;
-  --color-accent-subtle: #4c0519;
-  --color-accent-text: #fb7185;
+  --color-accent: #ffb454;
+  --color-accent-hover: #ffd08a;
+  --color-accent-subtle: #2e2313;
+  --color-accent-text: #ffd08a;
 
-  --color-success: #10b981;
-  --color-error: #ef4444;
+  --color-success: #7bd88f;
+  --color-error: #e5715f;
 
-  --color-scrollbar-track: rgba(255, 255, 255, 0.03);
-  --color-scrollbar-thumb: rgba(255, 255, 255, 0.15);
-  --color-scrollbar-thumb-hover: rgba(255, 255, 255, 0.3);
+  --color-scrollbar-track: rgba(237, 231, 218, 0.03);
+  --color-scrollbar-thumb: rgba(237, 231, 218, 0.15);
+  --color-scrollbar-thumb-hover: rgba(237, 231, 218, 0.3);
 }
 
 /* Font families and accent tokens are runtime-overridable via the ThemeProvider
  * (inline root vars from theme.tsx are the single source of truth — they win).
  * Only neutral tokens are mirrored here as first-paint fallbacks. */
 :root[data-theme="light"] {
-  --color-bg-primary: #ffffff;
-  --color-bg-secondary: #f5f5f5;
-  --color-bg-tertiary: #e5e5e5;
-  --color-bg-elevated: #fafafa;
-  --color-bg-input: #f0f0f0;
+  --color-bg-primary: #fdfcf8;
+  --color-bg-secondary: #f4f1e8;
+  --color-bg-tertiary: #e9e4d6;
+  --color-bg-elevated: #fbf9f2;
+  --color-bg-input: #f2eee3;
 
-  --color-text-primary: #0a0a0a;
-  --color-text-secondary: rgba(0, 0, 0, 0.6);
-  --color-text-muted: rgba(0, 0, 0, 0.35);
+  --color-text-primary: #14120c;
+  --color-text-secondary: rgba(20, 18, 12, 0.62);
+  --color-text-muted: rgba(20, 18, 12, 0.38);
 
-  --color-border-subtle: rgba(0, 0, 0, 0.08);
-  --color-border-medium: rgba(0, 0, 0, 0.15);
-  --color-border-strong: rgba(0, 0, 0, 0.25);
+  --color-border-subtle: rgba(20, 18, 12, 0.09);
+  --color-border-medium: rgba(20, 18, 12, 0.16);
+  --color-border-strong: rgba(20, 18, 12, 0.28);
 
-  --color-success: #059669;
-  --color-error: #dc2626;
+  --color-success: #4e8b5f;
+  --color-error: #b5433a;
 
   --color-scrollbar-track: rgba(0, 0, 0, 0.03);
   --color-scrollbar-thumb: rgba(0, 0, 0, 0.15);

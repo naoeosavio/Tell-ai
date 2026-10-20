@@ -22,6 +22,12 @@ export interface CustomFonts {
 export interface ThemeConfig {
   mode: ThemeMode;
   accent: AccentPalette;
+  /**
+   * True once the visitor picks an accent by hand. Without it, a stored
+   * `rose` (the old default) is migrated to `amber` on load, so the new
+   * default reaches everyone without touching the other settings.
+   */
+  accentExplicit?: boolean;
   fontSans: FontChoice;
   fontDisplay: FontChoice;
   fontMono: FontChoice;
@@ -55,7 +61,7 @@ const DEFAULT_CUSTOM_FONTS: CustomFonts = {
 
 const DEFAULT_THEME: ThemeConfig = {
   mode: 'dark',
-  accent: 'rose',
+  accent: 'amber',
   fontSans: 'Inter',
   fontDisplay: 'Space Grotesk',
   fontMono: 'JetBrains Mono',
@@ -102,10 +108,10 @@ const ACCENT_COLORS: Record<
     text: { dark: '#34D399', light: '#047857' },
   },
   amber: {
-    primary: '#D97706',
-    hover: '#F59E0B',
-    subtle: { dark: '#78350F', light: '#FEF3C7' },
-    text: { dark: '#FBBF24', light: '#B45309' },
+    primary: '#FFB454',
+    hover: '#FFD08A',
+    subtle: { dark: '#2E2313', light: '#FDEBCB' },
+    text: { dark: '#FFD08A', light: '#A05E15' },
   },
   violet: {
     primary: '#7C3AED',
@@ -122,39 +128,39 @@ const ACCENT_COLORS: Record<
 };
 
 const DARK_VARS: Record<string, string> = {
-  '--color-bg-primary': '#0A0A0A',
-  '--color-bg-secondary': '#121212',
-  '--color-bg-tertiary': '#080808',
-  '--color-bg-elevated': '#141414',
-  '--color-bg-input': '#0D0D0D',
-  '--color-text-primary': '#F5F5F5',
-  '--color-text-secondary': 'rgba(255,255,255,0.6)',
-  '--color-text-muted': 'rgba(255,255,255,0.35)',
-  '--color-border-subtle': 'rgba(255,255,255,0.08)',
-  '--color-border-medium': 'rgba(255,255,255,0.15)',
-  '--color-border-strong': 'rgba(255,255,255,0.25)',
-  '--color-success': '#10B981',
-  '--color-error': '#EF4444',
-  '--color-scrollbar-track': 'rgba(255,255,255,0.03)',
-  '--color-scrollbar-thumb': 'rgba(255,255,255,0.15)',
+  '--color-bg-primary': '#0B0A08',
+  '--color-bg-secondary': '#12110D',
+  '--color-bg-tertiary': '#080706',
+  '--color-bg-elevated': '#181611',
+  '--color-bg-input': '#100F0C',
+  '--color-text-primary': '#EDE7DA',
+  '--color-text-secondary': 'rgba(237,231,218,0.62)',
+  '--color-text-muted': 'rgba(237,231,218,0.38)',
+  '--color-border-subtle': 'rgba(237,231,218,0.09)',
+  '--color-border-medium': 'rgba(237,231,218,0.16)',
+  '--color-border-strong': 'rgba(237,231,218,0.28)',
+  '--color-success': '#7BD88F',
+  '--color-error': '#E5715F',
+  '--color-scrollbar-track': 'rgba(237,231,218,0.03)',
+  '--color-scrollbar-thumb': 'rgba(237,231,218,0.15)',
 };
 
 const LIGHT_VARS: Record<string, string> = {
-  '--color-bg-primary': '#FFFFFF',
-  '--color-bg-secondary': '#F5F5F5',
-  '--color-bg-tertiary': '#E5E5E5',
-  '--color-bg-elevated': '#FAFAFA',
-  '--color-bg-input': '#F0F0F0',
-  '--color-text-primary': '#0A0A0A',
-  '--color-text-secondary': 'rgba(0,0,0,0.6)',
-  '--color-text-muted': 'rgba(0,0,0,0.35)',
-  '--color-border-subtle': 'rgba(0,0,0,0.08)',
-  '--color-border-medium': 'rgba(0,0,0,0.15)',
-  '--color-border-strong': 'rgba(0,0,0,0.25)',
-  '--color-success': '#059669',
-  '--color-error': '#DC2626',
-  '--color-scrollbar-track': 'rgba(0,0,0,0.03)',
-  '--color-scrollbar-thumb': 'rgba(0,0,0,0.15)',
+  '--color-bg-primary': '#FDFCF8',
+  '--color-bg-secondary': '#F4F1E8',
+  '--color-bg-tertiary': '#E9E4D6',
+  '--color-bg-elevated': '#FBF9F2',
+  '--color-bg-input': '#F2EEE3',
+  '--color-text-primary': '#14120C',
+  '--color-text-secondary': 'rgba(20,18,12,0.62)',
+  '--color-text-muted': 'rgba(20,18,12,0.38)',
+  '--color-border-subtle': 'rgba(20,18,12,0.09)',
+  '--color-border-medium': 'rgba(20,18,12,0.16)',
+  '--color-border-strong': 'rgba(20,18,12,0.28)',
+  '--color-success': '#4E8B5F',
+  '--color-error': '#B5433A',
+  '--color-scrollbar-track': 'rgba(20,18,12,0.03)',
+  '--color-scrollbar-thumb': 'rgba(20,18,12,0.15)',
 };
 
 const FONT_CHOICES: FontChoice[] = ['Inter', 'Space Grotesk', 'JetBrains Mono', 'Custom'];
@@ -243,38 +249,38 @@ export function useTheme() {
 }
 
 export function xtermThemeFromConfig(config: ThemeConfig) {
-  const accent = ACCENT_COLORS[config.accent] || ACCENT_COLORS.rose;
+  const accent = ACCENT_COLORS[config.accent] || ACCENT_COLORS.amber;
   if (config.mode === 'light') {
     return {
-      background: '#F5F5F5',
-      foreground: '#1A1A1A',
+      background: '#F4F1E8',
+      foreground: '#14120C',
       cursor: accent.primary,
       cursorAccent: '#FFFFFF',
       selectionBackground: accent.subtle.light,
       black: '#000000',
-      red: accent.primary,
-      green: '#059669',
-      yellow: '#D97706',
+      red: '#B5433A',
+      green: '#4E8B5F',
+      yellow: '#A05E15',
       blue: '#2563EB',
       magenta: '#7C3AED',
       cyan: '#0891B2',
-      white: '#1A1A1A',
+      white: '#14120C',
     };
   }
   return {
-    background: '#080808',
-    foreground: '#e5e5e5',
+    background: '#080706',
+    foreground: '#EDE7DA',
     cursor: accent.primary,
-    cursorAccent: '#000000',
+    cursorAccent: '#0B0A08',
     selectionBackground: accent.subtle.dark,
     black: '#000000',
-    red: accent.primary,
-    green: '#10B981',
-    yellow: '#FBBF24',
+    red: '#E5715F',
+    green: '#7BD88F',
+    yellow: '#FFD08A',
     blue: '#3B82F6',
     magenta: '#D946EF',
     cyan: '#22D3EE',
-    white: '#e5e5e5',
+    white: '#EDE7DA',
   };
 }
 
@@ -283,6 +289,10 @@ function normalizeConfig(raw: any): ThemeConfig {
   if (raw && typeof raw === 'object') {
     if (raw.mode === 'dark' || raw.mode === 'light') c.mode = raw.mode;
     if (ACCENT_COLORS[raw.accent as AccentPalette]) c.accent = raw.accent as AccentPalette;
+    // `rose` was the default before the theme palette landed: a stored config
+    // that never picked an accent follows the new default.
+    if (raw.accentExplicit === true) c.accentExplicit = true;
+    else if (c.accent === 'rose') c.accent = 'amber';
     if (FONT_CHOICES.includes(raw.fontSans)) c.fontSans = raw.fontSans;
     if (FONT_CHOICES.includes(raw.fontDisplay)) c.fontDisplay = raw.fontDisplay;
     if (FONT_CHOICES.includes(raw.fontMono)) c.fontMono = raw.fontMono;
@@ -354,7 +364,7 @@ function applyConfigToRoot(config: ThemeConfig) {
   try {
     const root = document.documentElement;
     const modeVars = (config.mode === 'light' ? LIGHT_VARS : DARK_VARS) || DARK_VARS;
-    const accent = ACCENT_COLORS[config.accent] || ACCENT_COLORS.rose;
+    const accent = ACCENT_COLORS[config.accent] || ACCENT_COLORS.amber;
 
     for (const [key, value] of Object.entries(modeVars)) {
       root.style.setProperty(key, value);
@@ -394,7 +404,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     () => ({
       config,
       setMode: (mode) => update({ mode }),
-      setAccent: (accent) => update({ accent }),
+      setAccent: (accent) => update({ accent, accentExplicit: true }),
       setFontSans: (fontSans) => update({ fontSans }),
       setFontDisplay: (fontDisplay) => update({ fontDisplay }),
       setFontMono: (fontMono) => update({ fontMono }),
