@@ -109,3 +109,12 @@ body {
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: var(--color-scrollbar-thumb-hover);
 }
+
+/* The ASCII logo scrolls only as a safety net: the art is scaled to fit, so
+   the scrollbar stays hidden. */
+.logo-scroll {
+  scrollbar-width: none;
+}
+.logo-scroll::-webkit-scrollbar {
+  display: none;
+}

@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 
 /**
- * Animated ASCII logo cycling through the 4 variants documented in `tell.md`
- * (TELL AI / SDK / CLI / WEB). Pure presentational — no network, no secrets.
+ * Animated ASCII logo cycling through the 5 variants documented in `tell.md`
+ * (TELL AI / SDK / CORE / CLI / WEB). Pure presentational — no network, no secrets.
  *
  * NOTE: block/box-drawing glyphs (█ ═ ║ ╔ ╝…) only align under a true
  * monospace font WITH box-drawing coverage. The system `monospace` fallback
@@ -33,7 +33,7 @@ const FRAMES: Array<{ label: string; art: string }> = [
     ].join('\n'),
   },
   {
-    label: 'TELL CLI',
+    label: 'TELL CORE',
     art: [
       '████████╗███████╗██╗     ██╗        ██████╗  ██████╗  ██████╗ ███████╗',
       '╚══██╔══╝██╔════╝██║     ██║       ██╔════╝ ██╔═══██╗ ██╔══██╗██╔════╝',
@@ -84,12 +84,18 @@ export default function TellLogoLoop() {
 
   return (
     <div className="select-none w-full" role="img" aria-label="Tell logo">
-      <div className="overflow-x-auto">
+      {/* container-type lets the art scale with the card: the widest frame
+          (TELL CORE, 73 columns) must never overflow the login card. */}
+      <div className="overflow-x-auto logo-scroll" style={{ containerType: 'inline-size' }}>
         <pre
           aria-hidden="true"
-          className="w-max mx-auto text-[8px] sm:text-[10px] text-(--color-accent-text) whitespace-pre"
+          className="w-max mx-auto text-[9px] text-(--color-accent-text) whitespace-pre"
           style={{
             fontFamily: LOGO_FONT_STACK,
+            // 73 columns * 0.6em advance: 2.25cqw keeps the widest frame
+            // inside the container (fallback to the 9px class if cqw is
+            // unsupported and the declaration is dropped).
+            fontSize: 'min(10px, 2.25cqw)',
             letterSpacing: '0',
             wordSpacing: '0',
             lineHeight: 1.35,
@@ -104,7 +110,7 @@ export default function TellLogoLoop() {
       <div className="mt-2 flex items-center justify-center gap-1.5" aria-hidden="true">
         {FRAMES.map((f, i) => (
           <span
-            key={f.label}
+            key={`${f.label}-${i}`}
             className={`h-1 w-6 transition-colors ${i === index ? 'bg-(--color-accent)' : 'bg-white/10'}`}
           />
         ))}
