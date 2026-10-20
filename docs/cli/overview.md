@@ -7,9 +7,10 @@
 | Layer | Package | Responsibilities |
 |-------|---------|------------------|
 | LIB | `@tell-ai/sdk` (`packages/sdk/`) | Model resolution (`MODELS`, `resolve_model_spec`), vendor dispatch (`create_ask_ai`), `tell()`, `get_system_prompt()`, `<RUN>`/`<think>` helpers, `summarize_context`. Browser-safe: no `node:*`, no `process.env`. |
-| CLI | `tell-ai` (`packages/cli/`) | `process.env` + `~/.config/<vendor>.token` resolution (`src/env.ts`), commander parsing, stdin, `@path` mention expansion (`src/mentions.ts`), `/bin/bash` execution, confirmation + high-risk guard, `~/.ai/tell_context` + `~/.ai/tell_history`, chain loop (`src/Tell.ts`). |
+| RUNTIME | `@tell-ai/core` (`packages/core/`) | Injectable exec/loop contract (`createTellRuntime`), Node executor, base risk, host config, fail-closed paths, project context, runtime limits. See [core docs](../core/README.md). |
+| CLI | `tell-ai` (`packages/cli/`) | Commander parsing, stdin, `@path` mention expansion (`src/mentions.ts`), `@N`/`%N` history (`src/history.ts`), confirmation prompts, log/context files. Exec, loop, risk, env and limits arrive from the core via `src/core-adapters.ts`; model dispatch via the SDK. |
 
-The CLI depends on the SDK (`packages/cli/package.json:52-55`): `@tell-ai/sdk` + `commander@15`. It never reimplements model dispatch — `run_tell` calls `load_sdk_config()` then `create_ask_ai(model, config)` (`Tell.ts:871-873`), and `tell_silently` delegates to SDK `tell()` with `ask` + `raw: true` (`Tell.ts:477-495`).
+The CLI depends on the SDK and the core (`packages/cli/package.json:52-55`): `@tell-ai/sdk` + `@tell-ai/core` + `commander@15`. It never reimplements model dispatch — `run_tell` calls `load_sdk_config()` then `create_ask_ai(model, config)` (`Tell.ts:871-873`), and `tell_silently` delegates to SDK `tell()` with `ask` + `raw: true` (`Tell.ts:477-495`). Exec/loop runs through the core runtime via `src/core-adapters.ts`.
 
 ## Invocation lifecycle
 

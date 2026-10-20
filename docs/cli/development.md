@@ -13,17 +13,20 @@ packages/cli/
   dist/Tell.mjs      # built artifact (chmod +x)
 ```
 
-Root orchestration (`package.json`, bun workspaces `packages/*` — SDK, CLI, web):
+Root orchestration (`package.json`, bun workspaces `packages/*` — SDK, core, CLI, web):
 
 ```bash
-npm run build          # SDK (ESM+CJS+dts+2 browser) + CLI (minified .mjs) + web (tsup server + vite assets)
-npm run lint           # tsc --noEmit in SDK + CLI + web
+npm run build          # SDK (ESM+CJS+dts+2 browser) + core (ESM+CJS+dts) + CLI (minified .mjs) + web (tsup server + vite assets)
+npm run lint           # tsc --noEmit in SDK + core + CLI + web
 npm run format         # biome check --write packages/
 npm run check          # biome check packages/
-npm run test:security  # build SDK, then node test/test-tell-security.js
-npm run test:mentions  # build SDK, then node test/test-tell-mentions.js
+npm run test:security  # build SDK + core, then node test/test-tell-security.js
+npm run test:mentions  # build SDK + core, then node test/test-tell-mentions.js
+npm run test:core      # core contract + config/paths/context/decision/runtime/risk/exec suites
 npm run test:web       # web backend harness + web build, then packages/web suite (live servers boot dist/server.js)
-npm run test           # test:sdk + test:security + test:context + test:stream + test:mentions + test:web
+npm run test           # test:sdk + test:core-api + test:env + test:runtime + test:tellrc + test:security + test:context + test:stream + test:mentions + test:cli-adapters + test:fuzz + test:core + test:web
+npm run test:fuzz     # seeded fuzz/differential suite (41 checks, in test/ci)
+npm run test:live-model # live validation with a real model (7 checks, opt-in, skips without OPENROUTER_API_KEY)
 npm run ci             # build + lint + format check + test
 ```
 
@@ -38,7 +41,8 @@ npm run ci             # build + lint + format check + test
 > Intentional divergences (test-pinned, do not "dedupe"): `isHighRiskScript`
 > blocks all interpreter `-c`/`-e`, `env`, `base64 -d` and shell expansions
 > (the CLI allows local one-liners by design); the frontend `extractRunScripts`
-> matches `<RUN>` case-insensitively (SDK `extract_runs` is case-sensitive);
+> matches `<RUN>` case-insensitively like the SDK `extract_runs` (the SDK
+> resolves a block only when it owns a closing tag);
 > `App.tsx` keeps a static fallback prompt so the frontend stays SDK-free.
 
 Package script (`packages/cli/package.json:10-16`): `build: tsup && chmod +x dist/Tell.mjs`, `lint: tsc -p tsconfig.json`, `format/check: biome … src`, `ci: lint + check + build`. Formatting: Biome 2.2.6, single quotes, 2-space, 120 cols (`biome.json`).
@@ -63,13 +67,14 @@ All CLI suites avoid network/LLM by transpiling the real `Tell.ts` (`typescript.
 ```bash
 bun run test:security   # via root; builds SDK first (tag fns exercised for real)
 bun run test:mentions   # mention expansion + read-gate security
+bun run test:fuzz       # differential pins: risk port x core permissive, outside-cwd gate, alias own-property
 bun run test            # all suites
 ```
 
 ## Touch points for contributors
 
 * New flag: `CliOptions` + `build_program` + `build_context_plan`/`run_tell` wiring + `format_missing_prompt_error` if it affects required input; add cases to both suites.
-* New high-risk shape: one regex in `is_high_risk_script` + one entry in `docs/cli/security.md` table + one `riskyScripts` line in the security suite. Keep local-only one-liners allowed unless they gain a network/decode token.
+* New high-risk shape: one `RiskRule` in `packages/core/src/risk.ts` (profile flags: common / `permissive_only` / `strict_only`) + one entry in `docs/cli/security.md` table + one `riskyScripts` line in the security suite. Keep local-only one-liners allowed unless they gain a network/decode token. Document the rule in [../core/risk.md](../core/risk.md).
 * Context semantics: `ContextPlan` is the contract — update `docs/cli/context.md` alongside `resolve_context_ref`/`build_context_plan`.
 * Mention semantics: `expand_mentions` + `is_outside_cwd` are the contract — update `docs/cli/mentions.md` alongside `src/mentions.ts`, and add cases to `test/test-tell-mentions.js`.
 * Model/alias changes live in the SDK (`packages/sdk/src/models.ts`); the CLI only calls `resolve_model_spec`/`model_label`. Never read `process.env` from the SDK.

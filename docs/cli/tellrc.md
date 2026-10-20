@@ -114,4 +114,4 @@ The Web never reads `.tellrc` directly — the CLI resolves and forwards only no
 | `BUILTIN_PROFILES` | `node`, `security`, `devops` | Profiles shipped with default data |
 | `PROFILE_NAME_PATTERN` | `/^[a-z0-9][a-z0-9_-]*$/` | Valid custom profile names |
 
-Sources: `packages/cli/src/tellrc.ts`, `packages/core/src/runtime-limits.ts` (owner), `Tell.ts:147-151`, `Tell.ts:553-562`, `Tell.ts:947-975`, `Tell.ts:1015-1045`, `Tell.ts:1106-1152`, `packages/cli/src/core-adapters.ts`, `packages/sdk/src/ask.ts`, `packages/sdk/src/tell.ts`, `packages/web/src/server/cli-args.ts`, `packages/web/src/server/server.ts`, `test/test-tell-tellrc.js`.
+Sources: `packages/cli/src/tellrc.ts`, `packages/core/src/runtime-limits.ts` (owner), `Tell.ts:147-151`, `Tell.ts:553-562`, `Tell.ts:947-975`, `Tell.ts:1015-1045`, `Tell.ts:1106-1152`, `packages/cli/src/core-adapters.ts`, `packages/sdk/src/ask.ts`, `packages/sdk/src/tell.ts`, `packages/web/src/server/cli-args.ts`, `packages/web/src/server/server.ts`, `test/test-tell-tellrc.js`. Core reference: [../core/runtime-limits.md](../core/runtime-limits.md), [../core/config.md](../core/config.md).

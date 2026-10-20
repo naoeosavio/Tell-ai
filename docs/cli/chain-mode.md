@@ -43,4 +43,4 @@ Chain alone does not persist across invocations (`saveContext = false` without `
 
 Timeouts still apply per command (120s). A hanging command reports exit 124 and the loop continues with that output as context.
 
-Sources: `packages/cli/src/Tell.ts` (`run_response_loop`), `packages/cli/src/core-adapters.ts`, `packages/core/src/loop.ts`; chain assertions in `test/test-tell-security.js:278-313`.
+Sources: `packages/cli/src/Tell.ts` (`run_response_loop`), `packages/cli/src/core-adapters.ts`, `packages/core/src/loop.ts`; chain assertions in `test/test-tell-security.js:278-313`. Core reference: [../core/loop.md](../core/loop.md), [../core/loop-feedback.md](../core/loop-feedback.md).

@@ -116,4 +116,4 @@ Same shared prompt the SDK `tell()` uses, plus live cwd and `platform release` s
 
 All providers honor `config.urls.*` as `baseURL`, so a proxy URL works for any vendor that defines one.
 
-Sources: `src/env.ts`, `Tell.ts`, `packages/sdk/src/models.ts:273-306`, `packages/core/src/sdk-config.ts`.
+Sources: `src/env.ts`, `Tell.ts`, `packages/sdk/src/models.ts:273-306`, `packages/core/src/sdk-config.ts`. Core reference: [../core/sdk-config.md](../core/sdk-config.md), [../core/config.md](../core/config.md).
