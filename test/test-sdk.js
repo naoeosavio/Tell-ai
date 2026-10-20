@@ -134,7 +134,7 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
   assert.throws(() => sdk.resolve_model_spec('notamodelatall'), /./);
 
   // MODELS table invariant: every alias value parses back through the resolver.
-  assert.strictEqual(Object.keys(sdk.MODELS).length, 146);
+  assert.strictEqual(Object.keys(sdk.MODELS).length, 152);
   for (const [alias, spec] of Object.entries(sdk.MODELS)) {
     if (!spec.includes(':')) continue; // thinking-level/vendor-name helpers, not model specs
     const resolved = sdk.resolve_model_spec(spec);
@@ -879,7 +879,7 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
   const runs = sdk.extract_runs('do this:\n<RUN>\nls -la\n</RUN>\ndone');
   assert.deepStrictEqual(runs.scripts, ['ls -la']);
   assert.strictEqual(runs.visible, 'do this:\n\ndone');
-  assert.deepStrictEqual(sdk.extract_runs('<RUN>one</RUN><RUN>two</RUN>').scripts, ['one']);
+  assert.deepStrictEqual(sdk.extract_runs('<RUN>one</RUN><RUN>two</RUN>').scripts, ['one', 'two']);
   assert.strictEqual(sdk.strip_think_tags('a<think>secret</think>b').trim(), 'ab');
   assert.strictEqual(sdk.strip_think_tags('a<THINK>secret</THINK>b').trim(), 'ab');
   assert.strictEqual(sdk.strip_run_tags('a<RUN>x</RUN>b').trim(), 'ab');

@@ -81,4 +81,4 @@ The same `ask_stream` runs in the browser bundles because the SDK never touches 
 
 Both consumers rely on the **first-`text`-freezes-reasoning** rule because `reasoning_end` is not universal.
 
-Sources: `ask.ts:5-55`, `ask.ts:73-75`.
+Sources: `ask.ts:5-55`, `ask.ts:73-75`. The runtime side (model port inside the core loop) is documented in [../core/runtime-api.md](../core/runtime-api.md) and [../core/loop.md](../core/loop.md).

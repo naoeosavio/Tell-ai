@@ -16,10 +16,10 @@ const ai = await create_ask_ai('g', { keys: { openai: process.env.OPENAI_API_KEY
 
 | Member | Signature | Notes |
 |---|---|---|
-| `ask` | `ask(message: string, options: { system: string; stream: false }): Promise<string>` | One-shot. Returns the raw response **including** a ` thinking…</think>` wrapper when the model reasoned (`ask.ts:70-71`) — strip it with `strip_think_tags` or use `tell()`. |
-| `ask_stream` | `ask_stream(input, options: { system: string }): AsyncIterable<AskStreamEvent>` | Streaming completion; see [streaming.md](streaming.md). `input` is a prompt string or a multi-turn message array. |
+| `ask` | `ask(message: string, options?: AskOptions): Promise<string>` | One-shot. Returns the raw response **including** a ` thinking…</think>` wrapper when the model reasoned (`ask.ts:70-71`) — strip it with `strip_think_tags` or use `tell()`. The options are optional (`system` defaults to empty, `temperature` to unset). |
+| `ask_stream` | `ask_stream(input, options?: AskOptions): AsyncIterable<AskStreamEvent>` | Streaming completion; see [streaming.md](streaming.md). `input` is a prompt string or a multi-turn message array. The options are optional (`system` defaults to empty). |
 
-> The `ask` signature requires `stream: false` — this is a literal leftover mirroring the AI SDK option shape; the value is unused.
+> The `ask` signature accepts `stream: false` — this is a literal leftover mirroring the AI SDK option shape; the value is unused.
 
 ## `tell(message, options)` → `Promise<string>`
 
@@ -65,7 +65,7 @@ const result = await generateText({ model: handle.model, prompt: 'hi', reasoning
 
 ## `MODELS`
 
-`models.ts:28`. The 146-entry alias table mapping short aliases to full `vendor:model:thinking` specs (e.g. `g` → `openai:gpt-6.1-sol:medium`). The table is the source of truth for the CLI's `tell -m --help` output.
+`models.ts:28`. The 152-entry alias table mapping short aliases to full `vendor:model:thinking` specs (e.g. `g` → `openai:gpt-6.1-sol:medium`). The table is the source of truth for the CLI's `tell -m --help` output.
 
 ## Custom endpoint helpers (`custom.ts`)
 
@@ -103,7 +103,7 @@ const models = await list_custom_models({ keys: { custom: key }, urls: { custom:
 | `strip_markdown_code_blocks(text)` | Removes ``` fenced code blocks (so `<RUN>` tags hidden inside them are never parsed). |
 | `strip_think_tags(text)` | Removes ` thinking…</think>` blocks and trims. |
 | `strip_run_tags(text)` | Removes `<RUN>…</RUN>` blocks and trims. |
-| `extract_runs(text)` | `{ scripts, visible }`: strips code blocks first, extracts the first `<RUN>` script, and returns visible text with every run block removed. |
+| `extract_runs(text)` | `{ scripts, visible }`: strips code blocks first, extracts **every** `<RUN>` script (a block ends at the last closing tag before the next opening tag, so a command containing `</RUN>` is not truncated), and returns visible text with every run block removed. |
 | `sanitize_reasoning(text)` | Neutralizes angle brackets in model reasoning so it cannot forge `<think>`/`<RUN>` boundaries. |
 
 ## `summarize_context(ai, text)` → `Promise<string>`
@@ -118,4 +118,4 @@ const models = await list_custom_models({ keys: { custom: key }, urls: { custom:
 * `vast`/`local` without a base URL throw with a clear message pointing at `urls.vast`/`urls.local` (`models.ts:531`, `models.ts:538`).
 * `custom` throws for each missing piece — `urls.custom`, `keys.custom`, or `models.custom` for a bare `custom` spec — always naming the config slot and the matching env var.
 
-Sources: `ask.ts:14-17`, `ask.ts:57-76`, `tell.ts:6-47`, `models.ts:356-569`, `custom.ts`, `systemPrompt.ts:1-92`, `tags.ts:1-21`, `summarize.ts:27-33`.
+Sources: `ask.ts:14-17`, `ask.ts:57-76`, `tell.ts:6-47`, `models.ts:356-569`, `custom.ts`, `systemPrompt.ts:1-92`, `tags.ts:1-21`, `summarize.ts:27-33`. The injectable runtime contract that consumes `ModelPort`/`AskInstance` lives in [../core/runtime-api.md](../core/runtime-api.md).

@@ -48,7 +48,7 @@ Every other vendor has a built-in default (e.g. `zai` → `https://api.z.ai/api/
 
 ## Who assembles `SDKConfig`
 
-* The **core** owns environment resolution (`packages/core/src/sdk-config.ts`): `load_sdk_config_from_env(env, { token_files })` maps every vendor to its key/URL, honoring each `*_BASE_URL` override. The `custom` vendor adds `CUSTOM_BASE_URL`, `CUSTOM_MODEL`, `CUSTOM_API` and `CUSTOM_HEADERS`.
+* The **core** owns environment resolution (`packages/core/src/sdk-config.ts`, see [../core/sdk-config.md](../core/sdk-config.md)): `load_sdk_config_from_env(env, { token_files })` maps every vendor to its key/URL, honoring each `*_BASE_URL` override. The `custom` vendor adds `CUSTOM_BASE_URL`, `CUSTOM_MODEL`, `CUSTOM_API` and `CUSTOM_HEADERS`.
 * The **CLI** enables the `~/.config/<vendor>.token` fallbacks (`token_files: true` in `packages/cli/src/env.ts`); the **web server** reads `process.env` only (no token files) via `build_sdk_config_from_env` in `packages/web/src/server/server.ts`, including the same four `CUSTOM_*` variables (an invalid `CUSTOM_API`/`CUSTOM_HEADERS` fails the boot instead of degrading silently).
 * **Browsers / your code** build the config explicitly and pass it in — see the quick-reference example in `packages/sdk/README.md`.
 
@@ -120,6 +120,6 @@ await ai.ask('hi', { system: 'be concise', stream: false });
 
 ## Design contract (tests)
 
-`test/test-sdk.js` verifies: public export surface, spec parsing (aliases/fast/thinking budgets), the `MODELS` round-trip invariant (every spec re-parses to itself) and its 146-entry size, offline `get_model` handles — including that `vast`/`local` reject an empty config with the `urls.*` error — plus localhost wire tests pinning Meta to `/v1/responses` with a bearer and `forceReasoning`, Xiaomi to `/v1/chat/completions` with an `api-key` header and no `Authorization`, and the `custom` vendor across its three wires (path, auth header, `max` on the Anthropic wire, `config.models`/`config.wires`/`config.headers`, missing-env errors). The exec/no-exec system prompts and tag helpers are covered there as well.
+`test/test-sdk.js` verifies: public export surface, spec parsing (aliases/fast/thinking budgets), the `MODELS` round-trip invariant (every spec re-parses to itself) and its 152-entry size, offline `get_model` handles — including that `vast`/`local` reject an empty config with the `urls.*` error — plus localhost wire tests pinning Meta to `/v1/responses` with a bearer and `forceReasoning`, Xiaomi to `/v1/chat/completions` with an `api-key` header and no `Authorization`, and the `custom` vendor across its three wires (path, auth header, `max` on the Anthropic wire, `config.models`/`config.wires`/`config.headers`, missing-env errors). The exec/no-exec system prompts and tag helpers are covered there as well.
 
 Sources: `config.ts:1-32`, `models.ts:208-219`, `models.ts:528-541`, `tsup.config.ts:1-85`, `src/shims/node.cjs:1-107`.

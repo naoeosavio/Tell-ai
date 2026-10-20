@@ -53,7 +53,7 @@ Fast mode (`.g` or `:fast`) disables reasoning regardless of the tier.
 
 ## Vendors in the alias table
 
-`MODELS` holds 146 aliases across these vendors:
+`MODELS` holds 152 aliases across these vendors:
 
 | Vendor | Aliases | Families |
 |---|---:|---|
