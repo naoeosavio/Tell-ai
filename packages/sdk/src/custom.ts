@@ -76,6 +76,9 @@ export function custom_headers(config: SDKConfig): Record<string, string> {
  * Lists the model ids an OpenAI-compatible endpoint exposes (`GET /models`),
  * annotated with the wire each one would be called with.
  *
+ * A malformed payload is reported as a clear error (never a raw `TypeError`),
+ * and duplicate ids are collapsed.
+ *
  * @param config - Injected keys/urls; the custom key and URL must be present.
  * @returns Model ids sorted alphabetically.
  */
@@ -88,16 +91,26 @@ export async function list_custom_models(config: SDKConfig): Promise<CustomModel
   if (!api_key) {
     throw new Error(`vendor "${CUSTOM_VENDOR}" requires keys.${CUSTOM_VENDOR} (CLI env: CUSTOM_API_KEY)`);
   }
-  const response = await fetch(`${base_url}/models`, {
+  const response = await fetch(`${base_url.replace(/\/+$/, '')}/models`, {
     headers: { Authorization: `Bearer ${api_key}`, 'User-Agent': CUSTOM_USER_AGENT, ...custom_headers(config) },
   });
   if (!response.ok) {
     throw new Error(`vendor "${CUSTOM_VENDOR}" model list failed: HTTP ${response.status}`);
   }
-  const payload = (await response.json()) as { data?: Array<{ id?: string }> };
-  return (payload.data ?? [])
-    .map((entry) => entry.id)
-    .filter((id): id is string => typeof id === 'string' && id.length > 0)
-    .sort()
-    .map((id) => ({ id, wire: resolve_wire(id) }));
+  const payload: unknown = await response.json().catch(() => null);
+  if (payload === null || typeof payload !== 'object') {
+    throw new Error(`vendor "${CUSTOM_VENDOR}" model list failed: malformed JSON payload`);
+  }
+  const data = (payload as { data?: unknown }).data;
+  if (!Array.isArray(data)) {
+    throw new Error(`vendor "${CUSTOM_VENDOR}" model list failed: payload has no "data" array`);
+  }
+  const ids = new Set<string>();
+  for (const entry of data) {
+    const id = entry !== null && typeof entry === 'object' ? (entry as { id?: unknown }).id : undefined;
+    if (typeof id === 'string' && id.length > 0) {
+      ids.add(id);
+    }
+  }
+  return [...ids].sort().map((id) => ({ id, wire: resolve_wire(id) }));
 }

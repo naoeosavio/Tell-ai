@@ -26,7 +26,7 @@ export interface ModelHandle {
   providerOptions?: Record<string, any>;
 }
 
-export const MODELS: Record<string, string> = {
+const MODEL_TABLE: Record<string, string> = {
   'g--': 'openai:gpt-6.1-sol:low',
   'g-': 'openai:gpt-6.1-sol:low',
   g: 'openai:gpt-6.1-sol:medium',
@@ -188,6 +188,13 @@ export const MODELS: Record<string, string> = {
   'mc++': 'meta:muse-spark-1.3-contributor:max',
   MC: 'meta:muse-spark-1.3-contributor:high',
 
+  'w--': 'meta:muse-wonder:none',
+  'w-': 'meta:muse-wonder:low',
+  w: 'meta:muse-wonder:medium',
+  'w+': 'meta:muse-wonder:high',
+  'w++': 'meta:muse-wonder:max',
+  W: 'meta:muse-wonder:high',
+
   'mi--': 'xiaomi:mimo-v2.6-pro:none',
   'mi-': 'xiaomi:mimo-v2.6-pro:low',
   mi: 'xiaomi:mimo-v2.6-pro:medium',
@@ -202,6 +209,30 @@ export const MODELS: Record<string, string> = {
   'mif++': 'xiaomi:mimo-v2.6-flash:max',
   MIF: 'xiaomi:mimo-v2.6-flash:high',
 };
+
+/**
+ * Short alias table (`g` → `openai:gpt-6.1-sol:medium`).
+ *
+ * The table has a **null prototype** on purpose: a plain object literal would
+ * answer `MODELS['constructor']` with `Object.prototype.constructor`, and the
+ * alias resolver would then treat a function as a model spec. Every lookup
+ * goes through an own-property check instead.
+ */
+export const MODELS: Record<string, string> = Object.assign(Object.create(null) as Record<string, string>, MODEL_TABLE);
+
+/**
+ * True when a record has the key as an **own** property.
+ *
+ * The prototype chain is never consulted: `MODELS['constructor']` must not
+ * answer with `Object.prototype.constructor`.
+ *
+ * @param record - Record to inspect.
+ * @param key - Key to look for.
+ * @returns Whether the record owns the key.
+ */
+function has_own(record: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, key);
+}
 
 const AI_SDK_THINKING: Record<string, string> = {
   none: 'none',
@@ -377,7 +408,7 @@ function normalize_thinking(raw: string): ThinkingLevel | null {
 const VENDOR_ONLY_SPECS = new Set<string>([CUSTOM_VENDOR]);
 
 function resolve_single_part(term: string, fast: boolean): ResolvedModelSpec {
-  const alias = MODELS[term];
+  const alias = has_own(MODELS, term) ? MODELS[term] : undefined;
   if (alias) {
     if (alias.includes(':')) {
       const resolved = parse_model_spec_raw(alias);
@@ -407,12 +438,20 @@ function resolve_multi_part(parts: string[], fast: boolean): ResolvedModelSpec {
   const model_value = model_raw.trim();
   if (!model_value) throw new Error('Model name must be provided after vendor');
 
-  let model = model_value;
+  // A dotted model slot is fast mode (`openai:.gpt-4`), never a model id.
+  let model_slot = model_value;
+  let slot_fast = fast;
+  if (model_slot.startsWith('.')) {
+    model_slot = model_slot.slice(1);
+    slot_fast = true;
+  }
+
+  let model = model_slot;
   let alias_thinking: ThinkingLevel | undefined;
-  if (MODELS[model_value]) {
-    const alias_spec = parse_model_spec_raw(MODELS[model_value]);
+  if (has_own(MODELS, model_slot)) {
+    const alias_spec = parse_model_spec_raw(MODELS[model_slot] as string);
     if (alias_spec.vendor !== vendor) {
-      throw new Error(`Model alias "${model_value}" belongs to vendor "${alias_spec.vendor}", not "${vendor_raw}"`);
+      throw new Error(`Model alias "${model_slot}" belongs to vendor "${alias_spec.vendor}", not "${vendor_raw}"`);
     }
     model = alias_spec.model;
     alias_thinking = alias_spec.thinking;
@@ -424,13 +463,13 @@ function resolve_multi_part(parts: string[], fast: boolean): ResolvedModelSpec {
     if (level) {
       thinking = level;
     } else {
-      model = `${model_value}:${thinking_raw}`;
+      model = `${model}:${thinking_raw}`;
     }
   } else if (alias_thinking) {
     thinking = alias_thinking;
   }
 
-  return { vendor, model, thinking, fast };
+  return { vendor, model, thinking, fast: slot_fast };
 }
 
 function parse_model_spec_raw(spec: string): ResolvedModelSpec {
@@ -505,12 +544,17 @@ type WireProviderSpec = {
  * Deterministic signature of the extra headers, so two configs of the same
  * endpoint that inject different headers get their own provider instead of
  * silently reusing the first one's.
+ *
+ * The signature is JSON-encoded (never a `name=value` join) so two different
+ * header sets can never collide — a value containing `,` or `=` would
+ * otherwise be indistinguishable from extra headers.
+ *
+ * @param headers - Extra headers of the provider.
+ * @returns The signature used as part of the provider cache key.
  */
 function header_signature(headers: Record<string, string> | undefined): string {
-  return Object.entries(headers ?? {})
-    .sort(([left], [right]) => (left < right ? -1 : 1))
-    .map(([name, value]) => `${name}=${value}`)
-    .join(',');
+  const entries = Object.entries(headers ?? {}).sort(([left], [right]) => (left < right ? -1 : 1));
+  return JSON.stringify(entries);
 }
 
 /**

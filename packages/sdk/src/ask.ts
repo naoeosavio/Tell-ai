@@ -12,9 +12,19 @@ export type AskStreamEvent =
 /** Streaming input: a one-shot prompt or a full multi-turn conversation. */
 export type AskStreamInput = string | Array<{ role: 'user' | 'assistant'; content: string }>;
 
+/** Optional per-call options (every field may be omitted). */
+export type AskOptions = {
+  /** System instructions for the turn (empty when omitted). */
+  system?: string;
+  /** Always `false` for the one-shot call (kept for the historic contract). */
+  stream?: false;
+  /** Sampling temperature (0..2). */
+  temperature?: number;
+};
+
 export interface AskInstance {
-  ask(message: string, options: { system: string; stream: false; temperature?: number }): Promise<string>;
-  ask_stream(input: AskStreamInput, options: { system: string; temperature?: number }): AsyncIterable<AskStreamEvent>;
+  ask(message: string, options?: AskOptions): Promise<string>;
+  ask_stream(input: AskStreamInput, options?: AskOptions): AsyncIterable<AskStreamEvent>;
 }
 
 /**
@@ -86,11 +96,11 @@ export async function create_ask_ai(modelSpec: string, config: SDKConfig): Promi
   const reasoning = handle.fast ? 'none' : handle.reasoning;
 
   return {
-    ask: async (message: string, options: { system: string; stream: false; temperature?: number }) => {
+    ask: async (message: string, options: AskOptions = {}) => {
       check_temperature(options.temperature);
       const gen_options: any = {
         model: handle.model,
-        instructions: options.system,
+        instructions: options.system ?? '',
         prompt: message,
         reasoning,
         ...(handle.providerOptions ? { providerOptions: handle.providerOptions } : {}),
@@ -101,12 +111,12 @@ export async function create_ask_ai(modelSpec: string, config: SDKConfig): Promi
       const safe_reasoning = model_reasoning ? sanitize_reasoning(model_reasoning) : '';
       return safe_reasoning ? `<think>${safe_reasoning}</think>\n${result.text}` : result.text;
     },
-    ask_stream: (input: AskStreamInput, options: { system: string; temperature?: number }) =>
+    ask_stream: (input: AskStreamInput, options: AskOptions = {}) =>
       stream_events({
         model: handle.model,
         reasoning,
         input,
-        system: options.system,
+        system: options.system ?? '',
         ...(handle.providerOptions ? { provider_options: handle.providerOptions } : {}),
         ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
       }),
