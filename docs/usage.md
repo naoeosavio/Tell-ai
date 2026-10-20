@@ -416,3 +416,30 @@ CUSTOM_MODEL=kimi-k3 tell -m custom "hi"
 ```
 
 The protocol is picked from the model id (`gpt-`/`grok-`/`muse-` → Responses, `claude-` → Messages, everything else → Chat Completions) unless `CUSTOM_API` says otherwise. Full rules: [sdk/models.md](sdk/models.md#custom-vendor-custom) and [cli/env-config.md](cli/env-config.md).
+
+## Building with the libraries
+
+The CLI is a thin adapter — the same pieces are importable libraries:
+
+```bash
+npm i @tell-ai/sdk @tell-ai/core
+```
+
+```ts
+import { create_ask_ai, tell } from '@tell-ai/sdk';
+import { create_core_runtime, resolve_core_config } from '@tell-ai/core';
+
+// One-shot, no exec (same as `tell --no-exec`):
+const answer = await tell('summarize this repo', { keys: { openai: process.env.OPENAI_API_KEY } });
+
+// Exec loop with your own ports (same engine as `tell --chain`):
+const runtime = create_core_runtime({
+  config: resolve_core_config({ host: 'cli', env: { model: 'g' } }),
+  model: create_ask_ai('g', { keys: { openai: process.env.OPENAI_API_KEY } }),
+  executor: async ({ script }) => ({ stdout: 'out', stderr: '', exit_code: 0 }),
+  approval: async () => 'approved',
+});
+const result = await runtime.run('list the test files');
+```
+
+SDK surface: [sdk/](sdk/README.md). Runtime contract, ports and callbacks: [core/](core/README.md).

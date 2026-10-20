@@ -8,9 +8,10 @@ One-shot terminal assistant, powered by an AI that can execute bash commands. As
 |---|---|---|
 | [`tell-ai`](./packages/cli/README.md) | The `tell` terminal CLI — one prompt at a time, with optional command execution | GPL-3.0 |
 | [`@tell-ai/sdk`](./packages/sdk/README.md) | Browser-safe AI provider library: model resolution, multi-vendor dispatch, RUN/think tag handling, context summarization | MIT |
+| [`@tell-ai/core`](./packages/core/README.md) | Shared Node runtime: injectable exec/loop contract, base risk, fail-closed paths, project context, runtime limits | MIT |
 | [`@tell-ai/web`](./packages/web/README.md) | Web sandbox server (`tell-web`): browser chat + file explorer + real PTY terminals, launched via `tell --web` | GPL-3.0 |
 
-The CLI bundles the SDK and resolves API keys from your environment; the SDK works in Node, Bun, and the browser with all configuration injected. The web sandbox lives in `packages/web/` (tracked outside the bun workspaces) and is documented in [docs/web-sandbox.md](docs/web-sandbox.md).
+The CLI runs on `@tell-ai/core` and resolves API keys from your environment; the SDK works in Node, Bun, and the browser with all configuration injected. The shared runtime lives in `packages/core/` (see [docs/core](./docs/core/README.md)) and the web sandbox lives in `packages/web/` (documented in [docs/web-sandbox.md](docs/web-sandbox.md)).
 
 ## Quick start
 
@@ -31,14 +32,15 @@ Set your API keys with environment variables (see the [CLI README](./packages/cl
 
 ## Development
 
-Monorepo (bun workspaces `packages/*`) plus the web sandbox in `packages/web/`. All commands run from the root:
+Monorepo (bun workspaces `packages/*`: SDK, core, CLI, web). All commands run from the root:
 
 ```bash
-npm run build       # SDK (ESM+CJS+types+2 browser bundles) + CLI (minified .mjs) + web (server + assets)
-npm run lint        # tsc --noEmit in SDK + CLI + web
+npm run build       # SDK (ESM+CJS+types+2 browser bundles) + core (ESM+CJS+types) + CLI (minified .mjs) + web (server + assets)
+npm run lint        # tsc --noEmit in SDK + core + CLI + web
 npm run format      # biome check --write packages/
 npm run check       # biome check packages/
-npm test            # security + context + web suites
+npm test            # sdk + core-api + env + security + context + stream + mentions + cli-adapters + core + web suites
+npm run test:core   # core contract + config/paths/context/decision/runtime/risk/exec suites
 npm run test:web    # web backend harness + packages/web suite only
 npm run ci          # build + lint + check + test
 ```
@@ -48,7 +50,8 @@ Requirements: [bun](https://bun.sh) (package manager and runner), Node.js >= 20 
 ## Documentation
 
 - [CLI docs](./docs/cli/README.md) — flags, context, execution, chain mode, security
-- [SDK build variants](./docs/sdk/imports.md) — Node ESM/CJS vs browser ESM vs IIFE global
+- [SDK docs](./docs/sdk/README.md) — API, models/aliases, streaming, config, build variants ([imports](./docs/sdk/imports.md))
+- [Core docs](./docs/core/README.md) — runtime API, loop/exec, risk, config, limits, paths, project context ([package README](./packages/core/README.md))
 - [Usage guide](./docs/usage.md), [integrations](./docs/integrations.md) — git hooks, CI/CD, bots, self-hosted models
 - [Web sandbox](./docs/web-sandbox.md) — `tell --web` quick start, hosting scenarios, auth, `.tell/` sessions ([package README](./packages/web/README.md))
 
@@ -151,4 +154,4 @@ License
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
-The repository is licensed under the **GNU General Public License v3.0** — see [LICENSE](LICENSE). The `@tell-ai/sdk` package is separately licensed under MIT (see `packages/sdk/LICENSE`).
+The repository is licensed under the **GNU General Public License v3.0** — see [LICENSE](LICENSE). The `@tell-ai/sdk` and `@tell-ai/core` packages are separately licensed under MIT (see `packages/sdk/LICENSE` and `packages/core/LICENSE`).

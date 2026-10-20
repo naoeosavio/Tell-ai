@@ -698,3 +698,4 @@ Beyond the integrations above — what `tell` can be wired into.
 | **Learning** | Ask `tell` to explain a new codebase from its README, package.json, and file tree |
 | **Slack / Discord** | Same polling pattern as the Telegram bot — swap the API calls |
 | **CLI tools** | Pipe any command output to `tell` for human-friendly explanations |
+| **Libraries** | Skip the binary: `npm i @tell-ai/sdk @tell-ai/core` and embed `tell()` (one-shot) or `create_core_runtime()` (exec loop with your own executor/approval) — see [usage.md](usage.md#building-with-the-libraries) |
