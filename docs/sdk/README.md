@@ -8,11 +8,11 @@ Complete reference for the `@tell-ai/sdk` package (`packages/sdk/`): a browser-s
 | [models.md](models.md) | Model spec format (`vendor:model:thinking`), 152 aliases, fast/dot mode, thinking budgets, vendor dispatch, the `custom` vendor and its wire rules |
 | [streaming.md](streaming.md) | `AskStream` events (`reasoning`, `reasoning_end`, `text`), lazy iteration, Node/browser consumption |
 | [config.md](config.md) | `SDKConfig` key/URL injection, browser-safety contract, CORS proxies |
-| [imports.md](imports.md) | Build variants: Node ESM/CJS, browser ESM, browser global (IIFE) |
+| [imports.md](imports.md) | Build variants: Node ESM/CJS, pure (no deps), browser ESM, browser global (IIFE) |
 
 ## Sources of truth
 
-* Implementation: `packages/sdk/src/ask.ts`, `src/models.ts`, `src/tell.ts`, `src/config.ts`, `src/custom.ts`, `src/systemPrompt.ts`, `src/tags.ts`, `src/summarize.ts`
+* Implementation: `packages/sdk/src/ask.ts`, `src/models.ts`, `src/tell.ts`, `src/config.ts`, `src/custom.ts`, `src/systemPrompt.ts`, `src/tags.ts`, `src/summarize.ts`, `src/pure.ts` (dependency-free entry point)
 * Package metadata: `packages/sdk/package.json`, `packages/sdk/tsup.config.ts`
 * Behavior contracts: `test/test-sdk.js` (public export surface, spec parsing, table round-trip, system prompts, tag helpers)
 * Related docs (not duplicated here): `../cli/` (CLI reference pages), `../core/` (core runtime contract), `../usage.md` (user guide), `../web-sandbox.md` (web sandbox), `../../packages/sdk/README.md` (quick reference), `../../packages/sdk/CHANGELOG_AI.md`

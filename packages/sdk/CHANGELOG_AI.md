@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.5.0 — 2026-10-20
+
+### Features
+- The `./browser` export now ships types (`dist/browser.d.ts`, wired as `"types"` in the export map): TypeScript browser clients can import `extract_runs`, `strip_run_tags`, `create_ask_ai` and the rest of the browser surface with full type-checking (previously code-only, unusable from typed clients).
+- New `./pure` export (`dist/pure.js` / `.cjs` + types): the dependency-free protocol surface — `<RUN>`/thinking tag handling, the shared system prompt, the wire constants and the injected-config types. No provider import, no builtin, no network, so a library that only needs the protocol can depend on it without pulling the 1.3 MB provider graph. Same source modules as the main entry (`./tags`, `./systemPrompt`, `./custom`, `./config`) — a second entry point, never a second definition. Built by the same tsup config as the main entry on purpose: the configs of `tsup.config.ts` run in parallel and the `clean: true` would wipe a fast extra config's artifacts.
+
+### Notes
+- The `./pure` subpath is additive: every existing import path keeps its behavior. `@tell-ai/core` 0.1.2 depends on it (its runtime wiring needs the protocol surface without the provider graph), so the core's `@tell-ai/sdk` floor moved to `^0.5.0`.
+
 ## v0.4.0 — 2026-10-19
 
 ### Features

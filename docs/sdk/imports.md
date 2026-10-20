@@ -1,19 +1,19 @@
 # SDK build variants
 
-`@tell-ai/sdk` ships three entry points. All expose the same API (`tell`, `MODELS`, `create_ask_ai`, `get_system_prompt`, tag helpers, …) but differ in how they are loaded and consumed.
+`@tell-ai/sdk` ships four entry points. The first three expose the same API (`tell`, `MODELS`, `create_ask_ai`, `get_system_prompt`, tag helpers, …) but differ in how they are loaded and consumed; the fourth (`./pure`) is the dependency-free subset of that API.
 
-| | **Node** | **Browser ESM** | **Browser global (IIFE)** |
-|---|---|---|---|
-| Export path | `@tell-ai/sdk` | `@tell-ai/sdk/browser` | `@tell-ai/sdk/browser-global` |
-| File | `dist/index.js` / `index.cjs` | `dist/browser.js` | `dist/browser-global.global.js` |
-| Formats | ESM + CJS (+ `.d.ts`) | ESM | IIFE |
-| Load | `import` / `require` | `<script type="module">` or bundler import | `<script src="...">` classic tag |
-| Access | named imports | named imports | global `TellSDK` |
-| Environment | Node (CLI, servers) | browsers | browsers, `file://`, CDN |
-| Tree-shakeable | yes | yes | no (marked `sideEffects`) |
-| Global pollution | none | none | defines `globalThis.TellSDK` |
-| Needs a bundler step | no | no | no |
-| Resolution of deps | from `node_modules` | self-contained | self-contained |
+| | **Node** | **Pure** | **Browser ESM** | **Browser global (IIFE)** |
+|---|---|---|---|---|
+| Export path | `@tell-ai/sdk` | `@tell-ai/sdk/pure` | `@tell-ai/sdk/browser` | `@tell-ai/sdk/browser-global` |
+| File | `dist/index.js` / `index.cjs` | `dist/pure.js` / `pure.cjs` | `dist/browser.js` | `dist/browser-global.global.js` |
+| Formats | ESM + CJS (+ `.d.ts`) | ESM + CJS (+ `.d.ts`) | ESM | IIFE |
+| Load | `import` / `require` | `import` / `require` | `<script type="module">` or bundler import | `<script src="...">` classic tag |
+| Access | named imports | named imports | named imports | global `TellSDK` |
+| Environment | Node (CLI, servers) | any | browsers | browsers, `file://`, CDN |
+| Tree-shakeable | yes | yes | yes | no (marked `sideEffects`) |
+| Global pollution | none | none | none | defines `globalThis.TellSDK` |
+| Needs a bundler step | no | no | no | no |
+| Resolution of deps | from `node_modules` | none (zero dependencies) | self-contained | self-contained |
 
 ## Node (`@tell-ai/sdk`)
 
@@ -25,6 +25,16 @@ import { tell, create_ask_ai, MODELS } from '@tell-ai/sdk';
 const ai = create_ask_ai('g', { keys: { openai: process.env.OPENAI_API_KEY } });
 const answer = await tell('hello', { ask: ai });
 ```
+
+## Pure (`@tell-ai/sdk/pure`)
+
+The dependency-free protocol surface: `<RUN>`/thinking tag handling, the shared system prompt, the wire constants and the injected-config types. **No provider import, no builtin, no network, zero dependencies** — so a library that only speaks the protocol (the core's runtime wiring, for one) can depend on it without pulling the 1.3 MB provider graph.
+
+```ts
+import { extract_runs, get_system_prompt } from '@tell-ai/sdk/pure';
+```
+
+It is a second *entry point* over the same source modules as the main entry (`./tags`, `./systemPrompt`, `./custom`, `./config`) — never a second definition, so the two can never drift.
 
 ## Browser ESM (`@tell-ai/sdk/browser`)
 

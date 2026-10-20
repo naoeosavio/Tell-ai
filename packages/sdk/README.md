@@ -151,6 +151,7 @@ See `examples/sdk/` in the repository for a no-build demo page, an optional Bun 
 | Subpath | Format | File | Use for |
 |---|---|---|---|
 | `.` | ESM / CJS + types | `dist/index.js`, `dist/index.cjs` | Node / Bun |
+| `./pure` | ESM / CJS + types | `dist/pure.js`, `dist/pure.cjs` | Dependency-free protocol surface (tags, system prompt, wire constants) — no provider, no network, no Node |
 | `./browser` | ESM, bundled | `dist/browser.js` | Bundlers / browsers |
 | `./browser-global` | IIFE global | `dist/browser-global.global.js` | `<script>` tags (CDN: `unpkg`, `jsdelivr`) |
 

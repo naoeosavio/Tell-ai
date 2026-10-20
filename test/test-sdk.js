@@ -17,6 +17,18 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
   assert.strictEqual(typeof browserSdk.sanitize_reasoning, 'function');
   assert.strictEqual(typeof globalThis.TellSDK.sanitize_reasoning, 'function');
 
+  // The `./pure` entry: the dependency-free protocol surface. It must resolve
+  // in both module systems and must NOT carry the provider graph.
+  const pureSdk = await import('@tell-ai/sdk/pure');
+  const pureCjs = require('@tell-ai/sdk/pure');
+  for (const name of ['get_system_prompt', 'extract_runs', 'strip_run_tags', 'strip_think_tags', 'is_wire_api']) {
+    assert.strictEqual(typeof pureSdk[name], 'function', `pure entry missing ${name}`);
+    assert.strictEqual(typeof pureCjs[name], 'function', `pure entry (cjs) missing ${name}`);
+  }
+  for (const name of ['MODELS', 'get_model', 'create_ask_ai', 'tell']) {
+    assert.strictEqual(name in pureSdk, false, `pure entry must not carry ${name}`);
+  }
+
   // Public export surface.
   for (const name of [
     'MODELS',

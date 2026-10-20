@@ -2,7 +2,12 @@ import { defineConfig } from 'tsup';
 
 export default defineConfig([
   {
-    entry: ['src/index.ts'],
+    // `src/index.ts` is the main entry; `src/pure.ts` is the dependency-free
+    // protocol surface (tags, system prompt, wire constants — no provider, no
+    // network). Same build config on purpose: tsup runs the configs of this
+    // file in parallel and the `clean: true` below wipes `dist/`, so a fast
+    // extra config would lose its artifacts to that race.
+    entry: ['src/index.ts', 'src/pure.ts'],
     format: ['esm', 'cjs'],
     dts: true,
     sourcemap: false,
@@ -15,7 +20,7 @@ export default defineConfig([
   {
     entry: { browser: 'src/browser.ts' },
     format: ['esm'],
-    dts: false,
+    dts: true,
     sourcemap: false,
     clean: false,
     splitting: false,
