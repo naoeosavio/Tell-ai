@@ -188,10 +188,12 @@ check('short text passes through untouched', () => {
 
 check('drops oldest whole turns with marker', () => {
   const text = 'User:\nfirst\nAssistant:\nsecond\nUser:\nthird';
-  const out = rl.truncate_context(text, 30);
+  // The marker is part of the budget: 27 + the newest turn (10) fits in 40.
+  const out = rl.truncate_context(text, 40);
   assert.ok(out.startsWith('[older context truncated]'));
   assert.ok(out.includes('third'));
   assert.ok(!out.includes('first'));
+  assert.ok(out.length <= 40);
 });
 
 check('never splits a <RUN> block across the cut', () => {

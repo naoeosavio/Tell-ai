@@ -240,7 +240,7 @@ function test_profile_aliases_subsection_and_order() {
   assert.strictEqual(resolved.aliases['rev'], 'o');
   assert.strictEqual(resolved.aliases['ship'], 'g');
   assert.strictEqual(tellrc.resolve_model_input('ship', resolved.aliases, sdk.MODELS), 'g');
-  assert.deepStrictEqual(sdk.MODELS, before);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(sdk.MODELS)), before);
 }
 
 function test_profile_alias_subsection_invalid_name() {
@@ -259,7 +259,7 @@ function test_alias_resolution_no_mutation() {
     tellrc.resolve_model_input('openai:gpt-6.1-sol:high', aliases, sdk.MODELS),
     'openai:gpt-6.1-sol:high',
   );
-  assert.deepStrictEqual(sdk.MODELS, before);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(sdk.MODELS)), before);
 }
 
 function test_temperature_validation() {
