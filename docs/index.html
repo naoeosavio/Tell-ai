@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Tell-ai — fale com a IA direto do terminal</title>
-<meta name="description" content="Tell-ai é uma CLI open-source que leva modelos de linguagem para o seu shell. Pergunte, pipeie, scripte — respostas em texto puro.">
+<title>Tell-ai — CLI + SDK para LLMs, direto do terminal</title>
+<meta name="description" content="Tell-ai é open-source: CLI para falar com LLMs no shell, SDK JS/TS para usar no código e um sandbox web em construção.">
 <meta name="theme-color" content="#0B0A08">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -38,6 +38,7 @@
   .cur{display:inline-block;width:.58em;height:1.05em;background:var(--amber);
        vertical-align:text-bottom;animation:blink 1.1s steps(1) infinite}
   @keyframes blink{50%{opacity:0}}
+  .warn{color:var(--amber)}
 
   /* ---------- barra superior ---------- */
   .top{position:sticky;top:0;z-index:60;background:rgba(11,10,8,.9);
@@ -47,8 +48,10 @@
   .logo{font-weight:700;font-size:15px;letter-spacing:-.02em;display:inline-flex;align-items:center;gap:2px}
   .logo em{font-style:normal;color:var(--amber)}
   .logo .cur{height:.9em;margin-left:3px}
-  nav{display:flex;align-items:center;gap:26px;font-size:13px;color:var(--fg2)}
+  nav{display:flex;align-items:center;gap:20px;font-size:13px;color:var(--fg2)}
   nav a:not(.ghbtn):hover{color:var(--amber);text-decoration:underline;text-underline-offset:5px;text-decoration-thickness:1px}
+  nav a:not(.ghbtn).soon{color:var(--mut)}
+  nav a:not(.ghbtn).soon i{font-style:normal;color:var(--amber);font-size:10px;letter-spacing:.1em;vertical-align:2px;margin-left:4px}
   .ghbtn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line2);
          padding:7px 14px;font-size:12.5px;color:var(--fg);transition:.15s}
   .ghbtn svg{width:15px;height:15px;fill:currentColor}
@@ -78,12 +81,13 @@
   .copy svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:1.6}
   .copy:hover{border-color:var(--amber);color:var(--amber)}
   .copy.ok{border-color:var(--green);color:var(--green)}
-  .hero-links{display:flex;gap:26px;margin-top:26px;font-size:13.5px}
+  .hero-links{display:flex;gap:26px;margin-top:26px;font-size:13.5px;flex-wrap:wrap}
   .hero-links a{color:var(--fg2);border-bottom:1px dotted var(--line2);padding-bottom:2px;transition:.15s}
   .hero-links a:hover{color:var(--amber);border-color:var(--amber)}
   .hero-meta{margin-top:44px;padding-top:18px;border-top:1px solid var(--line);
              font-size:12.5px;color:var(--mut);display:flex;flex-wrap:wrap;gap:8px 22px}
   .hero-meta b{color:var(--fg2);font-weight:500}
+  .hero-meta b.warn{color:var(--amber)}
   .hero-meta .dot{width:7px;height:7px;border-radius:50%;background:var(--green);display:inline-block;margin-right:7px;animation:pulse 2.4s infinite}
   @keyframes pulse{50%{opacity:.35}}
 
@@ -94,11 +98,12 @@
   .term-bar .ti{color:var(--fg2)}
   .term-bar button{background:none;border:none;color:var(--mut);font:inherit;cursor:pointer;font-size:12px}
   .term-bar button:hover{color:var(--amber)}
+  .term-bar .copy{border:1px solid var(--line2);padding:4px 10px;color:var(--fg2)}
   .term-body{padding:18px 20px;font-size:13.5px;line-height:1.8;overflow:auto}
   .hero-term .term-body{min-height:342px;max-height:420px}
   .tl{white-space:pre-wrap;word-break:break-word}
   .tl.meta{color:var(--mut)} .tl.meta b{color:var(--green);font-weight:400}
-  .tl.ok{color:var(--green)} .tl.dim{color:var(--fg2)}
+  .tl.ok{color:var(--green)} .tl.dim{color:var(--fg2)} .tl.err{color:var(--red)}
   .tl .ps1{color:var(--mut)} .tl .tc{color:var(--fg)}
 
   /* ---------- marquee ---------- */
@@ -130,6 +135,7 @@
   .why-i h3{font-size:20px;color:var(--amber);font-weight:600;letter-spacing:-.02em;margin-bottom:8px}
   .why-i h3 em{font-family:var(--serif);font-weight:400;color:var(--fg);font-size:1.05em}
   .why-i p{color:var(--fg2);font-size:14px;max-width:46ch}
+  .why-i code{color:var(--fg);font-size:.95em}
 
   /* passos */
   .step{display:grid;grid-template-columns:150px minmax(0,1fr) minmax(0,420px);
@@ -173,18 +179,41 @@
   .demo-note{max-width:880px;margin:16px auto 0;font-size:12.5px;color:var(--mut)}
   .demo-note b{color:var(--fg2);font-weight:500}
 
-  /* instalar */
+  /* instalar / sdk (layout compartilhado) */
   .inst{display:grid;grid-template-columns:minmax(0,7fr) minmax(0,4fr);gap:56px;margin-top:56px;align-items:start}
   .inst-cmd .cmd{width:100%;justify-content:space-between}
   .inst-cmd .cmd code{overflow-x:auto}
-  .inst-alt{margin-top:20px;font-size:13.5px;color:var(--fg2)}
+  .inst-cmd .term{margin-top:20px}
+  .inst-alt{margin-top:16px;font-size:13.5px;color:var(--fg2)}
   .inst-alt code{color:var(--fg);background:var(--bg2);border:1px solid var(--line);padding:2px 8px;font-size:.95em}
   .inst-alt a{color:var(--amber);border-bottom:1px dotted var(--amber)}
   .inst-alt a:hover{background:var(--amber);color:#0B0A08}
-  .inst-side p{color:var(--fg2);font-size:14px;margin-bottom:18px}
-  .inst-side .hl{color:var(--fg)}
   .reqs{border:1px solid var(--line);background:var(--bg2);padding:18px 20px;font-size:13px;color:var(--fg2)}
   .reqs b{display:block;color:var(--amber);font-weight:500;margin-bottom:8px;letter-spacing:.1em;font-size:11.5px;text-transform:uppercase}
+
+  /* bloco de código do SDK */
+  .code{font:inherit;white-space:pre;overflow-x:auto;margin:0}
+  .code .k{color:var(--green)} .code .s{color:var(--amber)}
+  .code .c{color:var(--mut)} .code .f{color:var(--amber2)}
+
+  /* roadmap / sandbox wip */
+  .road-i{padding:22px 0;border-bottom:1px solid var(--line);display:flex;gap:16px;align-items:baseline}
+  .road-i:first-child{border-top:1px solid var(--line)}
+  .road-i .rd{flex:none;font-weight:600}
+  .road-i.done .rd{color:var(--green)}
+  .road-i.wip .rd{color:var(--amber);animation:pulse 2.4s infinite}
+  .road-i.next .rd{color:var(--mut)}
+  .road-i .rb b{font-size:15px;color:var(--fg);font-weight:600;letter-spacing:-.01em}
+  .road-i .rb p{color:var(--fg2);font-size:13.5px;margin-top:4px;max-width:44ch}
+  .road-i code{color:var(--fg);font-size:.95em}
+  .wip-badge{display:inline-block;font:600 10px var(--mono);letter-spacing:.14em;color:var(--amber);
+    border:1px solid var(--amber);padding:2px 8px;margin-left:10px;vertical-align:2px;animation:pulse 2.4s infinite}
+  .term.wip{border-style:dashed}
+  .term.wip .term-bar{border-bottom-style:dashed}
+  .sbox .term-body{min-height:300px;max-height:380px}
+  .road-note{margin-top:26px;font-size:13.5px;color:var(--fg2)}
+  .road-note a{color:var(--amber);border-bottom:1px dotted var(--amber)}
+  .road-note a:hover{background:var(--amber);color:#0B0A08}
 
   /* cta final */
   .cta{text-align:center;padding:140px 24px;border-bottom:1px solid var(--line)}
@@ -218,15 +247,17 @@
     .feat{grid-template-columns:34px 1fr;gap:10px 18px}
     .feat .d{grid-column:2}
   }
-  @media (max-width:720px){
+  @media (max-width:920px){
     nav a:not(.ghbtn){display:none}
+  }
+  @media (max-width:720px){
     .sec{padding:78px 0}
     .step .n{font-size:48px}
     .cmd{flex-wrap:wrap}
   }
   @media (prefers-reduced-motion:reduce){
     .mq-track{animation:none}
-    .cur{animation:none}
+    .cur,.wip-badge,.road-i.wip .rd{animation:none}
     .rv{opacity:1;transform:none;transition:none}
     .hero-h .l>span{animation:none;transform:none}
   }
@@ -242,6 +273,8 @@
       <a href="#porque">por quê</a>
       <a href="#recursos">recursos</a>
       <a href="#demo">demo</a>
+      <a href="#sdk">sdk</a>
+      <a href="#sandbox" class="soon">sandbox <i>wip</i></a>
       <a href="#instalar">instalar</a>
       <a class="ghbtn" href="https://github.com/naoeosavio/Tell-ai" target="_blank" rel="noopener">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
@@ -256,14 +289,14 @@
   <section class="hero">
     <div class="wrap hero-in">
       <div>
-        <p class="eyebrow"><b>//</b> CLI open-source para LLMs — sem navegador, sem dashboard</p>
+        <p class="eyebrow"><b>//</b> CLI + SDK open-source para LLMs — sem navegador, sem dashboard</p>
         <h1 class="hero-h">
           <span class="l"><span>SUA IA,</span></span>
           <span class="l"><span><em class="serif">no terminal.</em></span></span>
         </h1>
         <p class="hero-sub">
           O Tell-ai leva modelos de linguagem para onde o seu código já vive: <b>o shell</b>.
-          Pergunte, pipeie, scripte — a resposta chega em <b>texto puro</b>, pronta para o próximo comando.
+          Pergunte, pipeie, scripte — na CLI ou via <b>SDK</b>, a resposta chega em <b>texto puro</b>, pronta para o próximo comando.
         </p>
         <div class="cmd">
           <span class="ps1">$</span>
@@ -276,12 +309,14 @@
         <div class="hero-links">
           <a href="https://github.com/naoeosavio/Tell-ai" target="_blank" rel="noopener">ver o código ↗</a>
           <a href="#demo">testar a demo ↓</a>
+          <a href="#sdk">usar o SDK ↘</a>
         </div>
         <div class="hero-meta">
           <span><span class="dot"></span>open-source</span>
           <span>★ <b class="gh-stars">—</b> stars</span>
           <span><b class="gh-forks">—</b> forks</span>
-          <span>último push: <b class="gh-push">—</b></span>
+          <span>SDK: <b>JS/TS</b></span>
+          <span>sandbox web: <b class="warn">em working</b></span>
         </div>
       </div>
 
@@ -332,8 +367,8 @@
             <p>A resposta é texto puro: pode ir para um arquivo, um pipe, uma mensagem de commit, um cron — sem formatação para "limpar" antes de usar.</p>
           </div>
           <div class="why-i">
-            <h3>$TELL_KEY <em>e pronto</em></h3>
-            <p>Sem cadastro, sem tela de login, sem servidor no meio do caminho: a sua chave, no seu ambiente, no limite do seu plano.</p>
+            <h3>shell, código <em>e em breve, aba</em></h3>
+            <p>Hoje: CLI no terminal e SDK no seu código. Amanhã: o mesmo Tell-ai rodando dentro do navegador, num sandbox web que está sendo construído agora.</p>
           </div>
         </div>
       </div>
@@ -384,6 +419,7 @@
       <div class="feat rv"><span class="i">05</span><span class="f">~/.tellrc</span><p class="d">Prompt de sistema, temperatura e aliases configurados uma única vez. Configure e esqueça.</p></div>
       <div class="feat rv"><span class="i">06</span><span class="f">--history</span><p class="d">Todo prompt e resposta num log local e pesquisável. Nada vai além do que você perguntar.</p></div>
       <div class="feat rv"><span class="i">07</span><span class="f">$TELL_KEY</span><p class="d">Sem conta e sem login. A chave do seu ambiente é a única credencial que existe.</p></div>
+      <div class="feat rv"><span class="i">08</span><span class="f">import</span><p class="d">SDK JS/TS incluso no mesmo pacote: <code>import { tell } from 'tell-ai'</code> — a mesma ferramenta, fora do shell. <a href="#sdk" style="color:var(--amber);border-bottom:1px dotted var(--amber)">exemplos ↘</a></p></div>
     </div>
   </section>
 
@@ -406,9 +442,9 @@
         <p class="try">↳ tente:
           <a data-cmd="help">help</a>
           <a data-cmd="tell oi">tell oi</a>
+          <a data-cmd="sdk">sdk</a>
+          <a data-cmd="sandbox">sandbox</a>
           <a data-cmd="features">features</a>
-          <a data-cmd="piada">piada</a>
-          <a data-cmd="install">install</a>
           <a data-cmd="github">github</a>
         </p>
         <p class="demo-note"><b>Simulação local:</b> este terminal roda 100% na sua aba — nenhuma chave, nenhuma chamada de rede. As respostas são pré-gravadas, mas o streaming é de verdade: <b>↑</b> repete comandos, <b>Tab</b> autocompleta, <b>Ctrl+C</b> interrompe.</p>
@@ -416,11 +452,105 @@
     </div>
   </section>
 
-  <!-- §05 instalar -->
+  <!-- §05 SDK -->
+  <section class="sec" id="sdk">
+    <div class="wrap">
+      <div class="shead rv">
+        <p class="slabel"><b>§ 05</b> — sdk</p>
+        <h2>A mesma <em class="serif">tell()</em>, fora do shell.</h2>
+      </div>
+      <div class="inst">
+        <div class="inst-cmd rv">
+          <div class="cmd">
+            <span class="ps1">$</span>
+            <code>npm install tell-ai</code>
+            <button class="copy" data-copy="npm install tell-ai">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1"/><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/></svg>
+              copiar
+            </button>
+          </div>
+          <p class="inst-alt">mesmo pacote da CLI: o binário é <code>tell</code>, o SDK é o <code>import</code>. Sem dependência extra.</p>
+          <div class="term">
+            <div class="term-bar">
+              <span class="ti">sdk/exemplo.mjs — JavaScript</span>
+              <button class="copy" data-copy-target="#sdkCode">copiar</button>
+            </div>
+            <div class="term-body"><pre class="code" id="sdkCode"><span class="c">// igual à CLI: a chave vem do ambiente ($TELL_KEY)</span>
+<span class="k">import</span> { tell } <span class="k">from</span> <span class="s">'tell-ai'</span>;
+
+<span class="c">// pergunta simples — volta texto puro, sem enrolação</span>
+<span class="k">const</span> resumo = <span class="k">await</span> <span class="f">tell</span>(<span class="s">'resuma este diff em uma linha'</span>, {
+  stdin: diff,
+  model: <span class="s">'gpt-4o-mini'</span>,
+});
+
+<span class="c">// ou em streaming, token a token</span>
+<span class="k">for await</span> (<span class="k">const</span> token <span class="k">of</span> <span class="f">tell</span>.<span class="f">stream</span>(<span class="s">'liste casos de teste'</span>)) {
+  process.stdout.<span class="f">write</span>(token);
+}</pre></div>
+          </div>
+        </div>
+        <div class="why-side rv" style="transition-delay:.1s">
+          <div class="why-i">
+            <h3>um pacote, <em>duas portas</em></h3>
+            <p>No terminal é <code>tell "…"</code>; no código é <code>await tell("…")</code>. Mesma chave, mesmos modelos, mesma filosofia de texto puro.</p>
+          </div>
+          <div class="why-i">
+            <h3>stream <em>nativo</em></h3>
+            <p>O <code>async iterator</code> entrega token a token — plugue num SSE, num websocket ou num log, sem montar nada na mão.</p>
+          </div>
+          <div class="why-i">
+            <h3>zero config, <em>zero servidor</em></h3>
+            <p>A chave vem do ambiente (<code>TELL_KEY</code>) e pode ser sobrescrita por chamada. O SDK roda onde o seu JS roda — e é a base do <a href="#sandbox" style="color:var(--amber);border-bottom:1px dotted var(--amber)">sandbox web</a>.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- §06 sandbox web (wip) -->
+  <section class="sec" id="sandbox">
+    <div class="wrap">
+      <div class="shead rv">
+        <p class="slabel"><b>§ 06</b> — roadmap</p>
+        <h2>Um sandbox web, <em class="serif">em working.</em></h2>
+      </div>
+      <div class="why">
+        <div class="term wip sbox rv">
+          <div class="term-bar">
+            <span class="ti">sandbox.tell-ai — web playground <span class="wip-badge" style="margin-left:8px">WIP</span></span>
+            <button id="sboxReplay">↻ tentar iniciar</button>
+          </div>
+          <div class="term-body" id="sboxBody"></div>
+        </div>
+        <div class="why-side rv" style="transition-delay:.1s">
+          <div class="road-i done">
+            <span class="rd">[✓]</span>
+            <div class="rb"><b>CLI</b><p>lançada — <code>tell "…"</code> direto no seu shell, com pipes e streaming.</p></div>
+          </div>
+          <div class="road-i done">
+            <span class="rd">[✓]</span>
+            <div class="rb"><b>SDK</b><p>disponível — <code>import { tell } from 'tell-ai'</code> no seu código JS/TS.</p></div>
+          </div>
+          <div class="road-i wip">
+            <span class="rd">[·]</span>
+            <div class="rb"><b>sandbox web <i class="wip-badge">EM WORKING</i></b><p>a mesma experiência dentro do navegador: sem instalar nada, sem chave nenhuma — durante o beta, os prompts ficam por nossa conta.</p></div>
+          </div>
+          <div class="road-i next">
+            <span class="rd">[ ]</span>
+            <div class="rb"><b>sua ideia</b><p>o roadmap é aberto — <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener" style="color:var(--amber);border-bottom:1px dotted var(--amber)">abra uma issue</a> e ela entra na lista.</p></div>
+          </div>
+          <p class="road-note">A simulação de boot ao lado falha de propósito — porque é isso que ela é: uma promessa em construção. O progresso real, commit a commit, aparece nas <a href="https://github.com/naoeosavio/Tell-ai" target="_blank" rel="noopener">issues e no repositório</a>.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- §07 instalar -->
   <section class="sec" id="instalar">
     <div class="wrap">
       <div class="shead rv">
-        <p class="slabel"><b>§ 05</b> — instalar</p>
+        <p class="slabel"><b>§ 07</b> — instalar</p>
         <h2>Uma linha e <em class="serif">pronto.</em></h2>
       </div>
       <div class="inst">
@@ -434,7 +564,7 @@
             </button>
           </div>
           <p class="inst-alt">
-            ou do código-fonte: <code>git clone https://github.com/naoeosavio/Tell-ai</code> —
+            CLI global. Para usar como biblioteca no seu código, sem <code>-g</code>: <code>npm install tell-ai</code> —
             <a href="https://github.com/naoeosavio/Tell-ai#readme" target="_blank" rel="noopener">requisitos e binários no README ↗</a>
           </p>
         </div>
@@ -453,7 +583,7 @@
   <!-- cta -->
   <section class="cta rv">
     <h2>O próximo prompt está a um <em class="serif">pipe</em> de distância.</h2>
-    <p>Código aberto, comunidade pequena, espaço para deixar sua marca.</p>
+    <p>Código aberto, SDK já disponível, sandbox web a caminho — e espaço para deixar a sua marca.</p>
     <a class="gh-big" href="https://github.com/naoeosavio/Tell-ai" target="_blank" rel="noopener">
       <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
       github.com/naoeosavio/Tell-ai <span class="st">★ <span class="gh-stars">—</span></span>
@@ -466,7 +596,7 @@
       <span>
         <a href="https://github.com/naoeosavio/Tell-ai" target="_blank" rel="noopener">repo</a> ·
         <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener">issues</a> ·
-        um único arquivo HTML, zero build
+        sdk: disponível · sandbox web: <span class="warn">em working</span> · um único arquivo HTML, zero build
       </span>
     </footer>
   </div>
@@ -475,7 +605,7 @@
 <!-- barra de status inferior -->
 <div class="sb" aria-hidden="true">
   <span><span class="dot"></span>tell-ai/demo · modo <span class="md" id="sbMode">NORMAL</span></span>
-  <span>↕ <span id="sbScroll">0%</span> · <span id="sbClock">--:--:--</span></span>
+  <span>↕ <span id="sbScroll">0%</span> · <span id="sbClock">--:--:--</span> · <span class="warn">sandbox:wip</span></span>
 </div>
 
 <script>
@@ -486,10 +616,11 @@
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const rand  = (a,b) => a + Math.random()*(b-a);
+  const pick  = a => a[Math.floor(Math.random()*a.length)];
 
   /* ---------- ano + marquee ---------- */
   $('#year').textContent = new Date().getFullYear();
-  const words = 'TERMINAL-NATIVE <i>·</i> PIPE-FIRST <i>·</i> SEM LOGIN <i>·</i> TEXTO PURO <i>·</i> MULTI-MODELO <i>·</i> OPEN-SOURCE <i>·</i> ZERO-DASHBOARD <i>·</i> ';
+  const words = 'TERMINAL-NATIVE <i>·</i> PIPE-FIRST <i>·</i> SEM LOGIN <i>·</i> TEXTO PURO <i>·</i> MULTI-MODELO <i>·</i> SDK JS/TS <i>·</i> SANDBOX-WEB: EM WORKING <i>·</i> OPEN-SOURCE <i>·</i> ';
   $('#mqTrack').innerHTML = '<span>'+words.repeat(3)+'</span><span>'+words.repeat(3)+'</span>';
 
   /* ---------- reveal ao rolar ---------- */
@@ -500,7 +631,12 @@
 
   /* ---------- copiar ---------- */
   $$('.copy').forEach(btn => btn.addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText(btn.dataset.copy); }
+    let text = btn.dataset.copy;
+    if (btn.dataset.copyTarget){
+      const t = $(btn.dataset.copyTarget);
+      if (t) text = t.textContent.replace(/^\n+|\s+$/g, '');
+    }
+    try { await navigator.clipboard.writeText(text); }
     catch { /* clipboard bloqueado: seleção manual ainda funciona */ }
     const old = btn.lastChild.textContent;
     btn.classList.add('ok'); btn.lastChild.textContent = ' copiado';
@@ -547,16 +683,14 @@
     const my = ++heroRun;
     heroBody.innerHTML = '';
     const seq = [
-      {t:'cmd', text:'tell "revise o último commit"'},
-      {t:'meta', html:'<b>●</b> tell-ai · gpt-4o-mini · 1.4s'},
-      {t:'out', text:'O commit mistura refactor e fix. Dois pontos:'},
-      {t:'out', cls:'dim', text:'  1. parseHeader() falha com BOM — normalize'},
-      {t:'out', cls:'dim', text:'     antes do split (linha 42).'},
-      {t:'out', cls:'dim', text:'  2. O teste novo cobre só o caminho feliz.'},
-      {t:'out', text:''},
-      {t:'cmd', text:'git log -1 --pretty=%B | tell "melhore esta msg"'},
-      {t:'meta', html:'<b>●</b> tell-ai · 0.9s'},
+      {t:'cmd', text:'git diff | tell "escreva a msg de commit"'},
+      {t:'meta', html:'<b>●</b> tell-ai · gpt-4o-mini · 1.2s'},
       {t:'out', cls:'ok', text:'→ fix(parser): normalizar BOM antes do parse de headers'},
+      {t:'out', cls:'dim', text:'  (1 arquivo alterado, commit pronto para amend)'},
+      {t:'out', text:''},
+      {t:'cmd', text:'node -e "import(\'tell-ai\').then(m => m.tell(\'oi\'))"'},
+      {t:'meta', html:'<b>●</b> sdk · mesmo pacote, sem CLI'},
+      {t:'out', cls:'dim', text:'  Oi! A mesma tell(), agora dentro do seu código.'},
       {t:'cur'}
     ];
     for (const s of seq){
@@ -590,6 +724,65 @@
   new IntersectionObserver((es, obs) => {
     if (es[0].isIntersecting){ runHero(); obs.disconnect(); }
   }, {threshold:.3}).observe($('#heroTerm'));
+
+  /* ---------- sandbox web: boot falso (falha com humor) ---------- */
+  const sboxBody = $('#sboxBody');
+  let sboxBusy = false, sboxTries = 0;
+  const phases = ['baixando runtime…','compilando para wasm…','montando fs virtual…','aquecendo modelo…','últimos metros…'];
+  const sboxFails = [
+    '✖ ERRO 418 — eu sou um bule. e, por ora, um sandbox inacabado.',
+    '✖ build não encontrado — a feature está em working. literalmente, agora.',
+    '✖ o sandbox quase subiu. mas "quase" não deploya.',
+    '✖ módulo sandbox-web não publicado no registry — ainda.'
+  ];
+  function sboxLink(label, href, external){
+    const l = document.createElement('div'); l.className = 'tl meta';
+    const pre = document.createTextNode(label);
+    const a = document.createElement('a'); a.textContent = href.replace('https://','').replace('#','§04 — ').replace('#demo','#demo');
+    a.href = href; a.style.cssText = 'color:var(--amber);border-bottom:1px dotted var(--amber)';
+    if (external){ a.target = '_blank'; a.rel = 'noopener'; }
+    l.append(pre, a);
+    sboxBody.appendChild(l);
+  }
+  async function sboxBoot(){
+    if (sboxBusy) return;
+    sboxBusy = true; sboxTries++;
+    sboxBody.innerHTML = '';
+    const scrollEnd = () => { sboxBody.scrollTop = sboxBody.scrollHeight; };
+
+    /* comando digitado */
+    const cl = mkLine(); cl.innerHTML = '<span class="ps1">$ </span><span class="tc"></span>';
+    sboxBody.appendChild(cl);
+    const tv = cl.querySelector('.tc'); const CMD = 'sandbox --start';
+    if (reduced) tv.textContent = CMD;
+    else for (const ch of CMD){ tv.textContent += ch; scrollEnd(); await sleep(26); }
+    await sleep(240);
+
+    /* barra de progresso */
+    const target = 42 + Math.floor(Math.random()*34);
+    const bar = mkLine('', 'dim'); sboxBody.appendChild(bar);
+    for (let p = 0; p <= target; p++){
+      const f = Math.round(p/10);
+      const ph = phases[Math.min(phases.length-1, Math.floor(p/(target+1)*phases.length))];
+      bar.textContent = '['+'■'.repeat(f)+'□'.repeat(10-f)+'] '+String(p).padStart(2,'0')+'% — '+ph;
+      scrollEnd();
+      await sleep(reduced ? 0 : 30);
+    }
+    await sleep(340);
+
+    /* falha + contexto */
+    sboxBody.appendChild(mkLine(pick(sboxFails), 'err'));
+    await sleep(180);
+    sboxBody.appendChild(mkLine('  status: em working · tentativa #'+sboxTries+' · o progresso não foi salvo (nem existia)', 'meta'));
+    sboxLink('  enquanto isso: ', '#demo', false);
+    sboxLink('  progresso real → ', 'https://github.com/naoeosavio/Tell-ai/issues', true);
+    scrollEnd();
+    sboxBusy = false;
+  }
+  $('#sboxReplay').addEventListener('click', sboxBoot);
+  new IntersectionObserver((es, obs) => {
+    if (es[0].isIntersecting){ sboxBoot(); obs.disconnect(); }
+  }, {threshold:.35}).observe($('#sboxBody'));
 
   /* ============================================================
      TERMINAL INTERATIVO DA DEMO
@@ -660,7 +853,7 @@
     }
     if (e.key === 'Tab'){
       e.preventDefault();
-      const cmds = ['help','tell ','install','features','github','clear','history','whoami','banner','date','exit','piada'];
+      const cmds = ['help','tell ','install','features','sdk','sandbox','github','clear','history','whoami','banner','date','exit','piada'];
       const m = cmds.find(c => c.startsWith(ti.value) && ti.value);
       if (m){ ti.value = m; positionCursor(); }
     }
@@ -689,22 +882,28 @@
     'Há dois tipos de pessoas: as que entendem recursão e as que entendem recursão.'
   ];
   let jokeIdx = 0;
-  const pick = a => a[Math.floor(Math.random()*a.length)];
 
   function brainRoute(q){
     const p = q.toLowerCase();
     if (/^(oi|ol[áa]|hello|hey|e a[íi]|eai|bom dia|boa tarde|boa noite)/.test(p))
       return [pick([
         'Olá! Aqui é a demo da landing — nenhuma rede, nenhuma chave, tudo pré-gravado. No Tell-ai de verdade, esta frase teria vindo de um LLM, token a token, direto no seu stdout.',
-        'Oi! Experimente pedir uma piada, ou digite `features` para ver o que a CLI faz.'])];
+        'Oi! Experimente pedir uma piada, digitar `sdk` ou `sandbox` para saber do roadmap.'])];
     if (/piada|engra[çc]ad|humor/.test(p)) return [jokes[jokeIdx++ % jokes.length]];
+    if (/sandbox|navegador|browser|em working|roadmap|futuro|planos/.test(p))
+      return ['O sandbox web está em working — a meta é a mesma experiência da CLI dentro da aba, sem instalar nada.',
+              'Durante o beta, os prompts ficam por nossa conta. A simulação de boot falha está no §06 — e o progresso real, nas issues.'];
+    if (/sdk|biblioteca|import|node|npm i(?!nstall -g)|usar no c[oó]digo|api/.test(p))
+      return ['O SDK vem no mesmo pacote: `npm install tell-ai` e `import { tell } from \'tell-ai\'`.',
+              'Pergunta simples volta com texto puro; `tell.stream()` entrega token a token via async iterator.',
+              'A chave vem do ambiente ($TELL_KEY) — os exemplos completos estão na seção §05.'];
     if (/quem (é|e) voc|[oó] que (é|e) (o |a )?tell|sobre o projeto|o que faz/.test(p))
-      return ['Tell-ai é uma CLI open-source: você fala com modelos de linguagem direto do shell.',
+      return ['Tell-ai é um projeto open-source com três frentes: CLI, SDK JS/TS e (em working) um sandbox web.',
               'Sem navegador, sem dashboard — o prompt entra, o texto puro sai, e tudo encadeia com pipes.',
               'O código vive em github.com/naoeosavio/Tell-ai (digite `github` e eu abro).'];
     if (/instal|como uso|como come|começar|comecar/.test(p))
-      return ['Resumo rápido: `npm install -g tell-ai`, depois `export TELL_KEY=…`,',
-              'e aí é só `tell "sua pergunta"`. Detalhes completos: `install` ou o README.'];
+      return ['Resumo rápido: `npm install -g tell-ai` para a CLI, `npm install tell-ai` para o SDK,',
+              'depois `export TELL_KEY=…` e é só `tell "sua pergunta"`. Detalhes: `install` ou o README.'];
     if (/obrigad|valeu|brigad/.test(p))
       return ['De nada! Se curtiu, uma star no repositório ajuda mais do que parece.'];
     if (/star|github|reposit[oó]rio|repo|c[oó]digo/.test(p))
@@ -727,12 +926,13 @@
         '',
         '  help          esta lista',
         '  tell <texto>  conversa com o modelo (simulado aqui)',
+        '  sdk           como usar o tell-ai como biblioteca',
+        '  sandbox       status do sandbox web (spoiler: wip)',
         '  install       instruções de instalação',
-        '  features      recursos principais da CLI',
+        '  features      recursos principais',
         '  github        abre o repositório no navegador',
         '  history       seus comandos nesta sessão',
         '  whoami        quem você é por aqui',
-        '  banner        o letreiro de novo',
         '  clear         limpa a tela',
         '',
         '  DICA   ↑ repete o último · Tab autocompleta · Ctrl+C interrompe',
@@ -740,15 +940,45 @@
         ''].join('\n'));
       return;
     }
+    if (cmd === 'sdk'){
+      out('');
+      await streamOut([
+        '  # instalar como biblioteca',
+        '  npm install tell-ai',
+        '',
+        '  # usar',
+        '  import { tell } from \'tell-ai\';',
+        '  const r = await tell(\'resuma este diff\', { stdin: diff });',
+        '',
+        '  # ou em streaming, token a token',
+        '  for await (const tok of tell.stream(\'liste testes\')) …',
+        '',
+        '  → exemplos completos na seção §05 da página'], 'dim');
+      out('');
+      return;
+    }
+    if (cmd === 'sandbox'){
+      out('');
+      await streamOut([
+        '  sandbox web   [■■■■■■□□□□]  em working',
+        '',
+        '  a ideia: a mesma CLI/SDK, rodando dentro do navegador —',
+        '  sem instalar nada e, no beta, sem precisar de chave.',
+        '  o progresso real vive nas issues do repositório.'], 'dim');
+      out('');
+      return;
+    }
     if (cmd === 'install'){
       out('');
       await streamOut([
-        '  # via npm',
+        '  # CLI (global)',
         '  npm install -g tell-ai',
+        '',
+        '  # SDK (biblioteca)',
+        '  npm install tell-ai',
         '',
         '  # do código-fonte',
         '  git clone https://github.com/naoeosavio/Tell-ai',
-        '  cd Tell-ai && npm link',
         '',
         '  # depois',
         '  export TELL_KEY="sua-chave"',
@@ -764,6 +994,7 @@
       out('  @arquivo    injeta arquivos no contexto do prompt', 'dim');
       out('  ~/.tellrc   aliases, temperatura e prompt de sistema', 'dim');
       out('  --history   log local e pesquisável de tudo', 'dim');
+      out('  import      SDK JS/TS no mesmo pacote (veja `sdk`)', 'dim');
       out('');
       return;
     }
