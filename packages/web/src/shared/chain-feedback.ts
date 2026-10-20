@@ -6,8 +6,6 @@
 
 import { format_command_skipped, format_executed_command, parse_command_feedback } from '@tell-ai/core';
 
-export const FEEDBACK_PREFIX_RE = /^(Executed command|Skipped by user):/;
-
 /** Feedback cards start minimized (collapsed) by default; the user expands per card. */
 export const FEEDBACK_COLLAPSE_CHARS = 400;
 
@@ -30,7 +28,11 @@ export interface ChainMessageLike {
 }
 
 export function isChainFeedback(content: string): boolean {
-  return FEEDBACK_PREFIX_RE.test(content);
+  // The core owns the vocabulary: `parse_command_feedback` knows every
+  // header it formats (executed, failed with its exit code, skipped,
+  // cancelled), so the browser never hardcodes a wording the server chain
+  // might not produce.
+  return parse_command_feedback(content) !== null;
 }
 
 export function isChainFeedbackMessage(m: { role: string; content: string }): boolean {

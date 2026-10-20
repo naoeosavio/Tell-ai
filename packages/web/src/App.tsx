@@ -1,4 +1,5 @@
-import { DEFAULT_MAX_CHAIN_STEPS } from '@tell-ai/core';
+import { DEFAULT_MAX_CHAIN_STEPS, format_command_feedback } from '@tell-ai/core';
+import { extract_runs } from '@tell-ai/sdk/browser';
 import {
   Maximize2,
   MessagesSquare as MessagesSquareIcon,
@@ -27,9 +28,10 @@ import SettingsPanel from './components/SettingsPanel.tsx';
 import Terminal, { type TerminalLayout, type TerminalLine, type TerminalTabMeta } from './components/Terminal.tsx';
 import { useToast } from './components/Toast.tsx';
 import { resolve_agent_notification } from './shared/agent-feed.ts';
-import { formatExecutedFeedback, formatSkippedFeedback } from './shared/chain-feedback.ts';
+import { formatSkippedFeedback } from './shared/chain-feedback.ts';
 import { consume_chat_stream } from './shared/chat-stream.ts';
 import { loadExecToggles, saveExecToggles } from './shared/exec-toggles.ts';
+import { type LocalLoopRound, run_local_loop } from './shared/local-loop.ts';
 import {
   resolveSidebarPaneLayout,
   SETTINGS_HEIGHT_DEFAULT_PX,
@@ -609,11 +611,9 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
     setTerminalLines((prev) => [...prev.slice(-199), { type, text }]);
   }, []);
 
-  // Helper: extract runs from model response (case-insensitive: <RUN>, <run>, <Run>...)
-  const extractRunScripts = (text: string): string[] => {
-    const sanitized = text.replace(/```[\s\S]*?```/g, '');
-    return [...sanitized.matchAll(/<run>([\s\S]*?)<\/run>/gi)].map((m) => m[1]?.trim()).filter((s): s is string => !!s);
-  };
+  // Helper: extract runs from model response (owned by @tell-ai/sdk/browser:
+  // frontier closing, code fences ignored — same semantics as the server).
+  const extractRunScripts = (text: string): string[] => extract_runs(text).scripts;
 
   const isAbortError = (error: unknown): boolean =>
     (error instanceof DOMException && error.name === 'AbortError') ||
@@ -984,98 +984,170 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
     }
   };
 
-  // Helper: run AI text generation step
+  // Helper: run the chain on the core's primitive loop.
+  //
+  // The iteration protocol is owned by `@tell-ai/core` (`run_primitive_loop`,
+  // browser entry): the round cap, the feedback wording fed back to the
+  // model, the fail-closed stops and the cancellation boundary. The App
+  // injects only the transport — ask the server, run the command — because
+  // the provider keys never reach the browser.
+  //
+  // `currentMessages` is the whole conversation; its trailing user message
+  // is the loop's first message (the prompt, or the previous round's
+  // feedback) and everything before it is the history.
   const runAiTurn = async (currentMessages: ChatMessage[]) => {
+    const trailing = currentMessages[currentMessages.length - 1];
+    const history = trailing && trailing.role === 'user' ? currentMessages.slice(0, -1) : currentMessages;
+    const prompt = trailing && trailing.role === 'user' ? trailing.content : '';
+
     if (chainDepthRef.current >= MAX_CHAIN_ITERATIONS) {
       chainDepthRef.current = 0;
       setLoading(false);
       appendAgentLine('system', `Chain stopped: max iterations (${MAX_CHAIN_ITERATIONS}) reached.`);
       return;
     }
-    chainDepthRef.current += 1;
+    // Without chain mode the model gets exactly one round (the command it
+    // asks for still runs, but nothing follows it).
+    const budget = chainMode ? MAX_CHAIN_ITERATIONS - chainDepthRef.current : 1;
     setLoading(true);
     const controller = new AbortController();
     abortRef.current = controller;
-    const messageId = crypto.randomUUID();
+    // The conversation the loop runs on: the App owns it, the loop owns only
+    // the iteration.
+    const chain: ChatMessage[] = [...history];
+    // Rounds counted here too, so a round that throws still counts against
+    // the chain budget.
+    let rounds_run = 0;
+
     try {
-      const res = await apiFetch('/api/tell', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({
-          messages: currentMessages.map((m) => ({ role: m.role, content: m.content })),
-          modelAlias,
-          systemPrompt,
-          // Per-request override: the server falls back to its boot `--stream`
-          // when this field is missing (e.g. curl / API clients).
-          stream: streamMode,
-        }),
-      });
+      const result = await run_local_loop({
+        message: prompt,
+        max_rounds: budget,
+        // The core's cancellation token reads the App's abort signal.
+        cancellation: {
+          get cancelled() {
+            return controller.signal.aborted;
+          },
+          on_cancel: (callback: () => void) => {
+            controller.signal.addEventListener('abort', callback);
+            return () => controller.signal.removeEventListener('abort', callback);
+          },
+        },
+        ask: async (round_message: string): Promise<LocalLoopRound> => {
+          rounds_run += 1;
+          const user_message: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: 'user',
+            content: round_message,
+          };
+          const request_messages = [...chain, user_message];
+          setMessagesAndSync(request_messages);
+          const message_id = crypto.randomUUID();
+          const res = await apiFetch('/api/tell', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: controller.signal,
+            body: JSON.stringify({
+              messages: request_messages.map((m) => ({ role: m.role, content: m.content })),
+              modelAlias,
+              systemPrompt,
+              // Per-request override: the server falls back to its boot `--stream`
+              // when this field is missing (e.g. curl / API clients).
+              stream: streamMode,
+            }),
+          });
 
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || 'AI generation failed');
-      }
+          if (!res.ok) {
+            const errData = await res.json();
+            throw new Error(errData.error || 'AI generation failed');
+          }
 
-      let text = '';
-      let thought: string | null = null;
-      let thoughtDurationMs: number | null = null;
+          let text = '';
+          let thought: string | null = null;
+          let thoughtDurationMs: number | null = null;
 
-      if ((res.headers.get('content-type') || '').includes('application/x-ndjson')) {
-        const streamed = await consumeChatStreamReply(res, messageId);
-        text = streamed.text;
-        thought = streamed.reasoning || null;
-        thoughtDurationMs = thought && streamed.reasoningMs > 0 ? streamed.reasoningMs : null;
-      } else {
-        const data = await res.json();
-        text = data.text || '';
-        thought = data.reasoning || null;
-      }
+          if ((res.headers.get('content-type') || '').includes('application/x-ndjson')) {
+            const streamed = await consumeChatStreamReply(res, message_id);
+            text = streamed.text;
+            thought = streamed.reasoning || null;
+            thoughtDurationMs = thought && streamed.reasoningMs > 0 ? streamed.reasoningMs : null;
+          } else {
+            const data = await res.json();
+            text = data.text || '';
+            thought = data.reasoning || null;
+          }
 
-      const assistantMessage: ChatMessage = {
-        id: messageId,
-        role: 'assistant',
-        content: text,
-        ...(thought ? { thought } : {}),
-        ...(thoughtDurationMs !== null ? { thoughtDurationMs } : {}),
-      };
+          const assistantMessage: ChatMessage = {
+            id: message_id,
+            role: 'assistant',
+            content: text,
+            ...(thought ? { thought } : {}),
+            ...(thoughtDurationMs !== null ? { thoughtDurationMs } : {}),
+          };
 
-      const updatedMessages = [...currentMessages, assistantMessage];
-      setMessagesAndSync(updatedMessages);
+          chain.push(user_message, assistantMessage);
+          setMessagesAndSync([...chain]);
 
-      const scripts = extractRunScripts(text);
-      if (scripts.length > 0) {
-        if (scripts.length > 1) {
-          appendAgentLine('system', `+${scripts.length - 1} additional script(s) ignored (only the first one runs).`);
-        }
-        const script = scripts[0];
-        if (!script) {
-          setLoading(false);
-          return;
-        }
-        appendAgentLine('system', `Agent requested script execution:\n${script}`);
-
-        if (controller.signal.aborted) {
-          setLoading(false);
-          return;
-        }
-        if (canAutoRun) {
+          const scripts = extractRunScripts(text);
+          if (scripts.length > 1) {
+            appendAgentLine('system', `+${scripts.length - 1} additional script(s) ignored (only the first one runs).`);
+          }
+          const script = scripts[0];
+          if (script) {
+            appendAgentLine('system', `Agent requested script execution:\n${script}`);
+          }
+          return { text, script: script ?? null };
+        },
+        execute: async (script: string) => {
+          const controller_now = abortRef.current ?? controller;
+          appendAgentLine('input', script);
+          const res = await apiFetch('/api/execute', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: controller_now.signal,
+            body: JSON.stringify({ command: script }),
+          });
+          if (!res.ok) {
+            const error = await res.json().catch(() => ({}));
+            throw new Error(error.error || 'Command execution failed');
+          }
+          const data = await res.json();
+          const output = data.output || '';
+          appendAgentLine('output', output);
+          if (!chatVisibleRefOuter.current) toast('success', 'Command executed — output in Agent Feed');
+          setRefreshFileTreeTrigger((prev) => prev + 1);
+          return {
+            output: truncateOutputTail(output),
+            exit_code: typeof data.exit_code === 'number' ? data.exit_code : 0,
+          };
+        },
+        may_execute: async (script: string) => {
+          if (controller.signal.aborted) return false;
+          if (!canAutoRun) return false;
           if (requireApproval && (await isHighRiskCommand(script, controller.signal))) {
             // Combo mode: safe runs directly, risky needs manual approval.
             appendAgentLine('system', 'High-risk script held for approval (Require Approval).');
-            setPendingCommand(script);
-            setLoading(false);
-            return;
+            return false;
           }
-          await executeAndContinue(script, updatedMessages);
-        } else {
-          setPendingCommand(script);
-          setLoading(false);
-        }
-      } else {
+          return true;
+        },
+      });
+
+      chainDepthRef.current += result.rounds;
+      if (result.pending_script) {
+        // Held for the user: the core stopped the chain (fail-closed) and the
+        // command stays visible until the user decides.
+        setPendingCommand(result.pending_script);
         setLoading(false);
+        return;
       }
+      if (result.truncated) {
+        appendAgentLine('system', `Chain stopped: max iterations (${MAX_CHAIN_ITERATIONS}) reached.`);
+      }
+      setLoading(false);
     } catch (error: any) {
+      // A round that threw still counts against the chain budget.
+      chainDepthRef.current += rounds_run;
       if (isAbortError(error)) {
         appendAgentLine('system', 'Generation stopped by user.');
         setLoading(false);
@@ -1153,7 +1225,6 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
   const truncateOutputTail = (text: string): string =>
     text.length > FEEDBACK_OUTPUT_LIMIT ? `…[truncated]\n${text.slice(-FEEDBACK_OUTPUT_LIMIT)}` : text;
 
-  // Execute and continue chain loop (Auto mode)
   // Classify a command via the server guard without executing it.
   // Fail-closed: any error routes the command to manual approval.
   const isHighRiskCommand = async (script: string, signal: AbortSignal): Promise<boolean> => {
@@ -1168,60 +1239,6 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
       return data.highRisk === true;
     } catch {
       return true;
-    }
-  };
-
-  const executeAndContinue = async (script: string, currentMessages: ChatMessage[]) => {
-    const controller = abortRef.current ?? new AbortController();
-    abortRef.current = controller;
-    appendAgentLine('input', script);
-    try {
-      const res = await apiFetch('/api/execute', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({ command: script }),
-      });
-      if (!res.ok) {
-        const error = await res.json().catch(() => ({}));
-        throw new Error(error.error || 'Command execution failed');
-      }
-      const data = await res.json();
-      const output = data.output || '';
-      appendAgentLine('output', output);
-      if (!chatVisibleRefOuter.current) toast('success', 'Command executed — output in Agent Feed');
-
-      setRefreshFileTreeTrigger((prev) => prev + 1);
-
-      if (controller.signal.aborted) {
-        setLoading(false);
-        return;
-      }
-
-      if (chainMode) {
-        const feedback = formatExecutedFeedback(script, truncateOutputTail(output));
-        const feedbackMessage: ChatMessage = {
-          id: crypto.randomUUID(),
-          role: 'user',
-          content: feedback,
-        };
-        const updated = [...currentMessages, feedbackMessage];
-        setMessagesAndSync(updated);
-        await runAiTurn(updated);
-      } else {
-        setLoading(false);
-      }
-    } catch (error: any) {
-      if (isAbortError(error)) {
-        appendAgentLine('system', 'Execution stopped by user.');
-        setLoading(false);
-        return;
-      }
-      appendAgentLine('error', `Execution failure: ${error.message}`);
-      toast('error', `Execution failed: ${error.message}`);
-      setLoading(false);
-    } finally {
-      if (abortRef.current === controller) abortRef.current = null;
     }
   };
 
@@ -1298,7 +1315,13 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
       setRefreshFileTreeTrigger((prev) => prev + 1);
 
       if (chainMode) {
-        const feedback = formatExecutedFeedback(command, truncateOutputTail(output));
+        // The same round feedback the core's loop builds (`format_command_feedback`
+        // with the continuation instruction): the browser chain and the server
+        // chain speak one protocol.
+        const exit_code = typeof data.exit_code === 'number' ? data.exit_code : 0;
+        const feedback = format_command_feedback(command, truncateOutputTail(output), exit_code, {
+          with_instruction: true,
+        });
         const feedbackMessage: ChatMessage = {
           id: crypto.randomUUID(),
           role: 'user',

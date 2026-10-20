@@ -10,6 +10,7 @@ import {
   create_node_executor,
   compose_custom_system,
   DEFAULT_EXEC_TIMEOUT_MS,
+  EXEC_CANCELLED_EXIT_CODE,
   HOST_DEFAULT_MODEL,
   DEFAULT_MAX_BUFFER_BYTES,
   DEFAULT_OUTPUT_MAX_BYTES,
@@ -715,11 +716,18 @@ app.post('/api/execute', async (req, res) => {
       timeout_ms: EXEC_TIMEOUT_MS,
       max_output_bytes: EXEC_MAX_BUFFER,
     });
-    return res.json({ output: cap_execution_output(result.stdout, result.stderr) });
+    // The exit code travels with the output: the browser-side loop formats
+    // the round feedback through the core (`format_command_result`), which
+    // reports a failure as `Command failed (exit code N)`. Without it the
+    // browser could not tell a failed command from a successful one.
+    return res.json({ output: cap_execution_output(result.stdout, result.stderr), exit_code: result.exit_code });
   } catch (error: any) {
     // The executor only throws for spawn/cancellation failures, never for a
     // command exit status — report the message the same way the old path did.
-    return res.json({ output: truncate_output(String(error?.message ?? error), EXEC_OUTPUT_MAX_BYTES) });
+    return res.json({
+      output: truncate_output(String(error?.message ?? error), EXEC_OUTPUT_MAX_BYTES),
+      exit_code: EXEC_CANCELLED_EXIT_CODE,
+    });
   } finally {
     activeExecutions -= 1;
   }

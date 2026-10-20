@@ -1,3 +1,4 @@
+import { extract_runs, strip_run_tags } from '@tell-ai/sdk/browser';
 import {
   AlertCircle,
   ArrowDown,
@@ -22,8 +23,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   defaultFeedbackOpen,
   displaySideFor,
-  FEEDBACK_PREFIX_RE,
   findLinkedFeedbackIndex,
+  isChainFeedback,
   parseFeedback,
 } from '../shared/chain-feedback.ts';
 import {
@@ -287,18 +288,12 @@ export default function ChatSection({
     setEditingValue('');
   };
 
-  // Helper to strip <RUN> tags (case-insensitive) from text response so they don't pollute the visual bubble
-  const cleanResponseContent = (text: string) => {
-    return text.replace(/<run>[\s\S]*?<\/run>/gi, '').trim();
-  };
+  // <RUN> handling is owned by @tell-ai/sdk/browser (frontier closing, fences ignored).
+  const cleanResponseContent = (text: string): string => strip_run_tags(text);
 
-  const hasRunsInMessage = (text: string) => {
-    return /<run>[\s\S]*?<\/run>/i.test(text);
-  };
+  const hasRunsInMessage = (text: string): boolean => extract_runs(text).scripts.length > 0;
 
-  const extractRunScripts = (text: string): string[] => {
-    return [...text.matchAll(/<run>([\s\S]*?)<\/run>/gi)].map((m) => (m[1] ?? '').trim()).filter(Boolean);
-  };
+  const extractRunScripts = (text: string): string[] => extract_runs(text).scripts;
 
   const selectedModel = models.find((m) => m.alias === modelAlias);
   const hasKey = (vendor: string) => !KEYED_VENDORS.has(vendor) || !!keysStatus[VENDOR_KEY_ALIASES[vendor] || vendor];
@@ -520,7 +515,7 @@ export default function ChatSection({
         ) : (
           messages.map((m, msgIdx) => {
             const isUser = m.role === 'user';
-            const isFeedback = isUser && FEEDBACK_PREFIX_RE.test(m.content);
+            const isFeedback = isUser && isChainFeedback(m.content);
             // Chain-loop feedback (Executed/Skipped) renders on the LLM side;
             // the stored role stays 'user' so the LLM context is unchanged.
             const displayIsUser = displaySideFor(m) === 'user';

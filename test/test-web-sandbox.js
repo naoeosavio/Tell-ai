@@ -198,9 +198,9 @@ describe('web sandbox: server guards', () => {
 // ---------------------------------------------------------------------------
 describe('web sandbox: chain feedback', () => {
   const {
-    FEEDBACK_PREFIX_RE,
     formatExecutedFeedback,
     formatSkippedFeedback,
+    isChainFeedback,
     isChainFeedbackMessage,
     parseFeedback,
     findLinkedFeedbackIndex,
@@ -216,11 +216,14 @@ describe('web sandbox: chain feedback', () => {
   }
 
   describe('chain-feedback detection', () => {
-    it('matches Executed/Skipped prefixes only', () => {
-      assert.ok(FEEDBACK_PREFIX_RE.test(executed()));
-      assert.ok(FEEDBACK_PREFIX_RE.test('Skipped by user:\nls'));
-      assert.ok(!FEEDBACK_PREFIX_RE.test('Executed commands list'));
-      assert.ok(!FEEDBACK_PREFIX_RE.test('explain this directory'));
+    it('matches the records the core formats (executed, failed, skipped)', () => {
+      assert.ok(isChainFeedback(executed()));
+      assert.ok(isChainFeedback('Skipped by user:\nls'));
+      // A failed command is a feedback record too — the core owns that
+      // wording, so the browser must not keep its own header list.
+      assert.ok(isChainFeedback('Command failed (exit code 1):\nls\nOutput:\nboom'));
+      assert.ok(!isChainFeedback('Executed commands list'));
+      assert.ok(!isChainFeedback('explain this directory'));
     });
 
     it('isChainFeedbackMessage requires role user', () => {
@@ -277,7 +280,6 @@ describe('web sandbox: chain feedback', () => {
   describe('findLinkedFeedbackIndex', () => {
     const assistantRun = { id: 'a1', role: 'assistant', content: 'here <RUN>ls</RUN>' };
     const feedback = { id: 'f1', role: 'user', content: executed('ls', 'a\nb') };
-
     it('links the first feedback after the assistant message', () => {
       const msgs = [{ id: 'u', role: 'user', content: 'list' }, assistantRun, feedback];
       assert.strictEqual(findLinkedFeedbackIndex(msgs, 1), 2);
@@ -319,6 +321,134 @@ describe('web sandbox: chain feedback', () => {
       assert.strictEqual(displaySideFor({ role: 'user', content: 'explain this' }), 'user');
       assert.strictEqual(displaySideFor({ role: 'assistant', content: 'sure <RUN>x</RUN>' }), 'assistant');
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The browser chain loop: the Web client runs on the core's primitive loop
+// (`run_primitive_loop` from the core's browser entry). The transport is
+// injected (ask the server, run the command); the iteration is the core's.
+// ---------------------------------------------------------------------------
+describe('web sandbox: browser chain loop', () => {
+  const { run_local_loop } = loadModule('src/shared/local-loop.ts');
+
+  /** A model that asks for a command on round one and answers after it. */
+  function scripted_ask(answers) {
+    const seen = [];
+    let call = 0;
+    return {
+      seen,
+      ask: async (message) => {
+        seen.push(message);
+        const answer = answers[Math.min(call, answers.length - 1)];
+        call += 1;
+        return answer;
+      },
+    };
+  }
+
+  it('feeds the executed output back with the core wording and stops', async () => {
+    const model = scripted_ask([
+      { text: 'running it', script: 'echo hi' },
+      { text: 'done', script: null },
+    ]);
+    const result = await run_local_loop({
+      message: 'hi',
+      max_rounds: 8,
+      ask: model.ask,
+      execute: async () => ({ output: 'hi\n', exit_code: 0 }),
+      may_execute: async () => true,
+    });
+    assert.strictEqual(result.status, 'completed');
+    assert.strictEqual(result.rounds, 2);
+    assert.strictEqual(result.text, 'done');
+    assert.strictEqual(result.commands.length, 1);
+    assert.strictEqual(result.commands[0].status, 'executed');
+    // The second round carries the core's round feedback (the same wording
+    // the server chain uses), not a browser-local variant.
+    assert.ok(model.seen[1].startsWith('Executed command:\necho hi\nOutput:\nhi\n'));
+    assert.ok(model.seen[1].includes('Request another command with <RUN> tags'));
+  });
+
+  it('holds a command for the user and stops (fail-closed)', async () => {
+    const model = scripted_ask([{ text: 'running it', script: 'rm -rf /' }]);
+    let executed = 0;
+    const result = await run_local_loop({
+      message: 'hi',
+      max_rounds: 8,
+      ask: model.ask,
+      execute: async () => {
+        executed += 1;
+        return { output: '', exit_code: 0 };
+      },
+      may_execute: async () => false,
+    });
+    assert.strictEqual(result.status, 'awaiting_approval');
+    assert.strictEqual(result.pending_script, 'rm -rf /');
+    assert.strictEqual(executed, 0, 'a held command never runs');
+    assert.strictEqual(result.rounds, 1);
+  });
+
+  it('reports a failed command so the core can self-heal', async () => {
+    const model = scripted_ask([
+      { text: 'trying', script: 'false' },
+      { text: 'fixed', script: null },
+    ]);
+    const result = await run_local_loop({
+      message: 'hi',
+      max_rounds: 8,
+      ask: model.ask,
+      execute: async () => ({ output: 'boom', exit_code: 1 }),
+      may_execute: async () => true,
+    });
+    assert.strictEqual(result.status, 'completed');
+    assert.strictEqual(result.commands[0].status, 'failed');
+    assert.ok(model.seen[1].startsWith('The command above FAILED.'));
+    assert.ok(model.seen[1].includes('Command failed (exit code 1):'));
+  });
+
+  it('stops at the round cap', async () => {
+    const model = scripted_ask([{ text: 'again', script: 'echo hi' }]);
+    const result = await run_local_loop({
+      message: 'hi',
+      max_rounds: 2,
+      ask: model.ask,
+      execute: async () => ({ output: 'hi\n', exit_code: 0 }),
+      may_execute: async () => true,
+    });
+    assert.strictEqual(result.status, 'completed');
+    assert.strictEqual(result.rounds, 2);
+    assert.strictEqual(model.seen.length, 2, 'the cap stops the rounds');
+    assert.strictEqual(result.truncated, true, 'the core records the cap');
+  });
+
+  it('does not report a truncation when the chain finished on its own', async () => {
+    const model = scripted_ask([{ text: 'done', script: null }]);
+    const result = await run_local_loop({
+      message: 'hi',
+      max_rounds: 8,
+      ask: model.ask,
+      execute: async () => ({ output: '', exit_code: 0 }),
+      may_execute: async () => true,
+    });
+    assert.strictEqual(result.status, 'completed');
+    assert.strictEqual(result.rounds, 1);
+    assert.strictEqual(result.truncated, false);
+  });
+
+  it('stops on cancellation', async () => {
+    const model = scripted_ask([{ text: 'running it', script: 'echo hi' }]);
+    const result = await run_local_loop({
+      message: 'hi',
+      max_rounds: 8,
+      cancellation: { cancelled: true, on_cancel: () => () => {} },
+      ask: model.ask,
+      execute: async () => ({ output: '', exit_code: 0 }),
+      may_execute: async () => true,
+    });
+    assert.strictEqual(result.status, 'cancelled');
+    assert.strictEqual(result.rounds, 0, 'a cancelled token stops before the first round');
+    assert.strictEqual(model.seen.length, 0);
   });
 });
 

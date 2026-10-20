@@ -337,6 +337,14 @@ answers approvals by decision id; the local loop remains as the offline
 fallback, and `/api/tell`, `/api/execute` and `/api/risk-check` stay stable
 beside the chain routes.
 
+The local fallback is not a second implementation: it runs on the core's
+primitive loop (`run_primitive_loop`, browser entry of `@tell-ai/core`) with
+an injected turn that talks to this server — the round cap, the feedback
+wording, the fail-closed stops and the feedback-card vocabulary are the
+core's, so the browser fallback and the server chain speak one protocol. The
+provider keys stay on the server either way: the browser never calls a
+model directly.
+
 - `POST /api/chain` — same payload shape as `/api/tell` (`messages`,
   `modelAlias?`, `systemPrompt?`, same limits). Answers with the run snapshot:
   `{runId, status, version, rounds, text, events, pending}`. `pending` carries

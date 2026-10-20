@@ -211,7 +211,7 @@ Bind to `0.0.0.0` only together with both of these: `TELL_TOKEN` and
 | GET | `/api/file?path=` | Content + `mtime` (403 traversal/sensitive, 413 >10MB) |
 | GET | `/api/file/raw?path=` | Download bytes |
 | POST | `/api/save-file` | `{path, content, expectedMtime}` (409 if changed on disk) |
-| POST | `/api/execute` | `{command}` — blocks high-risk patterns, 429 (10/min, max 2 concurrent) |
+| POST | `/api/execute` | `{command}` → `{output, exit_code}` — blocks high-risk patterns, 429 (10/min, max 2 concurrent). The exit code lets the browser-side loop report a failed command through the core's feedback wording |
 | POST | `/api/risk-check` | `{command}` → `{highRisk}` — classify without executing (drives Require Approval gating) |
 | GET | `/api/models` | Models/aliases + `keysStatus` per vendor |
 | GET | `/api/auth/status` | Public: `{authRequired}` only (drives the isolated login screen) |
