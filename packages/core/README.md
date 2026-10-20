@@ -8,6 +8,22 @@ adapters.
 Provenance and the GPL→MIT signoff live in `docs/core-provenance.md`; the
 fail-closed Phase 1 gate is `test/test-core-package.js`.
 
+## Install
+
+```bash
+npm i @tell-ai/core
+```
+
+```bash
+bun add @tell-ai/core
+```
+
+## Documentation
+
+Full reference: [`docs/core/`](../../docs/core/README.md) — runtime API, loop,
+exec, risk, config, limits, paths, project context, SDK config, chain
+decisions, feedback wording, browser surface, development.
+
 ## Boundary
 
 - The public injectable contract (`createTellRuntime`, `TellResult`, ports,
