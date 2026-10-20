@@ -17,7 +17,7 @@
 - `chain_limit_notice` is exported from the main entry too (it was browser-only), and `SKIPPED_HEADER`/`OUTPUT_SEPARATOR` join the browser entry (the feedback vocabulary is the core's in both hosts). The two entries now expose the same loop surface.
 
 ### Notes
-- Requires `@tell-ai/sdk` 0.5.0 (the new `./pure` entry: the protocol surface without the provider graph); the SDK floor in `core` moved to `^0.5.0`, and the `cli`/`web` floors moved to `@tell-ai/core` `^0.1.2` / `@tell-ai/sdk` `^0.5.0`.
+- Requires `@tell-ai/sdk` 0.4.1 (the new `./pure` entry: the protocol surface without the provider graph); the SDK floor in `core` moved to `^0.4.1`, and the `cli`/`web` floors moved to `@tell-ai/core` `^0.1.2` / `@tell-ai/sdk` `^0.4.1`.
 - The core's browser entry grew (`create_core_runtime` + the runtime wiring): the bundle is still self-contained and dependency-free, but a browser host now gets the whole runtime, not just the loop. `docs/core/browser.md` is the inventory — what ships (67 exports) and what cannot (28, each blocked by a concrete builtin: `child_process`, `realpath`, directory walking, `process.env`), with `examples/core/core-browser.ts` exercising the whole browser surface offline.
 
 ## v0.1.1 — 2026-10-13

@@ -1,7 +1,7 @@
 {
   "name": "tell-ai-monorepo",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.4.1",
   "description": "Monorepo for the tell-ai CLI, the @tell-ai/sdk browser-safe AI library, the @tell-ai/core shared Node runtime, and the @tell-ai/web sandbox server",
   "workspaces": [
     "packages/*"

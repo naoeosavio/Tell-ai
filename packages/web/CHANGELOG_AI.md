@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.4.0 — 2026-10-20
+## v0.3.2 — 2026-10-20
 
 ### Features
 - The client-side chain now runs on the core's primitive loop (`run_primitive_loop`, browser entry of `@tell-ai/core`) instead of a hand-rolled recursion in `App.tsx`: the new `src/shared/local-loop.ts` injects the transport (the turn still asks the **server** — `/api/tell`, `/api/execute` — so provider keys never reach the browser) and the core owns the round cap, the feedback wording, the fail-closed stops and the cancellation boundary. The browser fallback and the server chain now speak one protocol.
@@ -11,7 +11,7 @@
 - The Web client delegates `<RUN>` handling to `@tell-ai/sdk/browser` (`extract_runs`/`strip_run_tags`) instead of three hand-rolled regexes: a command containing a literal `</RUN>` is no longer truncated in the chat, and fenced code blocks are ignored exactly like on the server. Running only the first script (with the `+N additional script(s) ignored` warning) is unchanged by design.
 
 ### Notes
-- Requires `@tell-ai/core` 0.1.2 (the browser entry now ships the loop and the runtime wiring) and `@tell-ai/sdk` 0.5.0; the floors moved to `^0.1.2` / `^0.5.0`.
+- Requires `@tell-ai/core` 0.1.2 (the browser entry now ships the loop and the runtime wiring) and `@tell-ai/sdk` 0.4.1; the floors moved to `^0.1.2` / `^0.4.1`.
 - The browser fallback keeps the provider keys on the server: the loop's injected turn calls this server, it never calls a model directly.
 
 ## v0.3.1 — 2026-10-19
