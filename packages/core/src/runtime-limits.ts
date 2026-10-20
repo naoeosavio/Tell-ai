@@ -236,15 +236,18 @@ const DEFAULT_LIMITS: RuntimeLimits = {
 /**
  * Parses a raw limit value into a positive integer.
  *
+ * Only whole numbers are accepted: a fractional flag (`0.5`) would floor to
+ * `0` and silently disable a limit instead of failing loudly.
+ *
  * @param raw - Raw flag/env/tellrc value.
  * @returns The integer value, or undefined when unusable.
  */
 function to_limit_int(raw: unknown): number | undefined {
   if (typeof raw === 'number') {
-    if (!Number.isFinite(raw)) {
+    if (!Number.isFinite(raw) || !Number.isInteger(raw)) {
       return undefined;
     } else {
-      return Math.floor(raw);
+      return raw;
     }
   } else if (typeof raw === 'string') {
     const trimmed = raw.trim();
@@ -327,12 +330,6 @@ export function parse_runtime_limits(input: ParseRuntimeLimitsInput = {}): Runti
   const resolved: RuntimeLimits = { ...DEFAULT_LIMITS };
   for (const spec of LIMIT_SPEC_LIST) {
     const flag_raw = input.flags?.[spec.flag_key];
-    if (spec.flag_key === 'stdin_timeout_ms' && input.flags?.no_stdin_timeout === true) {
-      resolved[spec.key] = 0;
-      continue;
-    } else {
-      // Explicit no-stdin-timeout only affects the stdin timeout.
-    }
     if (flag_raw !== undefined) {
       const parsed = to_limit_int(flag_raw);
       if (parsed === undefined) {
@@ -340,6 +337,11 @@ export function parse_runtime_limits(input: ParseRuntimeLimitsInput = {}): Runti
       } else {
         resolved[spec.key] = validate_limit_value(spec, parsed, 'flag');
       }
+      continue;
+    } else if (spec.flag_key === 'stdin_timeout_ms' && input.flags?.no_stdin_timeout === true) {
+      // The explicit "no timeout" modifier only applies when no explicit
+      // stdin timeout was given (an invalid one still fails above).
+      resolved[spec.key] = 0;
       continue;
     } else {
       // No flag value — fall through to env.
@@ -360,7 +362,7 @@ export function parse_runtime_limits(input: ParseRuntimeLimitsInput = {}): Runti
     } else {
       // No env value — fall through to tellrc.
     }
-    const project_raw = input.project?.limits[spec.tellrc_key];
+    const project_raw = input.project?.limits?.[spec.tellrc_key];
     if (project_raw !== undefined) {
       const parsed = to_limit_int(project_raw);
       if (parsed === undefined) {
@@ -376,7 +378,7 @@ export function parse_runtime_limits(input: ParseRuntimeLimitsInput = {}): Runti
     } else {
       // No project value — fall through to user.
     }
-    const user_raw = input.user?.limits[spec.tellrc_key];
+    const user_raw = input.user?.limits?.[spec.tellrc_key];
     if (user_raw !== undefined) {
       const parsed = to_limit_int(user_raw);
       if (parsed === undefined) {
@@ -557,18 +559,95 @@ function strip_trailing_partial_tag(text: string): string {
 }
 
 /**
+ * Counts the UTF-8 bytes of a text.
+ *
+ * Uses `TextEncoder` (a browser global) so the browser entry never depends
+ * on the Node-only `Buffer`.
+ *
+ * @param text - Text to measure.
+ * @returns The byte length.
+ */
+function utf8_byte_length(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
+
+/**
+ * Cuts a text to a UTF-8 byte budget without splitting a character.
+ *
+ * @param text - Text to cut.
+ * @param max_bytes - Byte budget.
+ * @returns The cut text (never above the budget, never a broken character).
+ */
+function slice_utf8_bytes(text: string, max_bytes: number): string {
+  if (max_bytes <= 0) {
+    return '';
+  }
+  const bytes = new TextEncoder().encode(text);
+  if (bytes.length <= max_bytes) {
+    return text;
+  }
+  let end = max_bytes;
+  while (end > 0 && ((bytes[end - 1] ?? 0) & 0xc0) === 0x80) {
+    end -= 1;
+  }
+  if (end > 0 && ((bytes[end - 1] ?? 0) & 0xc0) === 0xc0) {
+    end -= 1;
+  }
+  return new TextDecoder().decode(bytes.subarray(0, end));
+}
+
+/**
+ * Computes the closing tags a tail needs to stay balanced.
+ *
+ * @param text - Tail to inspect.
+ * @returns The closers to append (empty when the tail is already balanced).
+ */
+function balancing_suffix(text: string): string {
+  const think = count_tag_pair(text, '<think>', '</think>');
+  const run = count_tag_pair(text, '<run>', '</run>');
+  let suffix = '';
+  for (let index = 0; index < think.open - think.close; index += 1) suffix += '\n</think>';
+  for (let index = 0; index < run.open - run.close; index += 1) suffix += '\n</RUN>';
+  return suffix;
+}
+
+/**
+ * Removes the closing tags that lost their opener in a cut tail.
+ *
+ * @param text - Tail to clean.
+ * @returns The tail without orphan closers.
+ */
+function drop_orphan_closers(text: string): string {
+  let tail = text;
+  let think = count_tag_pair(tail, '<think>', '</think>');
+  let run = count_tag_pair(tail, '<run>', '</run>');
+  for (let index = 0; index < think.close - think.open; index += 1) {
+    tail = tail.replace(/<\/think>/i, '');
+  }
+  for (let index = 0; index < run.close - run.open; index += 1) {
+    tail = tail.replace(/<\/RUN>/i, '');
+  }
+  think = count_tag_pair(tail, '<think>', '</think>');
+  run = count_tag_pair(tail, '<run>', '</run>');
+  return tail;
+}
+
+/**
  * Safely truncates one oversized turn to its tail without splitting tags.
  *
  * Takes the tail, drops the leading partial line, removes a trailing
- * partial tag, and closes any unbalanced opener so no `<`/`>` fragment or
- * unclosed block escapes.
+ * partial tag, drops the orphan closers and closes any unbalanced opener, so
+ * no `<`/`>` fragment or unclosed block escapes. The returned text (closers
+ * included) never exceeds `max_chars`.
  *
  * @param turn - Single oversized turn.
  * @param max_chars - Budget for the returned text.
  * @returns The safe tail (possibly with appended closers).
  */
 function truncate_single_turn(turn: string, max_chars: number): string {
-  if (turn.length <= max_chars) {
+  if (max_chars <= 0) {
+    return '';
+  } else if (turn.length <= max_chars) {
     return turn;
   } else {
     let tail = turn.slice(-max_chars);
@@ -579,22 +658,16 @@ function truncate_single_turn(turn: string, max_chars: number): string {
       // No newline — the whole tail is one long line.
     }
     tail = strip_trailing_partial_tag(tail);
-    // A tail cut can orphan a closer whose opener was cut away; drop leading
-    // orphan closers so the remainder stays balanced instead of half-tagged.
-    let think = count_tag_pair(tail, '<think>', '</think>');
-    let run = count_tag_pair(tail, '<run>', '</run>');
-    for (let index = 0; index < think.close - think.open; index += 1) {
-      tail = tail.replace(/<\/think>/i, '');
+    tail = drop_orphan_closers(tail);
+    for (let guard = 0; guard < 64; guard += 1) {
+      const suffix = balancing_suffix(tail);
+      const excess = tail.length + suffix.length - max_chars;
+      if (excess <= 0) {
+        return `${tail}${suffix}`;
+      }
+      tail = drop_orphan_closers(tail.slice(Math.min(excess, tail.length)));
     }
-    for (let index = 0; index < run.close - run.open; index += 1) {
-      tail = tail.replace(/<\/RUN>/i, '');
-    }
-    think = count_tag_pair(tail, '<think>', '</think>');
-    run = count_tag_pair(tail, '<run>', '</run>');
-    let suffix = '';
-    for (let index = 0; index < think.open - think.close; index += 1) suffix += '\n</think>';
-    for (let index = 0; index < run.open - run.close; index += 1) suffix += '\n</RUN>';
-    return `${tail}${suffix}`;
+    return tail.slice(-max_chars);
   }
 }
 
@@ -604,41 +677,53 @@ function truncate_single_turn(turn: string, max_chars: number): string {
  * Keeps the newest turns that fit, drops whole old turns with an explicit
  * marker, and never splits a turn, a `<think>` block, a `<RUN>` block or a
  * message. A single turn larger than the budget is tail-cut at a safe
- * boundary (never leaving a dangling `<` fragment or unclosed tag).
+ * boundary (never leaving a dangling `<` fragment or unclosed tag). The
+ * result never exceeds `max_chars` characters — the marker and the closing
+ * tags are part of the budget.
  *
  * @param text - Full conversation text.
  * @param max_chars - Character budget (defaults to 64 Ki).
  * @returns The truncated context with a marker when anything was dropped.
  */
 export function truncate_context(text: string, max_chars: number = DEFAULT_CONTEXT_MAX_CHARS): string {
-  if (text.length <= max_chars) {
+  if (max_chars <= 0) {
+    return '';
+  } else if (text.length <= max_chars) {
     return text;
-  } else if (max_chars < 1024) {
-    return `${CONTEXT_TRUNCATE_MARKER}\n${truncate_single_turn(text, max_chars)}`;
   } else {
-    // Standard path keeps whole turns below.
+    // Truncated below.
+  }
+  const marker = `${CONTEXT_TRUNCATE_MARKER}\n`;
+  if (max_chars <= marker.length) {
+    // Not even the marker fits — keep its prefix and nothing else.
+    return marker.slice(0, max_chars);
+  }
+  const budget = max_chars - marker.length;
+  if (max_chars < 1024) {
+    return `${marker}${truncate_single_turn(text, budget)}`;
   }
   const turns = split_context_turns(text);
   if (turns.length === 0) {
-    return text;
+    return `${marker}${truncate_single_turn(text, budget)}`;
   } else if (turns.length === 1 && turns[0] !== undefined) {
-    return `${CONTEXT_TRUNCATE_MARKER}\n${truncate_single_turn(turns[0] as string, max_chars)}`;
+    return `${marker}${truncate_single_turn(turns[0] as string, budget)}`;
   } else {
     // Multiple turns — select newest-first below.
   }
-  const marker = `${CONTEXT_TRUNCATE_MARKER}\n`;
-  const budget = max_chars - marker.length;
   const kept: string[] = [];
   let used = 0;
   for (let index = turns.length - 1; index >= 0; index -= 1) {
     const turn = turns[index] as string;
     if (!has_balanced_tags(turn)) {
       // Unbalanced turn is dropped — never emitted half-tagged.
-    } else if (used + turn.length + (kept.length > 0 ? 1 : 0) <= budget) {
-      kept.unshift(turn);
-      used += turn.length + (kept.length > 1 ? 1 : 0);
     } else {
-      // Turn does not fit — older turns are dropped too.
+      const separator = kept.length > 0 ? 1 : 0;
+      if (used + separator + turn.length <= budget) {
+        kept.unshift(turn);
+        used += separator + turn.length;
+      } else {
+        // Turn does not fit — older turns are dropped too.
+      }
     }
   }
   if (kept.length === 0) {
@@ -654,27 +739,27 @@ export function truncate_context(text: string, max_chars: number = DEFAULT_CONTE
 /**
  * Truncates delivered output to a byte budget with an explicit marker.
  *
- * Byte-aware (UTF-8) so multi-byte characters are never split; the marker
- * always notes the cap. Fits the marker inside the budget when possible.
+ * Byte-aware (UTF-8) so multi-byte characters are never split and the cap is
+ * never exceeded; the marker always notes the cap (and is itself cut when the
+ * budget is too small for it).
  *
  * @param output - Raw command/model output.
  * @param max_bytes - Byte budget (defaults to 200 Ki).
  * @returns The output with a truncation marker when cut.
  */
 export function truncate_output(output: string, max_bytes: number = DEFAULT_OUTPUT_MAX_BYTES): string {
-  if (Buffer.byteLength(output, 'utf8') <= max_bytes) {
+  if (max_bytes <= 0) {
+    return '';
+  } else if (utf8_byte_length(output) <= max_bytes) {
     return output;
   } else {
     const marker = `\n${OUTPUT_TRUNCATE_MARKER_PREFIX} ${max_bytes} bytes]`;
-    const budget = max_bytes - Buffer.byteLength(marker, 'utf8');
-    if (budget <= 0) {
-      return marker.slice(-max_bytes);
+    const marker_bytes = utf8_byte_length(marker);
+    if (marker_bytes >= max_bytes) {
+      return slice_utf8_bytes(marker, max_bytes);
     } else {
-      let cut = output;
-      while (cut.length > 0 && Buffer.byteLength(cut, 'utf8') > budget) {
-        cut = cut.slice(0, Math.max(0, Math.floor((cut.length * budget) / Buffer.byteLength(cut, 'utf8'))));
-      }
-      return `${cut}${marker}`;
+      const budget = max_bytes - marker_bytes;
+      return `${slice_utf8_bytes(output, budget)}${marker}`;
     }
   }
 }

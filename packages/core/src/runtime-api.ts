@@ -2,6 +2,7 @@ import { extract_runs, get_system_prompt, strip_run_tags, strip_think_tags } fro
 
 import {
   format_cancelled_command,
+  format_command_skipped,
   format_command_status,
   format_executed_command,
   format_failed_command,
@@ -468,6 +469,15 @@ export function createTellRuntime(options: TellRuntimeOptions): TellRuntime {
       // One script requested — resolve it through the ports below.
     }
     const script = first_script.trim();
+    // A model that asks for several commands in one answer gets them one at a
+    // time: the extra ones are recorded as skipped (never silently dropped).
+    const extra_scripts = scripts
+      .slice(1)
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+    for (const extra of extra_scripts) {
+      timeline.push(format_command_skipped(extra));
+    }
 
     let risk: RiskAssessment | undefined;
     if (options.risk !== undefined) {
@@ -565,14 +575,28 @@ export function createTellRuntime(options: TellRuntimeOptions): TellRuntime {
       } else {
         // No error observer — the failure is still recorded below.
       }
-      timeline.push(format_failed_command(redact(script), redacted_error, null));
-      await save_turn(message, text);
-      return {
-        status: 'failed',
-        text,
-        timeline,
-        commands: [{ script: redact(script), status: 'failed', output: redacted_error }],
-      };
+      if (message_text === 'cancelled' || token.cancelled) {
+        // A cancelled run is not a failed command: the timeline keeps the
+        // cancellation wording and the result carries the `cancelled` status.
+        timeline.push(format_cancelled_command(redact(script)));
+        await save_turn(message, text);
+        return {
+          status: 'cancelled',
+          text,
+          timeline,
+          commands: [{ script: redact(script), status: 'cancelled' }],
+        };
+      } else {
+        // A real executor failure — recorded as a failed command.
+        timeline.push(format_failed_command(redact(script), redacted_error, null));
+        await save_turn(message, text);
+        return {
+          status: 'failed',
+          text,
+          timeline,
+          commands: [{ script: redact(script), status: 'failed', output: redacted_error }],
+        };
+      }
     }
 
     // Single redaction boundary: raw stdout/stderr exist only above. From

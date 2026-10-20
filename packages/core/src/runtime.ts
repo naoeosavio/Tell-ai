@@ -49,6 +49,8 @@ export type CoreRuntimeInput = {
   callbacks?: RuntimeCallbacks;
   /** Primitive-loop round cap (defaults to `LOOP_MAX_ROUNDS`). */
   max_rounds?: number;
+  /** Internal per-command output cap in bytes (defaults to `CORE_MAX_OUTPUT_BYTES`). */
+  max_output_bytes?: number;
 };
 
 /** Executable core runtime handle (loop owned by core, contract by the SDK). */
@@ -86,7 +88,7 @@ export function create_core_runtime(input: CoreRuntimeInput): CoreRuntime {
     ...(input.redact !== undefined ? { redact: input.redact } : {}),
     ...(input.callbacks !== undefined ? { callbacks: input.callbacks } : {}),
     timeout_ms: input.config.exec_timeout_ms,
-    max_output_bytes: CORE_MAX_OUTPUT_BYTES,
+    max_output_bytes: input.max_output_bytes ?? CORE_MAX_OUTPUT_BYTES,
   };
   const loop_options: CoreLoopOptions = {
     runtime_options: base_options,
