@@ -200,6 +200,15 @@
   .res-out .l1 .al{font-weight:700} .res-out .l1 .ph{color:var(--mut)}
   .res-out .l2{color:var(--green)}
   .res-out .l2 b{color:var(--amber2);font-weight:500}
+  .res-out .l2 .row{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .res-out .l3{color:var(--mut);font-size:12.5px;line-height:1.8}
+  .res-out .l3 b{color:var(--fg2);font-weight:500}
+  .res-out .l3 code{color:var(--fg2)}
+  .res-inp{flex:1;min-width:240px;max-width:460px;background:var(--bg);border:1px solid var(--line2);
+           color:var(--fg);font:13px/1.5 var(--mono);padding:7px 12px;outline:none;transition:.12s}
+  .res-inp:focus{border-color:var(--amber)}
+  .res-inp::placeholder{color:var(--mut)}
+  .res-row[hidden]{display:none}
   .res-out .row{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
   .res-foot{font-size:12px;color:var(--mut);padding:0 20px 18px;line-height:1.8}
   .res-foot code{color:var(--fg2)}
@@ -476,6 +485,7 @@
       <div class="feat rv"><span class="i">09</span><span class="f">q / v</span><p class="d" data-i18n="f9">Modelos self-hosted com a mesma ergonomia: <code>q</code> para endpoints locais, <code>v</code> para Vast — e qualquer vendor sem handler cai no provider OpenAI-compatible genérico.</p></div>
       <div class="feat rv"><span class="i">10</span><span class="f">tell -w</span><p class="d" data-i18n="f10">O sandbox web v0 no navegador: terminal, explorador de arquivos e chat ancorados ao diretório. <code>--stream</code>, <code>--think</code>, <code>--chain</code>, <code>-y</code>, <code>--no-exec</code> e <code>--require-approval</code> são repassados. <a href="#sandbox">ver a seção ↘</a></p></div>
       <div class="feat rv"><span class="i">11</span><span class="f">@tell-ai/<br>core</span><p class="d" data-i18n="f11">O runtime compartilhado (MIT): contrato injetável, executor Node, risco base, caminhos fail-closed e os limites operacionais. A CLI e o sandbox web são adaptadores finos sobre ele. <a href="#core">ver a seção ↘</a></p></div>
+      <div class="feat rv"><span class="i">12</span><span class="f">.tellrc</span><p class="d" data-i18n="f12">Config em INI, sem JSON: <code>~/.tellrc</code> (usuário) e <code>&lt;cwd&gt;/.tellrc</code> (projeto). Precedência <b>flag › env › projeto › usuário</b>; o <code>deny</code> só acumula. Perfis, aliases, temperatura, <code>system-file</code> e limites.</p></div>
     </div>
   </section>
 
@@ -499,6 +509,10 @@
           <div class="res-row">
             <span class="res-lab">alias</span>
             <div class="chips" id="aliasChips"></div>
+          </div>
+          <div class="res-row" id="customRow" hidden>
+            <span class="res-lab">model id</span>
+            <input class="res-inp" id="customModel" type="text" spellcheck="false" autocomplete="off" placeholder="gpt-5.4-mini">
           </div>
           <div class="res-row">
             <span class="res-lab">thinking</span>
@@ -835,7 +849,7 @@
     's3.label':'<b>§ 03</b> — recursos','s3.h2':'Construído como ferramenta <em class="serif">unix.</em>',
     'f1':'O modelo propõe comandos entre tags e <b>você aprova um a um</b>. Timeout de 120s por comando; <code>sudo</code>, <code>rm -rf</code>, <code>mkfs</code>, <code>curl|sh</code> e escritas em <code>/etc</code> são bloqueados sempre.',
     'f2':'Pipes de verdade: <code>npm test 2&gt;&amp;1 | tell -i "why are these failing?"</code> — stdin vira contexto, não vira bagunça.',
-    'f3':'<b>142 aliases</b> para os modelos de OpenAI, Anthropic, Google, xAI, DeepSeek, Alibaba, Z.ai, Moonshot, Meta e Xiaomi + self-hosted — cada um com sua régua de thinking. O default é <code>g</code> (via <code>TELL_MODEL</code>). <a href="#modelos">resolvedor interativo ↘</a>',
+    'f3':'<b>142 aliases</b> para os modelos de OpenAI, Anthropic, Google, xAI, DeepSeek, Alibaba, Z.ai, Moonshot, Meta e Xiaomi + self-hosted — cada um com sua régua de thinking. O default é <code>g</code> (via <code>TELL_MODEL</code>); qualquer endpoint próprio entra como <code>custom:&lt;model&gt;</code>. <a href="#modelos">resolvedor interativo ↘</a>',
     'f4':'<code>--stream</code> imprime token a token; <code>--think</code> mostra o reasoning. Só mudam o que aparece: log, contexto e extração de <code>&lt;RUN&gt;</code> ficam idênticos.',
     'f5':'Multi-step: o modelo roda um comando, lê a saída e continua — até 8 rodadas até a resposta final.',
     'f6':'Contexto persistente por diretório+modelo em <code>~/.ai/tell_context</code>. Nomeie com <code>--ctx %projeto</code>, retome por <code>@0</code>, reset com <code>-n</code>; <code>--ctx</code> sem ref é prompt do contexto default.',
@@ -844,14 +858,17 @@
     'f9':'Modelos self-hosted com a mesma ergonomia: <code>q</code> para endpoints locais, <code>v</code> para Vast — e qualquer vendor sem handler cai no provider OpenAI-compatible genérico.',
     'f10':'O sandbox web v0 no navegador: terminal, explorador de arquivos e chat ancorados ao diretório. <code>--stream</code>, <code>--think</code>, <code>--chain</code>, <code>-y</code>, <code>--no-exec</code> e <code>--require-approval</code> são repassados. <a href="#sandbox">ver a seção ↘</a>',
     'f11':'O runtime compartilhado (MIT): contrato injetável, executor Node, risco base, caminhos fail-closed e os limites operacionais. A CLI e o sandbox web são adaptadores finos sobre ele. <a href="#core">ver a seção ↘</a>',
-    's4.label':'<b>§ 04</b> — modelos','s4.h2':'Dez vendors, <em class="serif">uma letra.</em>',
-    'res.hd':'resolvedor de aliases — clique e compose','res.count':'142 aliases · 29 grupos base acima',
+    'f12':'Config em INI, sem JSON: <code>~/.tellrc</code> (usuário) e <code>&lt;cwd&gt;/.tellrc</code> (projeto). Precedência <b>flag › env › projeto › usuário</b>; o <code>deny</code> só acumula. Perfis, aliases, temperatura, <code>system-file</code> e limites.',
+    's4.label':'<b>§ 04</b> — modelos','s4.h2':'Dez vendors, <em class="serif">uma letra.</em> E o seu endpoint, <code>custom</code>.',
+    'res.hd':'resolvedor de aliases — clique e compose','res.count':'142 aliases · 29 grupos base · + custom',
     'res.base':'base','res.na':'n/d','res.fast1':'. rápido','res.fast2':'sem reasoning','res.cp':' copiar spec',
-    'res.foot':'régua de thinking <b>varia por modelo</b>: <code>g</code>/<code>e</code>/<code>r</code> não têm <code>none</code> (começam em low) · <code>d</code>/<code>D</code> já são <code>high</code> no alias base · xAI e Alibaba topam em <code>xhigh</code> · <code>h</code>/<code>k</code>/<code>q</code>/<code>v</code> têm alias único · maiúscula (<code>G</code>, <code>S</code>, <code>O</code>…) = atalho para <code>high</code> · modo rápido: <code>.</code> antes do alias (<code>.g</code>) · specs completas: <code>vendor:model[:thinking]</code> · lista oficial: <code>tell -m --help</code>',
+    'res.mid':'<model-id>',
+    'res.wire':'wire: <b>{wire}</b> — o prefixo do model id decide; <code>CUSTOM_API</code> fixa quando o gateway roteia diferente.',
+    'res.foot':'régua de thinking <b>varia por modelo</b>: <code>g</code>/<code>e</code>/<code>r</code> não têm <code>none</code> (começam em low) · <code>d</code>/<code>D</code> já são <code>high</code> no alias base · xAI e Alibaba topam em <code>xhigh</code> · <code>h</code>/<code>k</code>/<code>q</code>/<code>v</code> têm alias único · maiúscula (<code>G</code>, <code>S</code>, <code>O</code>…) = atalho para <code>high</code> · modo rápido: <code>.</code> antes do alias (<code>.g</code>) · specs completas: <code>vendor:model[:thinking]</code> · endpoint próprio: <code>custom:&lt;model&gt;</code> (prefixo <code>gpt-</code>/<code>grok-</code>/<code>muse-</code> → responses, <code>claude-</code> → messages, resto → chat) · catálogo do endpoint: <code>tell --models</code> · lista oficial: <code>tell -m --help</code>',
     's5.label':'<b>§ 05</b> — demo','s5.h2':'Experimente <em class="serif">sem instalar.</em>',
     'demo.title':'visitante@tell-ai: ~ — demo interativa','demo.f0':'não conectado','demo.ff':'clique para digitar','demo.fb':'— CLI capturado —',
     'demo.try':'↳ tente:',
-    'try':['help','tell oi','run ls','models','sandbox','sdk','core','github'],
+    'try':['help','tell oi','run ls','models','sandbox','sdk','core','custom','tellrc','github'],
     'demo.note':'<b>Simulação local:</b> este terminal roda 100% na sua aba — nenhuma chave, nenhuma chamada de rede. As respostas são pré-gravadas, mas o streaming é de verdade: <b>↑</b> repete comandos, <b>Tab</b> autocompleta, <b>Ctrl+C</b> interrompe.',
     'demo.meta':'● tell[demo] · resposta local · ','demo.flow':'● tell[demo] · fluxo de execução',
     'bn.1':'tell-ai — digite `help`','bn.2':'demo interativa · respostas pré-gravadas · nenhuma chamada de rede','bn.3':'digite `help` para começar — ou clique numa sugestão abaixo.',
@@ -868,6 +885,10 @@
     'b.sdk':['O SDK é um pacote próprio: `npm add @tell-ai/sdk` (licença MIT).','API real: `tell(msg, { keys })` one-shot; `create_ask_ai(spec, { keys })`','+ `ai.ask()` e `ai.ask_stream()` (eventos NDJSON reasoning|text);','`get_model()` expõe o ModelHandle cru. Zero process.env.','Exemplos completos no §06 da página.'],
     'b.coreRe':/core|runtime|@tell-ai\/core|loop|exec/,
     'b.core':['O core é o runtime compartilhado (MIT): `npm add @tell-ai/core`.','Ele possui o contrato injetável, o executor Node, o risco base,','os caminhos fail-closed e os limites operacionais — a CLI e o','sandbox web são adaptadores finos sobre ele. Exemplos completos no §07.'],
+    'b.customRe':/custom|endpoint|meu endpoint|provedor|proxy|self-host|ollama|vllm|litellm/,
+    'b.custom':['O vendor `custom` é o seu endpoint: `CUSTOM_BASE_URL` + `CUSTOM_API_KEY`.','O spec é `custom:<model-id>` e o wire sai do prefixo do id:','gpt-/grok-/muse- → responses · claude- → messages · resto → chat','(CUSTOM_API fixa quando o gateway roteia diferente). `tell --models`','lista o catálogo do endpoint, agrupado por wire.'],
+    'b.tellrcRe':/tellrc|config|perfil|profile|\.tellrc|preferencias/,
+    'b.tellrc':['O único config persistido é INI — `~/.tellrc` (usuário) e `<cwd>/.tellrc` (projeto).','Precedência: flag > env > projeto > usuário.','Aceita model, temperature, profile, system-file, [aliases],','[profiles.<nome>] (com prompt/style/aliases próprios), [policy] deny','(que só acumula) e [limits]. Sem JSON, sem secrets.',],
     'b.mdRe':/models?|alias|modelo|provedor|vendor/,
     'b.md':['142 aliases: g → gpt-6.1-sol, o → claude-opus-5-5,','d → deepseek-flash (base já é high!), D → deepseek-v4-pro,','z → glm-5.3, a → qwen3.8-max, m → muse-spark, mi → mimo…','A régua de thinking varia por modelo: x++ e a++ = xhigh,','g-- = low (sem none), maiúscula G/S/O… = atalho para high.','Resolvedor interativo no §04 e `tell -m --help` no terminal.'],
     'b.aboutRe':/quem (é|e) voc|[oó] que (é|e) (o |a )?tell|sobre o projeto|o que faz/,
@@ -881,7 +902,7 @@
     'b.rm':'recusado — e no tell real, rm -rf perguntaria mesmo com -y.',
     'b.vim':'para sair do vim: :q! — para sair desta demo: exit. Um dos dois é mais fácil.',
     'b.exit':'até já — o terminal continua aqui quando você voltar.',
-    'help':'\n  help          esta lista\n  tell <texto>  conversa com o modelo (simulado aqui)\n  run ls        mostra o fluxo de execução <RUN> → [s/N]\n  models        tabela curta de aliases e sufixos\n  sandbox       o sandbox web v0 (tell -w) explicado\n  sdk           como usar o @tell-ai/sdk no seu código\n  core          o runtime compartilhado (@tell-ai/core)\n  install       instalação da CLI, do SDK e do core\n  features      recursos principais\n  github        abre o repositório no navegador\n  history / whoami / banner / date / clear / exit\n\n  DICA   ↑ repete o último · Tab autocompleta · Ctrl+C interrompe\n  Qualquer coisa que não for comando vira prompt para o modelo.\n',
+    'help':'\n  help          esta lista\n  tell <texto>  conversa com o modelo (simulado aqui)\n  run ls        mostra o fluxo de execução <RUN> → [s/N]\n  models        tabela curta de aliases e sufixos\n  sandbox       o sandbox web v0 (tell -w) explicado\n  sdk           como usar o @tell-ai/sdk no seu código\n  core          o runtime compartilhado (@tell-ai/core)\n  custom        o seu endpoint (custom:<model-id>)\n  tellrc        o config INI (~/.tellrc e ./.tellrc)\n  install       instalação da CLI, do SDK e do core\n  features      recursos principais\n  github        abre o repositório no navegador\n  history / whoami / banner / date / clear / exit\n\n  DICA   ↑ repete o último · Tab autocompleta · Ctrl+C interrompe\n  Qualquer coisa que não for comando vira prompt para o modelo.\n',
     's6.label':'<b>§ 06</b> — sdk','s6.h2':'A mesma <em class="serif">tell(),</em> fora do shell.',
     's6.alt':'ou <code>bun add @tell-ai/sdk</code> — pacote próprio da biblioteca, separado da CLI.',
     'sdk.c1':'// o "tell --no-exec" como função: chama o modelo e devolve','sdk.c2':'// o texto com tags <RUN> e reasoning já removidas',
@@ -889,7 +910,7 @@
     'sdk.c4':'// também exportados: MODELS (142 aliases), get_model() (o','sdk.c5':'// ModelHandle cru para o seu próprio generateText),','sdk.c6':'// get_system_prompt, extract_runs · strip_run_tags ·','sdk.c7':'// sanitize_reasoning · summarize_context',
     'sdk.wc':'// IIFE global — roda até em file://',
     'vt.h':'três builds, mesmo import','vt1':'ESM + CJS + tipos','vt2':'ESM bundleado','vt3':'IIFE → TellSDK',
-    's6.vend':'12 vendors via <code>keys</code>/<code>urls</code>: openai · anthropic · google · xai · deepseek · cerebras · moonshotai · openrouter · alibaba <code>(qwen)</code> · zai <code>(glm)</code> · meta <code>(llama)</code> · xiaomi <code>(mimo)</code> + <code>vast</code>/<code>local</code> self-hosted. Budget de reasoning resolvido por vendor (<code>max</code> vira o teto de cada um); provider caches por base URL <b>e</b> credencial.',
+    's6.vend':'13 vendors via <code>keys</code>/<code>urls</code>: openai · anthropic · google · xai · deepseek · cerebras · moonshotai · openrouter · alibaba <code>(qwen)</code> · zai <code>(glm)</code> · meta <code>(llama)</code> · xiaomi <code>(mimo)</code> · <code>custom</code> (o seu endpoint) + <code>vast</code>/<code>local</code> self-hosted. Budget de reasoning resolvido por vendor (<code>max</code> vira o teto de cada um); provider caches por base URL <b>e</b> credencial.',
     'k1.h3':'dois pacotes, <em>duas licenças</em>','k1.p':'A CLI (<code>tell-ai</code>) é GPL-3.0. O SDK (<code>@tell-ai/sdk</code>) é <b>MIT</b> — pode embutir em produto fechado sem dor de cabeça.',
     'k2.h3':'zero <code>process.env</code>','k2.p':'O SDK nunca lê o ambiente: chaves e base URLs são <b>injetadas</b> via <code>keys</code> e <code>urls</code>. É o que o torna browser-safe — e <code>urls</code> aceita proxy CORS, como no <code>examples/web/</code> do repo.',
     'k3.h3':'a fundação <em>do sandbox</em>','k3.p':'Os builds de browser já sobem numa <code>&lt;script&gt;</code> tag pura — é por cima deles que o sandbox v0 do <a href="#sandbox" style="color:var(--amber);border-bottom:1px dotted var(--amber)">§08</a> foi construído.',
@@ -936,7 +957,7 @@
     'foot.l':'© <span id="year"></span> naoeosavio — Tell-ai é open-source; esta página é só a vitrine.',
     'foot.r':'<a href="https://github.com/naoeosavio/Tell-ai" target="_blank" rel="noopener">repo</a> · <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener">issues</a> · cli: GPL-3.0 · sdk: MIT · core: MIT · sandbox: <span class="warn">v0 preliminar</span> · um único arquivo HTML',
     'sb.mode':'modo',
-    'mq':'RUN-CONFIRMADO <i>·</i> 142 ALIASES <i>·</i> 10+ VENDORS <i>·</i> PIPE-FIRST <i>·</i> SEM LOGIN <i>·</i> CLI: GPL-3.0 <i>·</i> SDK: MIT <i>·</i> CORE: MIT <i>·</i> SANDBOX V0: PRELIMINAR <i>·</i> ',
+    'mq':'RUN-CONFIRMADO <i>·</i> 142 ALIASES <i>·</i> 10+ VENDORS <i>·</i> PIPE-FIRST <i>·</i> SEM LOGIN <i>·</i> CLI: GPL-3.0 <i>·</i> SDK: MIT <i>·</i> CORE: MIT <i>·</i> CUSTOM ENDPOINT <i>·</i> .TELLRC <i>·</i> SANDBOX V0: PRELIMINAR <i>·</i> ',
     'hseq':[
       {t:'cmd', text:'git diff --staged | tell -i "msg de commit"'},
       {t:'meta', html:'<b>●</b> tell · g → openai:gpt-6.1-sol:medium · 1.2s'},
@@ -984,7 +1005,7 @@
     's3.label':'<b>§ 03</b> — features','s3.h2':'Built like a <em class="serif">unix tool.</em>',
     'f1':'The model proposes commands between tags and <b>you approve them one by one</b>. 120s timeout per command; <code>sudo</code>, <code>rm -rf</code>, <code>mkfs</code>, <code>curl|sh</code> and writes to <code>/etc</code> are always blocked.',
     'f2':'Real pipes: <code>npm test 2&gt;&amp;1 | tell -i "why are these failing?"</code> — stdin becomes context, not mess.',
-    'f3':'<b>142 aliases</b> for models from OpenAI, Anthropic, Google, xAI, DeepSeek, Alibaba, Z.ai, Moonshot, Meta and Xiaomi + self-hosted — each with its own thinking ladder. Default is <code>g</code> (via <code>TELL_MODEL</code>). <a href="#modelos">interactive resolver ↘</a>',
+    'f3':'<b>142 aliases</b> for models from OpenAI, Anthropic, Google, xAI, DeepSeek, Alibaba, Z.ai, Moonshot, Meta and Xiaomi + self-hosted — each with its own thinking ladder. Default is <code>g</code> (via <code>TELL_MODEL</code>); any endpoint of your own joins as <code>custom:&lt;model&gt;</code>. <a href="#modelos">interactive resolver ↘</a>',
     'f4':'<code>--stream</code> prints token by token; <code>--think</code> shows the reasoning. They only change what is printed: log, context and <code>&lt;RUN&gt;</code> extraction stay identical.',
     'f5':'Multi-step: the model runs a command, reads the output and keeps going — up to 8 rounds to a final answer.',
     'f6':'Persistent context per directory+model in <code>~/.ai/tell_context</code>. Name it with <code>--ctx %project</code>, resume by <code>@0</code>, reset with <code>-n</code>; bare <code>--ctx</code> is a prompt for the default context.',
@@ -993,14 +1014,17 @@
     'f9':'Self-hosted models with the same ergonomics: <code>q</code> for local endpoints, <code>v</code> for Vast — and any vendor without a handler falls back to the generic OpenAI-compatible provider.',
     'f10':'The web sandbox v0 in the browser: terminal, file explorer and chat anchored to a directory. <code>--stream</code>, <code>--think</code>, <code>--chain</code>, <code>-y</code>, <code>--no-exec</code> and <code>--require-approval</code> are forwarded. <a href="#sandbox">see the section ↘</a>',
     'f11':'The shared runtime (MIT): injectable contract, node executor, base risk, fail-closed paths and the operational limits. The CLI and the web sandbox are thin adapters over it. <a href="#core">see the section ↘</a>',
-    's4.label':'<b>§ 04</b> — models','s4.h2':'Ten vendors, <em class="serif">one letter.</em>',
-    'res.hd':'alias resolver — click and compose','res.count':'142 aliases · 29 base groups above',
+    'f12':'Config in INI, no JSON: <code>~/.tellrc</code> (user) and <code>&lt;cwd&gt;/.tellrc</code> (project). Precedence <b>flag › env › project › user</b>; <code>deny</code> only accumulates. Profiles, aliases, temperature, <code>system-file</code> and limits.',
+    's4.label':'<b>§ 04</b> — models','s4.h2':'Ten vendors, <em class="serif">one letter.</em> And your own endpoint, <code>custom</code>.',
+    'res.hd':'alias resolver — click and compose','res.count':'142 aliases · 29 base groups · + custom',
     'res.base':'base','res.na':'n/a','res.fast1':'. fast','res.fast2':'no reasoning','res.cp':' copy spec',
-    'res.foot':'the thinking ladder <b>varies per model</b>: <code>g</code>/<code>e</code>/<code>r</code> have no <code>none</code> (start at low) · <code>d</code>/<code>D</code> are <code>high</code> at the base alias · xAI and Alibaba top out at <code>xhigh</code> · <code>h</code>/<code>k</code>/<code>q</code>/<code>v</code> have a single alias · uppercase (<code>G</code>, <code>S</code>, <code>O</code>…) = shortcut to <code>high</code> · fast mode: <code>.</code> before the alias (<code>.g</code>) · full specs: <code>vendor:model[:thinking]</code> · official list: <code>tell -m --help</code>',
+    'res.mid':'<model-id>',
+    'res.wire':'wire: <b>{wire}</b> — the model id prefix decides; <code>CUSTOM_API</code> pins it when the gateway routes differently.',
+    'res.foot':'the thinking ladder <b>varies per model</b>: <code>g</code>/<code>e</code>/<code>r</code> have no <code>none</code> (start at low) · <code>d</code>/<code>D</code> are <code>high</code> at the base alias · xAI and Alibaba top out at <code>xhigh</code> · <code>h</code>/<code>k</code>/<code>q</code>/<code>v</code> have a single alias · uppercase (<code>G</code>, <code>S</code>, <code>O</code>…) = shortcut to <code>high</code> · fast mode: <code>.</code> before the alias (<code>.g</code>) · full specs: <code>vendor:model[:thinking]</code> · your own endpoint: <code>custom:&lt;model&gt;</code> (prefix <code>gpt-</code>/<code>grok-</code>/<code>muse-</code> → responses, <code>claude-</code> → messages, rest → chat) · endpoint catalog: <code>tell --models</code> · official list: <code>tell -m --help</code>',
     's5.label':'<b>§ 05</b> — demo','s5.h2':'Try it <em class="serif">without installing.</em>',
     'demo.title':'guest@tell-ai: ~ — interactive demo','demo.f0':'not connected','demo.ff':'click to type','demo.fb':'— CLI captured —',
     'demo.try':'↳ try:',
-    'try':['help','tell hi','run ls','models','sandbox','sdk','core','github'],
+    'try':['help','tell hi','run ls','models','sandbox','sdk','core','custom','tellrc','github'],
     'demo.note':'<b>Local simulation:</b> this terminal runs 100% in your tab — no keys, no network calls. Responses are pre-recorded, but the streaming is real: <b>↑</b> repeats, <b>Tab</b> completes, <b>Ctrl+C</b> interrupts.',
     'demo.meta':'● tell[demo] · local answer · ','demo.flow':'● tell[demo] · execution flow',
     'bn.1':'tell-ai — type `help`','bn.2':'interactive demo · pre-recorded answers · no network calls','bn.3':'type `help` to start — or click a suggestion below.',
@@ -1017,6 +1041,10 @@
     'b.sdk':['The SDK ships as its own package: `npm add @tell-ai/sdk` (MIT license).','Real API: `tell(msg, { keys })` one-shot; `create_ask_ai(spec, { keys })`','+ `ai.ask()` and `ai.ask_stream()` (NDJSON reasoning|text events);','`get_model()` exposes the raw ModelHandle. Zero process.env.','Full examples in §06 of the page.'],
     'b.coreRe':/\bcore\b|runtime|@tell-ai\/core|loop|exec/,
     'b.core':['The core is the shared runtime (MIT): `npm add @tell-ai/core`.','It owns the injectable contract, the node executor, base risk,','the fail-closed paths and every operational limit — the CLI and','the web sandbox are thin adapters over it. Full examples in §07.'],
+    'b.customRe':/custom|endpoint|my endpoint|provider|proxy|self-host|ollama|vllm|litellm/,
+    'b.custom':['The `custom` vendor is your endpoint: `CUSTOM_BASE_URL` + `CUSTOM_API_KEY`.','The spec is `custom:<model-id>` and the wire comes from the id prefix:','gpt-/grok-/muse- → responses · claude- → messages · rest → chat','(CUSTOM_API pins it when the gateway routes otherwise). `tell --models`','lists the endpoint catalog, grouped by wire.'],
+    'b.tellrcRe':/tellrc|config|profile|preferences|\.tellrc/,
+    'b.tellrc':['The only persisted config is INI — `~/.tellrc` (user) and `<cwd>/.tellrc` (project).','Precedence: flag > env > project > user.','It takes model, temperature, profile, system-file, [aliases],','[profiles.<name>] (with their own prompt/style/aliases), [policy] deny','(which only accumulates) and [limits]. No JSON, no secrets.'],
     'b.mdRe':/models?|alias|provider|vendor/,
     'b.md':['142 aliases: g → gpt-6.1-sol, o → claude-opus-5-5,','d → deepseek-flash (base already high!), D → deepseek-v4-pro,','z → glm-5.3, a → qwen3.8-max, m → muse-spark, mi → mimo…','The thinking ladder varies per model: x++ and a++ = xhigh,','g-- = low (no none), uppercase G/S/O… = shortcut to high.','Interactive resolver in §04 and `tell -m --help` in your terminal.'],
     'b.aboutRe':/who are you|what is tell|about (the )?project|what does it do/,
@@ -1030,7 +1058,7 @@
     'b.rm':'refused. not even in a simulation.',
     'b.vim':'to leave vim: :q! — to leave this demo: exit. One of the two is easier.',
     'b.exit':'see you — the terminal stays here for when you get back.',
-    'help':'\n  help          this list\n  tell <text>   talk to the model (simulated here)\n  run ls        shows the <RUN> → [y/N] execution flow\n  models        short table of aliases and suffixes\n  sandbox       the web sandbox v0 (tell -w) explained\n  sdk           how to use @tell-ai/sdk in your code\n  core          the shared runtime (@tell-ai/core)\n  install       CLI, SDK and core installation\n  features      main features\n  github        opens the repository in the browser\n  history / whoami / banner / date / clear / exit\n\n  TIP   ↑ repeats the last · Tab completes · Ctrl+C interrupts\n  Anything that is not a command becomes a prompt for the model.\n',
+    'help':'\n  help          this list\n  tell <text>   talk to the model (simulated here)\n  run ls        shows the <RUN> → [y/N] execution flow\n  models        short table of aliases and suffixes\n  sandbox       the web sandbox v0 (tell -w) explained\n  sdk           how to use @tell-ai/sdk in your code\n  core          the shared runtime (@tell-ai/core)\n  custom        your own endpoint (custom:<model-id>)\n  tellrc        the INI config (~/.tellrc and ./.tellrc)\n  install       CLI, SDK and core installation\n  features      main features\n  github        opens the repository in the browser\n  history / whoami / banner / date / clear / exit\n\n  TIP   ↑ repeats the last · Tab completes · Ctrl+C interrupts\n  Anything that is not a command becomes a prompt for the model.\n',
     's6.label':'<b>§ 06</b> — sdk','s6.h2':'The same <em class="serif">tell(),</em> outside the shell.',
     's6.alt':'or <code>bun add @tell-ai/sdk</code> — the library ships as its own package, separate from the CLI.',
     'sdk.c1':'// the "tell --no-exec" as a function: calls the model and returns','sdk.c2':'// the text with <RUN> and reasoning tags already stripped',
@@ -1038,7 +1066,7 @@
     'sdk.c4':'// also exported: MODELS (142 aliases), get_model() (the','sdk.c5':'// raw ModelHandle for your own generateText),','sdk.c6':'// get_system_prompt, extract_runs · strip_run_tags ·','sdk.c7':'// sanitize_reasoning · summarize_context',
     'sdk.wc':'// IIFE global — runs even from file://',
     'vt.h':'three builds, one import','vt1':'ESM + CJS + types','vt2':'bundled ESM','vt3':'IIFE → TellSDK',
-    's6.vend':'12 vendors via <code>keys</code>/<code>urls</code>: openai · anthropic · google · xai · deepseek · cerebras · moonshotai · openrouter · alibaba <code>(qwen)</code> · zai <code>(glm)</code> · meta <code>(llama)</code> · xiaomi <code>(mimo)</code> + <code>vast</code>/<code>local</code> self-hosted. Reasoning budget resolved per vendor (<code>max</code> maps to each one\'s ceiling); provider caches keyed by base URL <b>and</b> credential.',
+    's6.vend':'13 vendors via <code>keys</code>/<code>urls</code>: openai · anthropic · google · xai · deepseek · cerebras · moonshotai · openrouter · alibaba <code>(qwen)</code> · zai <code>(glm)</code> · meta <code>(llama)</code> · xiaomi <code>(mimo)</code> · <code>custom</code> (your own endpoint) + <code>vast</code>/<code>local</code> self-hosted. Reasoning budget resolved per vendor (<code>max</code> maps to each one\'s ceiling); provider caches keyed by base URL <b>and</b> credential.',
     'k1.h3':'two packages, <em>two licenses</em>','k1.p':'The CLI (<code>tell-ai</code>) is GPL-3.0. The SDK (<code>@tell-ai/sdk</code>) is <b>MIT</b> — embed it in a closed product without headaches.',
     'k2.h3':'zero <code>process.env</code>','k2.p':'The SDK never reads the environment: keys and base URLs are <b>injected</b> via <code>keys</code> and <code>urls</code>. That is what makes it browser-safe — and <code>urls</code> accepts a CORS proxy, as in the repo\'s <code>examples/web/</code>.',
     'k3.h3':'the sandbox\'s <em>foundation</em>','k3.p':'The browser builds already boot from a bare <code>&lt;script&gt;</code> tag — that is what the sandbox v0 in <a href="#sandbox" style="color:var(--amber);border-bottom:1px dotted var(--amber)">§08</a> was built on.',
@@ -1085,7 +1113,7 @@
     'foot.l':'© <span id="year"></span> naoeosavio — Tell-ai is open-source; this page is just the storefront.',
     'foot.r':'<a href="https://github.com/naoeosavio/Tell-ai" target="_blank" rel="noopener">repo</a> · <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener">issues</a> · cli: GPL-3.0 · sdk: MIT · core: MIT · sandbox: <span class="warn">v0 preview</span> · a single HTML file',
     'sb.mode':'mode',
-    'mq':'CONFIRMED-RUN <i>·</i> 142 ALIASES <i>·</i> 10+ VENDORS <i>·</i> PIPE-FIRST <i>·</i> NO LOGIN <i>·</i> CLI: GPL-3.0 <i>·</i> SDK: MIT <i>·</i> CORE: MIT <i>·</i> SANDBOX V0: PREVIEW <i>·</i> ',
+    'mq':'CONFIRMED-RUN <i>·</i> 142 ALIASES <i>·</i> 10+ VENDORS <i>·</i> PIPE-FIRST <i>·</i> NO LOGIN <i>·</i> CLI: GPL-3.0 <i>·</i> SDK: MIT <i>·</i> CORE: MIT <i>·</i> CUSTOM ENDPOINT <i>·</i> .TELLRC <i>·</i> SANDBOX V0: PREVIEW <i>·</i> ',
     'hseq':[
       {t:'cmd', text:'git diff --staged | tell -i "commit message"'},
       {t:'meta', html:'<b>●</b> tell · g → openai:gpt-6.1-sol:medium · 1.2s'},
@@ -1133,7 +1161,7 @@
     's3.label':'<b>§ 03</b> — recursos','s3.h2':'Construido como herramienta <em class="serif">unix.</em>',
     'f1':'El modelo propone comandos entre tags y <b>tú apruebas uno a uno</b>. Timeout de 120s por comando; <code>sudo</code>, <code>rm -rf</code>, <code>mkfs</code>, <code>curl|sh</code> y escrituras en <code>/etc</code> se bloquean siempre.',
     'f2':'Pipes de verdad: <code>npm test 2&gt;&amp;1 | tell -i "why are these failing?"</code> — el stdin se vuelve contexto, no lío.',
-    'f3':'<b>142 alias</b> para modelos de OpenAI, Anthropic, Google, xAI, DeepSeek, Alibaba, Z.ai, Moonshot, Meta y Xiaomi + self-hosted — cada uno con su regla de thinking. El default es <code>g</code> (vía <code>TELL_MODEL</code>). <a href="#modelos">resolvedor interactivo ↘</a>',
+    'f3':'<b>142 alias</b> para modelos de OpenAI, Anthropic, Google, xAI, DeepSeek, Alibaba, Z.ai, Moonshot, Meta y Xiaomi + self-hosted — cada uno con su regla de thinking. El default es <code>g</code> (vía <code>TELL_MODEL</code>); cualquier endpoint propio entra como <code>custom:&lt;model&gt;</code>. <a href="#modelos">resolvedor interactivo ↘</a>',
     'f4':'<code>--stream</code> imprime token a token; <code>--think</code> muestra el reasoning. Solo cambian lo que se imprime: log, contexto y extracción de <code>&lt;RUN&gt;</code> quedan idénticos.',
     'f5':'Multi-paso: el modelo ejecuta un comando, lee la salida y sigue — hasta 8 rondas hasta la respuesta final.',
     'f6':'Contexto persistente por directorio+modelo en <code>~/.ai/tell_context</code>. Nómbralo con <code>--ctx %proyecto</code>, retómalo por <code>@0</code>, resetea con <code>-n</code>; <code>--ctx</code> sin ref es prompt del contexto default.',
@@ -1142,14 +1170,17 @@
     'f9':'Modelos self-hosted con la misma ergonomía: <code>q</code> para endpoints locales, <code>v</code> para Vast — y cualquier vendor sin handler cae en el provider genérico OpenAI-compatible.',
     'f10':'El sandbox web v0 en el navegador: terminal, explorador de archivos y chat anclados al directorio. <code>--stream</code>, <code>--think</code>, <code>--chain</code>, <code>-y</code>, <code>--no-exec</code> y <code>--require-approval</code> se repasan. <a href="#sandbox">ver la sección ↘</a>',
     'f11':'El runtime compartido (MIT): contrato inyectable, executor Node, riesgo base, rutas fail-closed y los límites operativos. La CLI y el sandbox web son adaptadores finos sobre él. <a href="#core">ver la sección ↘</a>',
-    's4.label':'<b>§ 04</b> — modelos','s4.h2':'Diez vendors, <em class="serif">una letra.</em>',
-    'res.hd':'resolvedor de alias — clic y compone','res.count':'142 alias · 29 grupos base arriba',
+    'f12':'Config en INI, sin JSON: <code>~/.tellrc</code> (usuario) y <code>&lt;cwd&gt;/.tellrc</code> (proyecto). Precedencia <b>flag › env › proyecto › usuario</b>; el <code>deny</code> solo acumula. Perfiles, alias, temperatura, <code>system-file</code> y límites.',
+    's4.label':'<b>§ 04</b> — modelos','s4.h2':'Diez vendors, <em class="serif">una letra.</em> Y tu propio endpoint, <code>custom</code>.',
+    'res.hd':'resolvedor de alias — clic y compone','res.count':'142 alias · 29 grupos base · + custom',
     'res.base':'base','res.na':'n/d','res.fast1':'. rápido','res.fast2':'sin reasoning','res.cp':' copiar spec',
-    'res.foot':'la regla de thinking <b>varía por modelo</b>: <code>g</code>/<code>e</code>/<code>r</code> no tienen <code>none</code> (arrancan en low) · <code>d</code>/<code>D</code> ya son <code>high</code> en el alias base · xAI y Alibaba topan en <code>xhigh</code> · <code>h</code>/<code>k</code>/<code>q</code>/<code>v</code> tienen alias único · mayúscula (<code>G</code>, <code>S</code>, <code>O</code>…) = atajo a <code>high</code> · modo rápido: <code>.</code> antes del alias (<code>.g</code>) · specs completas: <code>vendor:model[:thinking]</code> · lista oficial: <code>tell -m --help</code>',
+    'res.mid':'<model-id>',
+    'res.wire':'wire: <b>{wire}</b> — el prefijo del model id decide; <code>CUSTOM_API</code> lo fija cuando el gateway enruta distinto.',
+    'res.foot':'la regla de thinking <b>varía por modelo</b>: <code>g</code>/<code>e</code>/<code>r</code> no tienen <code>none</code> (arrancan en low) · <code>d</code>/<code>D</code> ya son <code>high</code> en el alias base · xAI y Alibaba topan en <code>xhigh</code> · <code>h</code>/<code>k</code>/<code>q</code>/<code>v</code> tienen alias único · mayúscula (<code>G</code>, <code>S</code>, <code>O</code>…) = atajo a <code>high</code> · modo rápido: <code>.</code> antes del alias (<code>.g</code>) · specs completas: <code>vendor:model[:thinking]</code> · endpoint propio: <code>custom:&lt;model&gt;</code> (prefijo <code>gpt-</code>/<code>grok-</code>/<code>muse-</code> → responses, <code>claude-</code> → messages, resto → chat) · catálogo del endpoint: <code>tell --models</code> · lista oficial: <code>tell -m --help</code>',
     's5.label':'<b>§ 05</b> — demo','s5.h2':'Pruébalo <em class="serif">sin instalar.</em>',
     'demo.title':'invitado@tell-ai: ~ — demo interactiva','demo.f0':'no conectado','demo.ff':'clic para escribir','demo.fb':'— CLI capturada —',
     'demo.try':'↳ prueba:',
-    'try':['help','tell hola','run ls','models','sandbox','sdk','core','github'],
+    'try':['help','tell hola','run ls','models','sandbox','sdk','core','custom','tellrc','github'],
     'demo.note':'<b>Simulación local:</b> este terminal corre 100% en tu pestaña — ninguna clave, ninguna llamada de red. Las respuestas son pregrabadas, pero el streaming es real: <b>↑</b> repite, <b>Tab</b> autocompleta, <b>Ctrl+C</b> interrumpe.',
     'demo.meta':'● tell[demo] · respuesta local · ','demo.flow':'● tell[demo] · flujo de ejecución',
     'bn.1':'tell-ai — escribe `help`','bn.2':'demo interactiva · respuestas pregrabadas · ninguna llamada de red','bn.3':'escribe `help` para empezar — o haz clic en una sugerencia.',
@@ -1166,6 +1197,10 @@
     'b.sdk':['El SDK es un paquete propio: `npm add @tell-ai/sdk` (licencia MIT).','API real: `tell(msg, { keys })` one-shot; `create_ask_ai(spec, { keys })`','+ `ai.ask()` y `ai.ask_stream()` (eventos NDJSON reasoning|text);','`get_model()` expone el ModelHandle crudo. Cero process.env.','Ejemplos completos en el §06 de la página.'],
     'b.coreRe':/\bcore\b|runtime|@tell-ai\/core|loop|exec/,
     'b.core':['El core es el runtime compartido (MIT): `npm add @tell-ai/core`.','Posee el contrato inyectable, el executor Node, el riesgo base,','las rutas fail-closed y todos los límites operativos — la CLI y','el sandbox web son adaptadores finos sobre él. Ejemplos completos en el §07.'],
+    'b.customRe':/custom|endpoint|mi endpoint|proveedor|proxy|self-host|ollama|vllm|litellm/,
+    'b.custom':['El vendor `custom` es tu endpoint: `CUSTOM_BASE_URL` + `CUSTOM_API_KEY`.','El spec es `custom:<model-id>` y el wire sale del prefijo del id:','gpt-/grok-/muse- → responses · claude- → messages · resto → chat','(CUSTOM_API lo fija cuando el gateway enruta distinto). `tell --models`','lista el catálogo del endpoint, agrupado por wire.'],
+    'b.tellrcRe':/tellrc|config|perfil|profile|preferencias|\.tellrc/,
+    'b.tellrc':['El único config persistido es INI — `~/.tellrc` (usuario) y `<cwd>/.tellrc` (proyecto).','Precedencia: flag > env > proyecto > usuario.','Acepta model, temperature, profile, system-file, [aliases],','[profiles.<nombre>] (con prompt/style/alias propios), [policy] deny','(que solo acumula) y [limits]. Sin JSON, sin secrets.'],
     'b.mdRe':/models?|alias|modelo|proveedor|vendor/,
     'b.md':['142 alias: g → gpt-6.1-sol, o → claude-opus-5-5,','d → deepseek-flash (¡la base ya es high!), D → deepseek-v4-pro,','z → glm-5.3, a → qwen3.8-max, m → muse-spark, mi → mimo…','La regla de thinking varía por modelo: x++ y a++ = xhigh,','g-- = low (sin none), mayúscula G/S/O… = atajo a high.','Resolvedor interactivo en §04 y `tell -m --help` en tu terminal.'],
     'b.aboutRe':/qui[eé]n (es|sos)|qu[eé] es (el )?tell|sobre el proyecto|qu[eé] hace/,
@@ -1179,7 +1214,7 @@
     'b.rm':'rechazado. ni en simulación.',
     'b.vim':'para salir de vim: :q! — para salir de esta demo: exit. Uno de los dos es más fácil.',
     'b.exit':'hasta ya — el terminal sigue aquí cuando vuelvas.',
-    'help':'\n  help          esta lista\n  tell <texto>  habla con el modelo (simulado aquí)\n  run ls        muestra el flujo de ejecución <RUN> → [s/N]\n  models        tabla corta de alias y sufijos\n  sandbox       el sandbox web v0 (tell -w) explicado\n  sdk           cómo usar @tell-ai/sdk en tu código\n  core          el runtime compartido (@tell-ai/core)\n  install       instalación de CLI, SDK y core\n  features      recursos principales\n  github        abre el repositorio en el navegador\n  history / whoami / banner / date / clear / exit\n\n  TIP   ↑ repite el último · Tab autocompleta · Ctrl+C interrumpe\n  Todo lo que no sea comando se convierte en prompt para el modelo.\n',
+    'help':'\n  help          esta lista\n  tell <texto>  habla con el modelo (simulado aquí)\n  run ls        muestra el flujo de ejecución <RUN> → [s/N]\n  models        tabla corta de alias y sufijos\n  sandbox       el sandbox web v0 (tell -w) explicado\n  sdk           cómo usar @tell-ai/sdk en tu código\n  core          el runtime compartido (@tell-ai/core)\n  custom        tu propio endpoint (custom:<model-id>)\n  tellrc        el config INI (~/.tellrc y ./.tellrc)\n  install       instalación de CLI, SDK y core\n  features      recursos principales\n  github        abre el repositorio en el navegador\n  history / whoami / banner / date / clear / exit\n\n  TIP   ↑ repite el último · Tab autocompleta · Ctrl+C interrumpe\n  Todo lo que no sea comando se convierte en prompt para el modelo.\n',
     's6.label':'<b>§ 06</b> — sdk','s6.h2':'La misma <em class="serif">tell(),</em> fuera del shell.',
     's6.alt':'o <code>bun add @tell-ai/sdk</code> — paquete propio de la biblioteca, separado de la CLI.',
     'sdk.c1':'// el "tell --no-exec" como función: llama al modelo y devuelve','sdk.c2':'// el texto con tags <RUN> y reasoning ya removidas',
@@ -1187,7 +1222,7 @@
     'sdk.c4':'// también exportados: MODELS (142 alias), get_model() (el','sdk.c5':'// ModelHandle crudo para tu propio generateText),','sdk.c6':'// get_system_prompt, extract_runs · strip_run_tags ·','sdk.c7':'// sanitize_reasoning · summarize_context',
     'sdk.wc':'// IIFE global — corre incluso en file://',
     'vt.h':'tres builds, un mismo import','vt1':'ESM + CJS + tipos','vt2':'ESM bundleado','vt3':'IIFE → TellSDK',
-    's6.vend':'12 vendors vía <code>keys</code>/<code>urls</code>: openai · anthropic · google · xai · deepseek · cerebras · moonshotai · openrouter · alibaba <code>(qwen)</code> · zai <code>(glm)</code> · meta <code>(llama)</code> · xiaomi <code>(mimo)</code> + <code>vast</code>/<code>local</code> self-hosted. Budget de reasoning resuelto por vendor (<code>max</code> se mapea al techo de cada uno); caches de provider por base URL <b>y</b> credencial.',
+    's6.vend':'13 vendors vía <code>keys</code>/<code>urls</code>: openai · anthropic · google · xai · deepseek · cerebras · moonshotai · openrouter · alibaba <code>(qwen)</code> · zai <code>(glm)</code> · meta <code>(llama)</code> · xiaomi <code>(mimo)</code> · <code>custom</code> (tu propio endpoint) + <code>vast</code>/<code>local</code> self-hosted. Budget de reasoning resuelto por vendor (<code>max</code> se mapea al techo de cada uno); caches de provider por base URL <b>y</b> credencial.',
     'k1.h3':'dos paquetes, <em>dos licencias</em>','k1.p':'La CLI (<code>tell-ai</code>) es GPL-3.0. El SDK (<code>@tell-ai/sdk</code>) es <b>MIT</b> — puedes embeberlo en producto cerrado sin dolores de cabeza.',
     'k2.h3':'cero <code>process.env</code>','k2.p':'El SDK nunca lee el entorno: claves y base URLs se <b>inyectan</b> vía <code>keys</code> y <code>urls</code>. Es lo que lo hace browser-safe — y <code>urls</code> acepta proxy CORS, como en <code>examples/web/</code> del repo.',
     'k3.h3':'la fundación <em>del sandbox</em>','k3.p':'Los builds de browser ya arrancan con una <code>&lt;script&gt;</code> tag pura — sobre ellos se construyó el sandbox v0 del <a href="#sandbox" style="color:var(--amber);border-bottom:1px dotted var(--amber)">§08</a>.',
@@ -1234,7 +1269,7 @@
     'foot.l':'© <span id="year"></span> naoeosavio — Tell-ai es open-source; esta página es solo la vitrina.',
     'foot.r':'<a href="https://github.com/naoeosavio/Tell-ai" target="_blank" rel="noopener">repo</a> · <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener">issues</a> · cli: GPL-3.0 · sdk: MIT · core: MIT · sandbox: <span class="warn">v0 preliminar</span> · un único archivo HTML',
     'sb.mode':'modo',
-    'mq':'RUN CONFIRMADO <i>·</i> 142 ALIAS <i>·</i> 10+ VENDORS <i>·</i> PIPE-FIRST <i>·</i> SIN LOGIN <i>·</i> CLI: GPL-3.0 <i>·</i> SDK: MIT <i>·</i> CORE: MIT <i>·</i> SANDBOX V0: PRELIMINAR <i>·</i> ',
+    'mq':'RUN CONFIRMADO <i>·</i> 142 ALIAS <i>·</i> 10+ VENDORS <i>·</i> PIPE-FIRST <i>·</i> SIN LOGIN <i>·</i> CLI: GPL-3.0 <i>·</i> SDK: MIT <i>·</i> CORE: MIT <i>·</i> CUSTOM ENDPOINT <i>·</i> .TELLRC <i>·</i> SANDBOX V0: PRELIMINAR <i>·</i> ',
     'hseq':[
       {t:'cmd', text:'git diff --staged | tell -i "mensaje de commit"'},
       {t:'meta', html:'<b>●</b> tell · g → openai:gpt-6.1-sol:medium · 1.2s'},
@@ -1282,7 +1317,7 @@
     's3.label':'<b>§ 03</b> — 機能','s3.h2':'UNIXツールのように<em class="serif">設計。</em>',
     'f1':'モデルがタグ間にコマンドを提案し、<b>1件ずつあなたが承認</b>。コマンドごとに120秒のタイムアウト。<code>sudo</code>、<code>rm -rf</code>、<code>mkfs</code>、<code>curl|sh</code>、<code>/etc</code> への書き込みは常にブロック。',
     'f2':'本物のパイプ:<code>npm test 2&gt;&amp;1 | tell -i "why are these failing?"</code> — stdinはそのまま文脈になる。',
-    'f3':'<b>142エイリアス</b>で OpenAI・Anthropic・Google・xAI・DeepSeek・Alibaba・Z.ai・Moonshot・Meta・Xiaomi のモデル+セルフホストをカバー——thinkingの段階はモデルごと。デフォルトは <code>g</code>(<code>TELL_MODEL</code>)。<a href="#modelos">インタラクティブ解決ツール ↘</a>',
+    'f3':'<b>142エイリアス</b>で OpenAI・Anthropic・Google・xAI・DeepSeek・Alibaba・Z.ai・Moonshot・Meta・Xiaomi のモデル+セルフホストをカバー——thinkingの段階はモデルごと。デフォルトは <code>g</code>(<code>TELL_MODEL</code>)。独自のエンドポイントは <code>custom:&lt;model&gt;</code> で。<a href="#modelos">インタラクティブ解決ツール ↘</a>',
     'f4':'<code>--stream</code> はトークンごとに出力、<code>--think</code> は推論を表示。表示が変わるだけ:ログ・コンテキスト・<code>&lt;RUN&gt;</code> の抽出は同一。',
     'f5':'マルチステップ:モデルがコマンドを実行し、出力を読み、続行——最大8ラウンドで最終回答まで。',
     'f6':'ディレクトリ+モデルごとの永続コンテキストを <code>~/.ai/tell_context</code> に。<code>--ctx %プロジェクト</code> で名前付け、<code>@0</code> で再開、<code>-n</code> でリセット。refなしの <code>--ctx</code> はデフォルト文脈へのプロンプト。',
@@ -1291,14 +1326,17 @@
     'f9':'セルフホストモデルも同じ操作感:<code>q</code> はローカルエンドポイント、<code>v</code> は Vast——ハンドラのないベンダーは汎用OpenAI互換プロバイダにフォールバック。',
     'f10':'ブラウザのWebサンドボックス v0:ディレクトリに紐付いたターミナル・ファイルエクスプローラ・チャット。<code>--stream</code>、<code>--think</code>、<code>--chain</code>、<code>-y</code>、<code>--no-exec</code>、<code>--require-approval</code> は転送。<a href="#sandbox">セクションを見る ↘</a>',
     'f11':'共有ランタイム(MIT):注入可能な契約、Node 実行器、ベースリスク、fail-closed なパス、運用上限のすべて。CLI と Web サンドボックスはその上の薄いアダプタ。<a href="#core">セクションを見る ↘</a>',
-    's4.label':'<b>§ 04</b> — モデル','s4.h2':'10ベンダー、<em class="serif">1文字。</em>',
-    'res.hd':'エイリアス解決 — クリックして組み立て','res.count':'142エイリアス · 上は29グループ',
+    'f12':'設定は INI、JSON なし:<code>~/.tellrc</code>(ユーザー)と <code>&lt;cwd&gt;/.tellrc</code>(プロジェクト)。優先順位は<b>flag › env › プロジェクト › ユーザー</b>で、<code>deny</code> は加算されるだけ。プロファイル・エイリアス・temperature・<code>system-file</code>・上限もここへ。',
+    's4.label':'<b>§ 04</b> — モデル','s4.h2':'10ベンダー、<em class="serif">1文字。</em> そしてあなたの <code>custom</code> エンドポイント。',
+    'res.hd':'エイリアス解決 — クリックして組み立て','res.count':'142エイリアス · 29グループ · + custom',
     'res.base':'基本','res.na':'—','res.fast1':'. 高速','res.fast2':'推論なし','res.cp':' specをコピー',
-    'res.foot':'thinkingの段階は<b>モデルごとに異なる</b>:<code>g</code>/<code>e</code>/<code>r</code> に <code>none</code> なし(low開始) · <code>d</code>/<code>D</code> はベースで <code>high</code> · xAI と Alibaba の上限は <code>xhigh</code> · <code>h</code>/<code>k</code>/<code>q</code>/<code>v</code> は単一エイリアス · 大文字(<code>G</code>、<code>S</code>、<code>O</code>…)= <code>high</code> へのショートカット · 高速モード:エイリアスの前に <code>.</code>(<code>.g</code>) · 完全なspec:<code>vendor:model[:thinking]</code> · 公式リスト:<code>tell -m --help</code>',
+    'res.mid':'<model-id>',
+    'res.wire':'wire: <b>{wire}</b> — model id のプレフィックスで決まる。<code>CUSTOM_API</code> で固定もできる。',
+    'res.foot':'thinkingの段階は<b>モデルごとに異なる</b>:<code>g</code>/<code>e</code>/<code>r</code> に <code>none</code> なし(low開始) · <code>d</code>/<code>D</code> はベースで <code>high</code> · xAI と Alibaba の上限は <code>xhigh</code> · <code>h</code>/<code>k</code>/<code>q</code>/<code>v</code> は単一エイリアス · 大文字(<code>G</code>、<code>S</code>、<code>O</code>…)= <code>high</code> へのショートカット · 高速モード:エイリアスの前に <code>.</code>(<code>.g</code>) · 完全なspec:<code>vendor:model[:thinking]</code> · 独自エンドポイント:<code>custom:&lt;model&gt;</code>(プレフィックス <code>gpt-</code>/<code>grok-</code>/<code>muse-</code> → responses、<code>claude-</code> → messages、それ以外 → chat) · エンドポイントのカタログ:<code>tell --models</code> · 公式リスト:<code>tell -m --help</code>',
     's5.label':'<b>§ 05</b> — デモ','s5.h2':'インストールせずに<em class="serif">試す。</em>',
     'demo.title':'ゲスト@tell-ai: ~ — インタラクティブデモ','demo.f0':'未接続','demo.ff':'クリックして入力','demo.fb':'— CLI取得中 —',
     'demo.try':'↳ 入力例:',
-    'try':['help','tell こんにちは','run ls','models','sandbox','sdk','core','github'],
+    'try':['help','tell こんにちは','run ls','models','sandbox','sdk','core','custom','tellrc','github'],
     'demo.note':'<b>ローカルシミュレーション:</b>このターミナルは100%このタブ内で動作——キーも通信もなし。応答は事前収録ですが、ストリーミングは本物:<b>↑</b> で履歴、<b>Tab</b> で補完、<b>Ctrl+C</b> で中断。',
     'demo.meta':'● tell[demo] · ローカル応答 · ','demo.flow':'● tell[demo] · 実行フロー',
     'bn.1':'tell-ai — `help` と入力','bn.2':'インタラクティブデモ · 応答は事前収録 · 通信なし','bn.3':'`help` で開始 — 下の候補をクリックしてもOK。',
@@ -1315,6 +1353,10 @@
     'b.sdk':['SDKは独立パッケージ:`npm add @tell-ai/sdk`(MITライセンス)。','実際のAPI:ワンショットは `tell(msg, { keys })`、`create_ask_ai(spec, { keys })`','+ `ai.ask()` と `ai.ask_stream()`(NDJSONのreasoning|textイベント)、','`get_model()` で生のModelHandle。process.envはゼロ。','完全な例はページの§06。'],
     'b.coreRe':/core|runtime|@tell-ai\/core|ループ|実行/,
     'b.core':['coreは共有ランタイム(MIT):`npm add @tell-ai/core`。','注入可能な契約、Node 実行器、ベースリスク、fail-closed なパス、','運用上限のすべてを所有——CLI と Web サンドボックスはその','上の薄いアダプタです。完全な例はページの§07。'],
+    'b.customRe':/custom|エンドポイント|自分の|プロバイダ|プロキシ|セルフホスト|ollama|vllm|litellm/,
+    'b.custom':['`custom` ベンダはあなたのエンドポイント:`CUSTOM_BASE_URL` + `CUSTOM_API_KEY`。','spec は `custom:<model-id>`、wire は id のプレフィックスで決まる:','gpt-/grok-/muse- → responses · claude- → messages · それ以外 → chat','(CUSTOM_API で固定もできる)。`tell --models` が wire ごとの','カタログを一覧する。'],
+    'b.tellrcRe':/tellrc|config|プロファイル|profile|設定|\.tellrc/,
+    'b.tellrc':['唯一の永続設定は INI — `~/.tellrc`(ユーザー)と `<cwd>/.tellrc`(プロジェクト)。','優先順位:flag > env > プロジェクト > ユーザー。','model・temperature・profile・system-file・[aliases]・','[profiles.<name>](prompt/style/エイリアス付き)・[policy] deny','(加算のみ)・[limits] に対応。JSON も secret もなし。'],
     'b.mdRe':/モデル|エイリアス|ベンダー|プロバイダ|models?|alias/,
     'b.md':['142エイリアス:g → gpt-6.1-sol、o → claude-opus-5-5、','d → deepseek-flash(ベースで既にhigh!)、D → deepseek-v4-pro、','z → glm-5.3、a → qwen3.8-max、m → muse-spark、mi → mimo…','thinkingの段階はモデルごと:x++ と a++ は xhigh、','g-- は low(noneなし)、大文字 G/S/O… は high へのショートカット。','解決ツールは§04、ターミナルでは `tell -m --help`。'],
     'b.aboutRe':/(あなたは)?誰|tellとは|tellって|何者|について教えて|何ができる/,
@@ -1328,7 +1370,7 @@
     'b.rm':'拒否します。シミュレーションでも。',
     'b.vim':'vimを抜けるには :q! — このデモを抜けるには exit。簡単なのはどちらか、試してみて。',
     'b.exit':'またね — ターミナルはここで待ってます。',
-    'help':'\n  help          この一覧\n  tell <text>   モデルと会話(ここではシミュレーション)\n  run ls        <RUN> → [y/N] の実行フローを見る\n  models        エイリアスとサフィックスの早見表\n  sandbox       Webサンドボックス v0 (tell -w) の説明\n  sdk           コードで @tell-ai/sdk を使う方法\n  core          共有ランタイム (@tell-ai/core)\n  install       CLI・SDK・core のインストール\n  features      主な機能\n  github        ブラウザでリポジトリを開く\n  history / whoami / banner / date / clear / exit\n\n  TIP   ↑ で履歴 · Tab で補完 · Ctrl+C で中断\n  コマンド以外の入力は、そのままモデルへのプロンプトになります。\n',
+    'help':'\n  help          この一覧\n  tell <text>   モデルと会話(ここではシミュレーション)\n  run ls        <RUN> → [y/N] の実行フローを見る\n  models        エイリアスとサフィックスの早見表\n  sandbox       Webサンドボックス v0 (tell -w) の説明\n  sdk           コードで @tell-ai/sdk を使う方法\n  core          共有ランタイム (@tell-ai/core)\n  custom        自分のエンドポイント (custom:<model-id>)\n  tellrc        INI 設定 (~/.tellrc と ./.tellrc)\n  install       CLI・SDK・core のインストール\n  features      主な機能\n  github        ブラウザでリポジトリを開く\n  history / whoami / banner / date / clear / exit\n\n  TIP   ↑ で履歴 · Tab で補完 · Ctrl+C で中断\n  コマンド以外の入力は、そのままモデルへのプロンプトになります。\n',
     's6.label':'<b>§ 06</b> — sdk','s6.h2':'同じ<em class="serif">tell()</em>を、シェルの外へ。',
     's6.alt':'または <code>bun add @tell-ai/sdk</code> — ライブラリはCLIと別パッケージ。',
     'sdk.c1':'// 関数版の "tell --no-exec":モデルを呼び、<RUN> と','sdk.c2':'// reasoningタグを取り除いたテキストを返す',
@@ -1336,7 +1378,7 @@
     'sdk.c4':'// 他のexport:MODELS(142エイリアス)、get_model()(自分の','sdk.c5':'// generateText用の生のModelHandle)、','sdk.c6':'// get_system_prompt、extract_runs · strip_run_tags ·','sdk.c7':'// sanitize_reasoning · summarize_context',
     'sdk.wc':'// IIFEグローバル — file:// でも動く',
     'vt.h':'3つのビルド、1つのimport','vt1':'ESM + CJS + 型','vt2':'バンドル済みESM','vt3':'IIFE → TellSDK',
-    's6.vend':'<code>keys</code>/<code>urls</code> で12ベンダー:openai · anthropic · google · xai · deepseek · cerebras · moonshotai · openrouter · alibaba <code>(qwen)</code> · zai <code>(glm)</code> · meta <code>(llama)</code> · xiaomi <code>(mimo)</code> + セルフホストの <code>vast</code>/<code>local</code>。reasoningバジェットはベンダーごとに解決(<code>max</code> は各社の上限へマッピング);プロバイダのキャッシュはベースURL<b>と</b>認証情報で分離。',
+    's6.vend':'<code>keys</code>/<code>urls</code> で13ベンダー:openai · anthropic · google · xai · deepseek · cerebras · moonshotai · openrouter · alibaba <code>(qwen)</code> · zai <code>(glm)</code> · meta <code>(llama)</code> · xiaomi <code>(mimo)</code> · <code>custom</code>(あなたのエンドポイント) + セルフホストの <code>vast</code>/<code>local</code>。reasoningバジェットはベンダーごとに解決(<code>max</code> は各社の上限へマッピング);プロバイダのキャッシュはベースURL<b>と</b>認証情報で分離。',
     'k1.h3':'2パッケージ、<em>2ライセンス</em>','k1.p':'CLI(<code>tell-ai</code>)は GPL-3.0。SDK(<code>@tell-ai/sdk</code>)は <b>MIT</b>——クローズドな製品にも安心して組み込めます。',
     'k2.h3':'<code>process.env</code> ゼロ','k2.p':'SDKは環境を読まない:キーとベースURLは <code>keys</code>・<code>urls</code> で<b>注入</b>。だからブラウザセーフ——<code>urls</code> はCORSプロキシも受け付けます(repoの <code>examples/web/</code> と同様)。',
     'k3.h3':'サンドボックスの<em>土台</em>','k3.p':'ブラウザビルドは素の <code>&lt;script&gt;</code> タグで起動——<a href="#sandbox" style="color:var(--amber);border-bottom:1px dotted var(--amber)">§08</a> のサンドボックス v0 はその上に構築されています。',
@@ -1383,7 +1425,7 @@
     'foot.l':'© <span id="year"></span> naoeosavio — Tell-ai はオープンソース。このページはショーウィンドウです。',
     'foot.r':'<a href="https://github.com/naoeosavio/Tell-ai" target="_blank" rel="noopener">repo</a> · <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener">issues</a> · cli: GPL-3.0 · sdk: MIT · core: MIT · sandbox: <span class="warn">v0 暫定版</span> · たった1つのHTMLファイル',
     'sb.mode':'モード',
-    'mq':'実行確認制 <i>·</i> 142エイリアス <i>·</i> 10+ベンダー <i>·</i> パイプ優先 <i>·</i> ログイン不要 <i>·</i> CLI: GPL-3.0 <i>·</i> SDK: MIT <i>·</i> CORE: MIT <i>·</i> サンドボックス V0: 暫定版 <i>·</i> ',
+    'mq':'実行確認制 <i>·</i> 142エイリアス <i>·</i> 10+ベンダー <i>·</i> パイプ優先 <i>·</i> ログイン不要 <i>·</i> CLI: GPL-3.0 <i>·</i> SDK: MIT <i>·</i> CORE: MIT <i>·</i> CUSTOM ENDPOINT <i>·</i> .TELLRC <i>·</i> サンドボックス V0: 暫定版 <i>·</i> ',
     'hseq':[
       {t:'cmd', text:'git diff --staged | tell -i "コミットメッセージ"'},
       {t:'meta', html:'<b>●</b> tell · g → openai:gpt-6.1-sol:medium · 1.2s'},
@@ -1407,9 +1449,11 @@
 
   /* saídas de dados da demo — universais em inglês, como man pages reais */
   const OUT = {
-    models:'\n  ALIAS   →  ESPEC (vendor:model:thinking)\n  g       →  openai:gpt-6.1-sol:medium            (default)\n  t / c   →  openai:gpt-5.6-terra / gpt-6-luna\n  e / r   →  openai:gpt-6-astra / -astra-pro\n  s       →  anthropic:claude-sonnet-5-5:medium\n  o       →  anthropic:claude-opus-5-5:medium\n  f / h   →  claude-fable-5-1 / claude-haiku-4-5:none\n  i / j / l → gemini-3.1-pro / 3.5-flash-lite / 3.8-flash\n  x       →  xai:grok-4.7:medium        (x++ = xhigh)\n  a/at/af →  alibaba:qwen3.8-max / 27b / flash\n  d       →  deepseek:deepseek-flash:high   (base is already high)\n  D       →  deepseek:deepseek-v4-pro:high\n  z / zf  →  zai:glm-5.3 / glm-5.3-flash\n  k / K   →  moonshotai:kimi-k2.7-code / kimi-k3\n  m / mc  →  meta:muse-spark-1.3 / -contributor\n  mi/mif  →  xiaomi:mimo-v2.6-pro / -flash\n  q / v   →  self-hosted (local / vast)\n\n  thinking ladder: -- none · - low · base · + high · ++ max/xhigh\n  (g/e/r have no none · d/D base=high · uppercase = high shortcut)\n  fast mode .g · full list: tell -m --help · interactive widget in §04\n',
+    models:'\n  ALIAS   →  ESPEC (vendor:model:thinking)\n  g       →  openai:gpt-6.1-sol:medium            (default)\n  t / c   →  openai:gpt-5.6-terra / gpt-6-luna\n  e / r   →  openai:gpt-6-astra / -astra-pro\n  s       →  anthropic:claude-sonnet-5-5:medium\n  o       →  anthropic:claude-opus-5-5:medium\n  f / h   →  claude-fable-5-1 / claude-haiku-4-5:none\n  i / j / l → gemini-3.1-pro / 3.5-flash-lite / 3.8-flash\n  x       →  xai:grok-4.7:medium        (x++ = xhigh)\n  a/at/af →  alibaba:qwen3.8-max / 27b / flash\n  d       →  deepseek:deepseek-flash:high   (base is already high)\n  D       →  deepseek:deepseek-v4-pro:high\n  z / zf  →  zai:glm-5.3 / glm-5.3-flash\n  k / K   →  moonshotai:kimi-k2.7-code / kimi-k3\n  m / mc  →  meta:muse-spark-1.3 / -contributor\n  mi/mif  →  xiaomi:mimo-v2.6-pro / -flash\n  q / v   →  self-hosted (local / vast)\n\n  custom  →  custom:<your-model-id>  (your own endpoint)\n\n  thinking ladder: -- none · - low · base · + high · ++ max/xhigh\n  (g/e/r have no none · d/D base=high · uppercase = high shortcut)\n  fast mode .g · full list: tell -m --help · interactive widget in §04\n',
     sdk:'\n  # the library ships as its own package (MIT)\n  npm add @tell-ai/sdk\n\n  # one-shot: the "tell --no-exec" as a function\n  import { tell } from \'@tell-ai/sdk\';\n  const r = await tell("summarize this diff",\n                       { keys: { deepseek: KEY } });\n\n  # token-by-token streaming (NDJSON events)\n  const ai = create_ask_ai(\'g\', { keys: {...} });\n  for await (const ev of ai.ask_stream("…"))\n    if (ev.type === \'text\') …\n\n  → full examples in §06 of the page\n',
     core:'\n  # the shared runtime (MIT) — owner of exec/loop, risk and limits\n  npm add @tell-ai/core\n\n  import { createTellRuntime, create_node_executor } from \'@tell-ai/core\';\n\n  const runtime = createTellRuntime({\n    model,                              // any AskInstance fits\n    exec: true,\n    executor: create_node_executor(),   // bash, 120s timeout, group kill\n    approval: async () => \'approved\',\n  });\n\n  what it owns: the injectable contract, the node executor, base risk,\n  fail-closed paths, host config and every operational limit.\n  the CLI and the web sandbox are thin adapters over it.\n',
+    custom:'\n  # your own endpoint — any OpenAI/Anthropic-shaped service\n  export CUSTOM_BASE_URL="https://my-endpoint/v1"\n  export CUSTOM_API_KEY="…"\n  export CUSTOM_MODEL="my-model"     # optional: lets you run "tell -m custom"\n  export CUSTOM_API="chat"            # optional: pin the wire\n  export CUSTOM_HEADERS=\'{"x-team":"core"}\'\n\n  tell -m custom:my-model "review this diff"\n  tell --models                      # the endpoint catalog, grouped by wire\n\n  wire by model id prefix: gpt- / grok- / muse- -> responses\n                           claude-               -> messages\n                           everything else        -> chat\n',
+    tellrc:'\n  # the only persisted config — INI, no JSON\n  ~/.tellrc            # user layer\n  <cwd>/.tellrc        # project layer (wins on conflicts)\n\n  model = s\n  temperature = 0.7\n  profile = node\n  system-file = ./docs/ESTILO.md\n\n  [aliases]\n  work = openai:gpt-6.1-sol:high\n\n  [profiles.backend]\n  prompt = Backend reviewer: check handlers, migrations and tests.\n\n  [policy]\n  deny = rm -rf /, mkfs\n\n  [limits]\n  max_chain_steps = 4\n\n  precedence: flag > env > project .tellrc > user ~/.tellrc > default\n  deny data is union-only: it only ever accumulates.\n',
     sandbox:'\n  web sandbox v0  [■■■■■■■■■□]  preview\n\n  open with:  tell -w                     # current directory\n              tell -w --cwd ~/project -m s --stream\n\n  what opens: terminal + file explorer + chat,\n  anchored to the directory. forwarded flags: --stream,\n  --think, --chain, -y, --no-exec, --require-approval.\n\n  security:   auto-run is opt-in (a fresh browser always asks)\n              --no-exec is a server invariant: /api/execute → 403\n              on open networks: TELL_TOKEN + TELL_ALLOWED_HOSTS\n\n  preview = local-first (127.0.0.1) and evolving —\n  tell us what is missing in the issues.\n',
     install:'\n  # CLI (global)\n  npm install -g tell-ai\n\n  # SDK (library, MIT)\n  npm add @tell-ai/sdk\n\n  # keys — env or ~/.config/<vendor>.token\n  export DEEPSEEK_API_KEY="..."\n  export ZHIPU_API_KEY="..."      # Z.ai GLM\n  export ALIBABA_API_KEY="..."    # Qwen\n\n  # use\n  tell "hello, terminal"\n  tell d "run ls -la"    # asks before executing\n  tell -w                # web sandbox v0 in the browser\n',
     features:['  <RUN>       the model proposes commands; you approve one by one',
@@ -1422,6 +1466,8 @@
               '  --chain     up to 8 rounds: runs, reads output, continues',
               '  -c / --ctx  context: %name, @0 (recent), -n (reset)',
               '  -l          lists contexts/conversations — no network, no key',
+              '  --models    lists the custom endpoint catalog, grouped by wire',
+              '  .tellrc     INI config: ~/.tellrc + <cwd>/.tellrc (flag > env > project > user)',
               '  tell -w     web sandbox v0 in the browser (`sandbox`)']
   };
 
@@ -1560,13 +1606,24 @@
     mi: {v:'xiaomi',     m:'mimo-v2.6-pro',    t:{'--':'none','-':'low','':'medium','+':'high','++':'max'}},
     mif:{v:'xiaomi',     m:'mimo-v2.6-flash',  t:{'--':'none','-':'low','':'medium','+':'high','++':'max'}},
     q:  {v:'local',      m:'/root/model',      t:{'':'none'}},
-    v:  {v:'vast',       m:'/root/model',      t:{'':'none'}}
+    v:  {v:'vast',       m:'/root/model',      t:{'':'none'}},
+    cu: {label:'custom', v:'custom', m:'', custom:true,
+          t:{'--':'none','-':'low','':'auto','+':'high','++':'max'}}
   };
   const SUFS = ['--','-','','+','++'];
   const SUF_LAB = {'--':'--','-':'-','':'','+':'+','++':'++'};
   let rA = 'd', rS = '', rFast = false;
 
+  /* Wire do endpoint custom: o prefixo do model id decide (CUSTOM_API fixa). */
+  const CUSTOM_WIRES = [['gpt-','responses'],['grok-','responses'],['muse-','responses'],['claude-','messages']];
+  function custom_wire(model){
+    const id = (model || '').trim().toLowerCase();
+    for (const [prefix, wire] of CUSTOM_WIRES) if (id.startsWith(prefix)) return wire;
+    return 'chat';
+  }
+
   const aliasChips = $('#aliasChips'), sufChips = $('#sufChips'), resOut = $('#resOut');
+  const customRow = $('#customRow'), customModel = $('#customModel');
 
   function renderAliasChips(){
     aliasChips.innerHTML = '';
@@ -1575,8 +1632,8 @@
       b.className = 'chip' + (k === rA ? ' on' : '');
       b.setAttribute('aria-pressed', k === rA);
       b.innerHTML = '<b></b><span></span>';
-      b.firstChild.textContent = k;
-      b.lastChild.textContent = ALIASES[k].v;
+      b.firstChild.textContent = ALIASES[k].label || k;
+      b.lastChild.textContent = ALIASES[k].custom ? 'endpoint' : ALIASES[k].v;
       b.addEventListener('click', () => {
         rA = k;
         if (!(rS in ALIASES[k].t)) rS = ('' in ALIASES[k].t) ? '' : Object.keys(ALIASES[k].t)[0];
@@ -1610,8 +1667,15 @@
   }
   function renderOut(){
     const a = ALIASES[rA];
-    const aliasStr = (rFast ? '.' : '') + rA + rS;
-    const spec = a.v + ':' + a.m + ':' + a.t[rS];
+    const isCustom = !!a.custom;
+    const typed = isCustom ? (customModel.value || '').trim() : '';
+    const modelId = typed || T[CUR]['res.mid'];
+    const level = a.t[rS];
+    const spec = isCustom
+      ? (rFast ? '.' : '') + 'custom:' + modelId + (level && level !== 'auto' ? ':' + level : '')
+      : a.v + ':' + a.m + ':' + level;
+    const aliasStr = isCustom ? '-m ' + spec : (rFast ? '.' : '') + rA + rS;
+    customRow.hidden = !isCustom;
     $('#resCount').textContent = T[CUR]['res.count'];
     resOut.innerHTML = '';
     const l1 = document.createElement('div'); l1.className = 'l1';
@@ -1632,7 +1696,13 @@
     });
     l2.appendChild(cp);
     resOut.append(l1, l2);
+    if (isCustom){
+      const l3 = document.createElement('div'); l3.className = 'l3';
+      l3.innerHTML = T[CUR]['res.wire'].replace('{wire}', custom_wire(typed));
+      resOut.appendChild(l3);
+    }
   }
+  customModel.addEventListener('input', () => { if (ALIASES[rA].custom) renderOut(); });
   renderAliasChips(); renderSufChips(); renderOut();
 
   /* ---------- sandbox v0: boot ---------- */
@@ -1747,7 +1817,7 @@
     }
     if (e.key === 'Tab'){
       e.preventDefault();
-      const cmds = ['help','tell ','run ls','models','sandbox','sdk','core','install','features','github','clear','history','whoami','banner','date','exit'];
+      const cmds = ['help','tell ','run ls','models','sandbox','sdk','core','custom','tellrc','install','features','github','clear','history','whoami','banner','date','exit'];
       const m = cmds.find(c => c.startsWith(ti.value) && ti.value);
       if (m){ ti.value = m; positionCursor(); }
     }
@@ -1778,6 +1848,8 @@
     if (L['b.sbRe'].test(p))    return L['b.sb'];
     if (L['b.sdkRe'].test(p))   return L['b.sdk'];
     if (L['b.coreRe'].test(p)) return L['b.core'];
+    if (L['b.customRe'].test(p)) return L['b.custom'];
+    if (L['b.tellrcRe'].test(p)) return L['b.tellrc'];
     if (L['b.mdRe'].test(p))    return L['b.md'];
     if (L['b.aboutRe'].test(p)) return L['b.about'];
     if (L['b.instRe'].test(p))  return L['b.inst'];
@@ -1798,6 +1870,8 @@
     if (cmd === 'models'){ out(OUT.models); return; }
     if (cmd === 'sdk'){ out(OUT.sdk); return; }
     if (cmd === 'core'){ out(OUT.core); return; }
+    if (cmd === 'custom'){ out(OUT.custom); return; }
+    if (cmd === 'tellrc'){ out(OUT.tellrc); return; }
     if (cmd === 'sandbox'){ out(OUT.sandbox); return; }
     if (cmd === 'install'){ out(OUT.install); return; }
     if (cmd === 'features'){
