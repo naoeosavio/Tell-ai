@@ -6,9 +6,10 @@
 <title>Tell-ai — CLI + SDK + Core + Web para LLMs</title>
 <meta name="description" content="Tell-ai é open-source: CLI one-shot no shell com execução confirmada, SDK MIT para Node/Bun/browser, o core MIT (runtime compartilhado) e um web (terminal, arquivos e chat no navegador via tell -w).">
 <meta name="theme-color" content="#0B0A08">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230B0A08'/%3E%3Cpath d='M9 9h14v3H9zM9 14.5h14v3H9zM9 20h9v3H9z' fill='%23FFB454'/%3E%3C/svg%3E" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&family=Instrument+Serif:ital,wght@1,400&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Instrument+Serif:ital,wght@1,400&display=swap" rel="stylesheet">
 <style>
   :root{
     --bg:#0B0A08; --bg2:#12110D; --bg3:#181611;
@@ -118,13 +119,15 @@
   .tl.ok{color:var(--green)} .tl.dim{color:var(--fg2)} .tl.err{color:var(--red)}
   .tl .ps1{color:var(--mut)} .tl .tc{color:var(--fg)}
   .tl .run{color:var(--amber2)}
-  /* arte ASCII: precisa de fonte com box-drawing de largura uniforme —
-     o IBM Plex Mono (fonte do corpo) não tem █ ╗ ═ e cairia num fallback
-     de largura diferente, desmontando a arte. Mesma técnica do
-     TellLogoLoop do sandbox: stack própria, ligatures desligadas, sem
-     quebra de linha. */
+  /* arte ASCII: precisa de fonte com box-drawing de largura uniforme.
+     Nenhuma webfont do Google serve a faixa U+2500-259F (o subset latin
+     cobre só o básico), então █ ╗ ═ cairiam num fallback de largura
+     diferente e a arte se desmontaria. A stack abaixo é só de fontes de
+     sistema, todas com cobertura de box-drawing; a webfont do corpo
+     (IBM Plex Mono) fica de fora de propósito. Mesma técnica do
+     TellLogoLoop do sandbox. */
   .tl.ascii{
-    font-family:"JetBrains Mono","DejaVu Sans Mono","Noto Sans Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    font-family:"DejaVu Sans Mono","Noto Sans Mono","JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
     font-size:.72em; line-height:1.35; white-space:pre; word-break:normal;
     overflow-x:auto; overflow-y:hidden; color:var(--fg);
     letter-spacing:0; word-spacing:0;
