@@ -80,7 +80,7 @@ handoff and are not read here.
 |---|---|
 | `src/runtime-api.ts` | Injectable contract + `createTellRuntime` factory , `TellResult`, ports, callbacks, tokens |
 | `src/browser-runtime.ts` | `createLocalStorageAdapter` over injected `StorageLike` |
-| `src/browser.ts` | Browser-safe surface (loop-feedback, risk, chain-decision, runtime-limits, config, browser-runtime + erased port types; never `runtime-api` values, `loop`, `runtime`, or Node-only modules); built to `dist/browser.js` and served through the `browser` condition of the main entry so Vite never bundles Node builtins |
+| `src/browser.ts` | Browser-safe surface (loop-feedback, risk, chain-decision, runtime-limits, config, browser-runtime, `loop` + the runtime wiring — `runtime-api` values and `create_core_runtime`, which depend only on the dependency-free `@tell-ai/sdk/pure` entry; never `exec`, `paths`, `project-context`, `sdk-config` or other Node-only modules); built to `dist/browser.js` and served through the `browser` condition of the main entry so Vite never bundles Node builtins |
 | `src/config.ts` | Host defaults, `CoreConfig`/`ConfigLayer`, precedence resolver, base env loader |
 | `src/runtime-limits.ts` | Single owner of every limit value: defaults, range table, `parse_runtime_limits` (flag > env > project tellrc > user tellrc > default), `TELLRC_LIMIT_KEYS`, `truncate_context`/`truncate_output`, `build_execution_options`, chat-payload caps (`PAYLOAD_MAX_*`) |
 | `src/paths.ts` | `canonical_path` / `canonical_write_path` (realpath, symlink fail-closed, opt-in `create_parents`) |

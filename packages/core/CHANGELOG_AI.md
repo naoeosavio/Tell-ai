@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.1.2 — 2026-10-20
+
+### Tests
+- New `test/test-core-browser.js` (in `test:core`): functional browser gate — the built `dist/browser.cjs` evaluates and runs in a `vm` context with no `process`/`Buffer`/`require`, exercising risk, truncation, env layers, config, chain-decision, loop-feedback, storage and a two-round stub `run_primitive_loop`. Complements the static builtin-import gate in `test-core-package.js`.
+- The package gate now rejects a **bare import** in `dist/browser.js` (the builtin scan only looked for Node builtins, and the smoke test only executes the CJS bundle — so the ESM bundle could have grown a bare `@tell-ai/sdk` import in silence, the exact shape that broke the Vite client once). The detector only reads import *statements*, so a string containing the word "from" is not a false positive.
+
+### Refactors
+- `run_primitive_loop` takes its single-turn runner injected (`CoreLoopOptions.single_turn`) instead of constructing it via `createTellRuntime`: same rounds, wording, cancellation and fail-closed stops — `create_core_runtime` passes the same factory, so Node behavior is unchanged. The loop is import-pure, so it ships in the browser entry.
+- Browser-graph type imports are top-level `import type` / `export type`, never mixed inline (`import { type X, value }`): the bundler kept a mixed statement as a side-effect import, dragging a bare `@tell-ai/sdk` (and its Node builtins) into `dist/browser.*`.
+- The runtime wiring depends on the new `@tell-ai/sdk/pure` entry (dependency-free protocol surface) instead of the SDK main entry: the core no longer pulls the 1.3 MB provider graph on Node, and `runtime-api`/`runtime` become browser-safe. The browser entry now exports `create_core_runtime`, `createTellRuntime` and `MemoryStorageAdapter` next to the loop — a browser host injects the model and the storage and gets the whole Node path (without an executor, commands are reported, never run). The browser bundle stays self-contained (zero bare imports) and small: 19 KB → 30 KB.
+
+### Fixes
+- The injected-runner refactor dropped the per-call `override.cancellation` of `create_core_runtime().run(message, override)`: the single turn is built once from `base_options`, so a token passed per call never reached the turn or the executor and a command could still run after a cancel. The loop now forwards the token to the injected runner (`single_turn.run(message, { cancellation })`) — the loop keeps the round boundary, the runner keeps the executor boundary — restoring the pre-refactor behavior (pinned by a regression test in `test/test-core-runtime.js`).
+- `CoreLoopOptions.runtime_options` is now `Partial<TellRuntimeOptions>`: the loop reads only the cancellation token (the ports live in the injected runner), so a browser host no longer has to invent a `model` it does not have — the documented `{ runtime_options: {} }` did not even type-check before.
+- `chain_limit_notice` is exported from the main entry too (it was browser-only), and `SKIPPED_HEADER`/`OUTPUT_SEPARATOR` join the browser entry (the feedback vocabulary is the core's in both hosts). The two entries now expose the same loop surface.
+
+### Notes
+- Requires `@tell-ai/sdk` 0.5.0 (the new `./pure` entry: the protocol surface without the provider graph); the SDK floor in `core` moved to `^0.5.0`, and the `cli`/`web` floors moved to `@tell-ai/core` `^0.1.2` / `@tell-ai/sdk` `^0.5.0`.
+- The core's browser entry grew (`create_core_runtime` + the runtime wiring): the bundle is still self-contained and dependency-free, but a browser host now gets the whole runtime, not just the loop. `docs/core/browser.md` is the inventory — what ships (67 exports) and what cannot (28, each blocked by a concrete builtin: `child_process`, `realpath`, directory walking, `process.env`), with `examples/core/core-browser.ts` exercising the whole browser surface offline.
+
 ## v0.1.1 — 2026-10-13
 
 ### Features

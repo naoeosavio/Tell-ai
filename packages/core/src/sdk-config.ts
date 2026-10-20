@@ -1,6 +1,6 @@
 import { readFile } from 'fs/promises';
 import { join } from 'path';
-import { is_wire_api, type SDKConfig, type SDKKeys, type SDKUrls, WIRE_APIS, type WireApi } from '@tell-ai/sdk';
+import { is_wire_api, type SDKConfig, type SDKKeys, type SDKUrls, WIRE_APIS, type WireApi } from '@tell-ai/sdk/pure';
 
 /** One vendor row of the environment mapping. */
 type VendorSpec = {

@@ -206,6 +206,33 @@ function check_browser_no_builtins(failures) {
   }
 }
 
+// The browser bundle must stay self-contained: zero bare imports. A package
+// specifier would drag that package's graph into the browser build — the
+// shape that broke the Vite client once (`import '@tell-ai/sdk'` survived
+// in the minified ESM bundle while the CJS one looked clean).
+function check_browser_no_bare_imports(failures) {
+  let text = '';
+  try {
+    text = fs.readFileSync(BROWSER_JS, 'utf8');
+  } catch {
+    failures.push('BLOCKED: cannot read packages/core/dist/browser.js (build the core first)');
+    return;
+  }
+  // Import statements only (statement boundary + the `import` keyword), so a
+  // string that merely contains the word "from" is not a false positive.
+  const statement = /(?:^|[;})\n])\s*import\s*(?:[^"';]*?\s*from\s*)?["']([^"']+)["']/g;
+  const specifiers = new Set();
+  for (const match of text.matchAll(statement)) {
+    const spec = match[1];
+    if (!spec.startsWith('.') && !spec.startsWith('/')) {
+      specifiers.add(spec);
+    }
+  }
+  for (const spec of [...specifiers].sort()) {
+    failures.push(`BLOCKED: dist/browser.js has a bare import "${spec}" (the browser bundle must be self-contained)`);
+  }
+}
+
 // The browser bundle must import cleanly and expose the pure surface only:
 // wording helpers work, Node-only factories are absent.
 async function check_browser_functional(failures) {
@@ -224,12 +251,17 @@ async function check_browser_functional(failures) {
     'truncate_context',
     'resolve_core_config',
     'createLocalStorageAdapter',
+    'run_primitive_loop',
+    'create_core_runtime',
+    'createTellRuntime',
+    'create_cancellation_token',
+    'format_command_feedback',
   ]) {
     if (typeof mod[name] !== 'function') {
       failures.push(`BLOCKED: dist/browser.js missing export "${name}"`);
     }
   }
-  for (const name of ['create_node_executor', 'create_core_runtime', 'canonical_path', 'build_project_context']) {
+  for (const name of ['create_node_executor', 'canonical_path', 'build_project_context', 'build_sdk_config_from_env']) {
     if (name in mod) {
       failures.push(`BLOCKED: dist/browser.js leaks Node-only export "${name}"`);
     }
@@ -278,6 +310,7 @@ function check_no_loop_feedback_subpath(failures) {
   check_scaffold_timing(failures, signoff_failures.length === 0);
   check_browser_export(failures);
   check_browser_no_builtins(failures);
+  check_browser_no_bare_imports(failures);
   await check_browser_functional(failures);
   check_no_loop_feedback_subpath(failures);
 

@@ -12,6 +12,7 @@ import type {
   TellResult,
   TellRuntimeOptions,
 } from './runtime-api';
+import { createTellRuntime } from './runtime-api';
 import { DEFAULT_MAX_BUFFER_BYTES } from './runtime-limits';
 
 /** Default per-command internal buffer (owned by `./runtime-limits`). */
@@ -92,6 +93,7 @@ export function create_core_runtime(input: CoreRuntimeInput): CoreRuntime {
   };
   const loop_options: CoreLoopOptions = {
     runtime_options: base_options,
+    single_turn: createTellRuntime(base_options),
     ...(input.max_rounds !== undefined ? { max_rounds: input.max_rounds } : {}),
   };
 

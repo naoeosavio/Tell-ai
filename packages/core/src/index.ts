@@ -27,7 +27,13 @@ export {
   sanitize_exec_env,
 } from './exec';
 export type { CoreLoopOptions } from './loop';
-export { CHAIN_LIMIT_NOTICE, CONTINUE_INSTRUCTION, LOOP_MAX_ROUNDS, run_primitive_loop } from './loop';
+export {
+  CHAIN_LIMIT_NOTICE,
+  CONTINUE_INSTRUCTION,
+  chain_limit_notice,
+  LOOP_MAX_ROUNDS,
+  run_primitive_loop,
+} from './loop';
 export type {
   CommandFeedbackKind,
   CommandFeedbackOptions,

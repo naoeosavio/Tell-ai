@@ -118,14 +118,31 @@ describe('create_node_executor limits', () => {
     const executor = core.create_node_executor();
     const marker = `core-orphan-${process.pid}-${Date.now()}`;
     // Background child shares the detached group; without `kill(-pid)` it
-    // would survive the timeout and keep the marker file fresh.
-    const script = `rm -f /tmp/${marker}; sleep 30 & echo started; sleep 30`;
+    // would survive the timeout and keep the marker file fresh. The script
+    // reports the background pid so the check can look at THAT process
+    // instead of scanning the whole process table.
+    const script = `rm -f /tmp/${marker}; sleep 30 & echo bg=$!; sleep 30`;
     const result = await executor({ script, timeout_ms: 800 });
     assert.strictEqual(result.exit_code, core.EXEC_TIMEOUT_EXIT_CODE);
-    await new Promise((resolve) => setTimeout(resolve, 2500));
-    const { execFileSync } = require('node:child_process');
-    const ps = execFileSync('ps', ['-eo', 'args'], { encoding: 'utf8' });
-    assert.ok(!ps.includes('sleep 30'), 'timed-out sleepers must be gone');
+    const pid = Number(/bg=(\d+)/.exec(result.stdout)?.[1]);
+    assert.ok(Number.isInteger(pid) && pid > 0, `the script must report the background pid (stdout: ${JSON.stringify(result.stdout)})`);
+    // The background sleeper is the orphan candidate: it must be gone once
+    // the group is killed. Poll instead of a fixed sleep — the kill is
+    // immediate, but the kernel reaps asynchronously and a loaded machine
+    // can take longer. The intent is "no orphan survived", so wait for it.
+    const alive = () => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const deadline = Date.now() + 15_000;
+    while (Date.now() < deadline && alive()) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    assert.ok(!alive(), `the timed-out background sleeper (pid ${pid}) must be gone`);
   });
 
   it('cancels mid-run through the structural token', async () => {

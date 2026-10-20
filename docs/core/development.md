@@ -4,7 +4,7 @@
 
 ```
 packages/core/
-  package.json       # name @tell-ai/core 0.1.1, MIT, Node >=22, dep @tell-ai/sdk
+  package.json       # name @tell-ai/core 0.1.2, MIT, Node >=22, dep @tell-ai/sdk
   tsup.config.ts     # entry src/index.ts (+ browser.ts) → ESM+CJS+dts
   tsconfig.json      # extends ../../tsconfig.base.json, noEmit
   src/index.ts            # public exports (everything below, re-exported)
@@ -49,6 +49,7 @@ Core suites run offline (mocked `ModelPort`, recording stand-ins, temp dirs) —
 * `test/test-core-package.js` — provenance/phase gate (GPL→MIT signoff present, no `TELL_KEY`/`TELL_BASE_URL`, browser entry free of builtin imports). Fails closed: any `BLOCKED:` line keeps the core task blocked.
 * `test/test-core-api.js` — library-contract conformance (defaults, execution, approval, cancellation, order, idempotence, adapters, `tell()` compat).
 * `test/test-core-*.js` — one file per module: `config`, `paths`, `project-context`, `chain-decision`, `loop-feedback`, `runtime`, `risk`, `exec`, `limits`, `sdk-config`.
+* `test/test-core-browser.js` — functional browser gate: the built `dist/browser.cjs` runs in a `vm` context with no `process`/`Buffer`/`require` and every pure surface (risk, limits, config, chain-decision, loop-feedback, storage) is exercised, plus the loop (double round, transcript identical to the Node build) and `create_core_runtime` (commands reported, never executed).
 * Consumers pin the seam, not the internals: `test/test-cli-core-adapters.js` (CLI defaults/overrides through a recording executor), `test/test-tell-runtime-limits.js` (wiring), `test/test-tell-env.js` (env → `SDKConfig`).
 * `test/test-fuzz-coverage.js` (`bun run test:fuzz`, 41 checks, in `test`/`ci`): seeded fuzz with a deterministic seed (mulberry32) + `run_property` + delta-debugging shrink — every failure reports the seed and the minimal input. Covers pure SDK surfaces (`resolve_model_spec`, tags, `list_custom_models`) and core surfaces (truncation, limits, risk, paths, env scrub) plus cross-package differential comparison (CLI x core, Web x core).
 * `test/test-live-model.js` (`bun run test:live-model`, 7 checks, opt-in): live validation with a real model (`openrouter:minimax/minimax-m3.1-flash:free`); self-skips without `OPENROUTER_API_KEY`.

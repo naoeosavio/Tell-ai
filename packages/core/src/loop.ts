@@ -1,11 +1,5 @@
 import { COMMAND_FEEDBACK_INSTRUCTION, format_command_feedback } from './loop-feedback';
-import {
-  type CancellationToken,
-  createTellRuntime,
-  type RuntimeCommand,
-  type TellResult,
-  type TellRuntimeOptions,
-} from './runtime-api';
+import type { CancellationToken, RuntimeCommand, TellResult, TellRuntime, TellRuntimeOptions } from './runtime-api';
 import { DEFAULT_MAX_CHAIN_STEPS } from './runtime-limits';
 
 /** Default model→command rounds per run (owned by `./runtime-limits`). */
@@ -30,10 +24,26 @@ export function chain_limit_notice(max_rounds: number): string {
 /** Follow-up instruction for rounds that may still request a command (owned by `./loop-feedback`). */
 export const CONTINUE_INSTRUCTION = COMMAND_FEEDBACK_INSTRUCTION;
 
-/** Options for `run_primitive_loop` (ports arrive inside `runtime_options`). */
+/** Options for `run_primitive_loop` (ports arrive inside the injected runner). */
 export type CoreLoopOptions = {
-  /** Resolved options + injected ports for the single-turn SDK wiring. */
-  runtime_options: TellRuntimeOptions;
+  /**
+   * The host options the loop reads.
+   *
+   * Only the cancellation token matters here: the ports themselves are
+   * already baked into the injected `single_turn` runner, so the loop never
+   * constructs a runtime of its own. Partial on purpose — a browser host has
+   * no `TellRuntimeOptions` to build (no model, no executor); it passes the
+   * token alone.
+   */
+  runtime_options: Partial<TellRuntimeOptions>;
+  /**
+   * Injected single-turn runner (`createTellRuntime` on Node, a hand-made
+   * turn in the browser).
+   *
+   * The loop never builds one: it stays import-pure and Node-free, and the
+   * host owns the wiring (including the SDK main entry on Node).
+   */
+  single_turn: TellRuntime;
   /** Round cap (defaults to `LOOP_MAX_ROUNDS`, minimum 1). */
   max_rounds?: number;
 };
@@ -87,17 +97,22 @@ function merge_timeline(aggregated: string[], round_timeline: string[], first_ro
  * explicit approval the SDK wiring already fails closed, and the loop stops
  * on whatever non-executed status it reports.
  *
+ * Cancellation travels with the runner: the token from `runtime_options` is
+ * checked at every round boundary *and* forwarded to the single turn, so a
+ * cancel that fires mid-round still aborts before the command runs (the
+ * runner owns the executor boundary, the loop owns the round boundary).
+ *
  * @param message - Initial user message.
- * @param options - Resolved SDK options/ports plus the round cap.
+ * @param options - Injected single-turn runner plus the round cap.
  * @returns The aggregated `TellResult` (contract type reused from the SDK).
  */
 export async function run_primitive_loop(message: string, options: CoreLoopOptions): Promise<TellResult> {
   const runtime_options = options.runtime_options;
+  const single_turn = options.single_turn;
   const max_rounds =
     options.max_rounds !== undefined && Number.isFinite(options.max_rounds)
       ? Math.max(1, Math.floor(options.max_rounds))
       : LOOP_MAX_ROUNDS;
-  const single_turn = createTellRuntime(runtime_options);
   const token: CancellationToken | undefined = runtime_options.cancellation;
 
   const timeline: string[] = [];
@@ -112,7 +127,10 @@ export async function run_primitive_loop(message: string, options: CoreLoopOptio
     } else {
       // Still live — run the next single turn below.
     }
-    const round_result = await single_turn.run(current_message);
+    const round_result = await single_turn.run(
+      current_message,
+      token !== undefined ? { cancellation: token } : undefined,
+    );
     merge_timeline(timeline, round_result.timeline, first_round);
     first_round = false;
     text = round_result.text;

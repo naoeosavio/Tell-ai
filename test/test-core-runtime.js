@@ -187,6 +187,34 @@ describe('core primitive loop', () => {
     assert.strictEqual(mid.commands.length, 1);
   });
 
+  it('honors a per-call cancellation override before the command runs', async () => {
+    // The token fires while the model is still answering: the loop forwards
+    // it to the single turn, so the executor is never reached (fail-closed).
+    let live = false;
+    const token = { get cancelled() { return live; }, on_cancel: () => () => {} };
+    let executor_calls = 0;
+    const model = {
+      calls: () => 1,
+      async ask() {
+        live = true;
+        return 'run it\n<RUN>\necho one\n</RUN>';
+      },
+    };
+    const runtime = core.create_core_runtime({
+      config: core_config(),
+      model,
+      executor: async () => {
+        executor_calls += 1;
+        return { stdout: 'one', stderr: '', exit_code: 0 };
+      },
+      approval: async () => 'approved',
+    });
+    const result = await runtime.run('hi', { cancellation: token });
+    assert.strictEqual(result.status, 'cancelled');
+    assert.strictEqual(result.commands.length, 0);
+    assert.strictEqual(executor_calls, 0);
+  });
+
   it('self-heals on non-zero exit with FAILED feedback', async () => {
     const model = script_model([
       'try\n<RUN>\nrun-first\n</RUN>',

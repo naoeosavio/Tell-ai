@@ -137,7 +137,8 @@ the binary stays a binary. `tell()` keeps its signature and no-exec behavior.
 
 Offline examples (mocked `ModelPort`, no provider/network):
 `examples/core/core-node.ts`, `core-bun.ts` (env allowlist demo),
-`core-browser.ts` (injected `StorageLike`/`FetchLike`, no executor),
+`core-browser.ts` (the full `create_core_runtime` path with an injected
+`StorageLike`, no executor — commands are reported, never run),
 `core-express.ts` (backend handler shape).
 
 Suites: `bun run test:core-api` (11 tests: defaults, execution, approval,

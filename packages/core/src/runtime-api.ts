@@ -1,4 +1,4 @@
-import { extract_runs, get_system_prompt, strip_run_tags, strip_think_tags } from '@tell-ai/sdk';
+import { extract_runs, get_system_prompt, strip_run_tags, strip_think_tags } from '@tell-ai/sdk/pure';
 
 import {
   format_cancelled_command,
