@@ -1,8 +1,11 @@
 # Changelog
 
-## v0.4.0 — 2026-10-13
+## v0.4.0 — 2026-10-19
 
 ### Features
+- `i*` (`i-`, `i`, `i+`, `I`) now points at `google:gemini-4-argon`, Google's new flagship (Gemini 4 Argon). `gemini-3.1-pro` stays reachable through the explicit spec `google:gemini-3.1-pro`.
+- `h` moves in-place to `anthropic:claude-haiku-5-5` and grows into a full effort family: `h-` low, `h` medium, `h+` high, `h++` max, `H` high. Haiku 5.5 is the first Haiku with an adjustable effort and its thinking is always on, so the family exposes no `none` tier; `h++` reuses the existing Anthropic `max` rule (`effort: 'max'` + adaptive thinking).
+- `MODELS` now holds 152 aliases.
 - New generic `custom` vendor for any user-supplied OpenAI/Anthropic-shaped endpoint — OpenRouter, vLLM, Ollama, HuggingFace, Fireworks, LiteLLM, an OpenAI-compatible proxy. Use `custom:<model>`; there is no alias and no product-specific code in the SDK.
 - `custom` resolves its **wire per model id** through `resolve_wire(model)`: `gpt-`/`grok-`/`muse-` → OpenAI Responses, `claude-` → Anthropic Messages, everything else → Chat Completions. Auth follows the wire (bearer on chat/responses, `x-api-key` on messages), and `WIRE_APIS` / `is_wire_api()` expose the accepted set (`chat`, `responses`, `messages`).
 - `SDKConfig` gains three optional per-vendor maps used by `custom`: `models` (default model id, so the spec can be just `custom`), `wires` (pin the wire when an endpoint routes an id differently) and `headers` (extra request headers — routing ids, tenant tags, gateway auth — merged into every request).
@@ -10,6 +13,20 @@
 - New `list_custom_models(config)` reads `GET {urls.custom}/models` and annotates every id with the wire it would be called with — the discovery path for a user-supplied endpoint.
 - `get_wire_provider(spec)` replaces the two-branch factory inside `get_openai_wire_factory` and builds all three wires; `resolve_reasoning` maps a `custom` wire to a reasoning dialect (`messages` → Anthropic rules, so `max` still sends `effort: 'max'` + adaptive thinking; `responses` → OpenAI, plus `forceReasoning` for unknown model ids).
 - `models`, `wires` and `headers` also join the provider cache key, so two configs of the same endpoint with different injected headers no longer share a provider.
+
+### Fixes
+- `MODELS` has a **null prototype** and every alias lookup checks an own property: `resolve_model_spec('constructor')` (and `toString`, `valueOf`, `__proto__`, …) no longer crashes with `TypeError: alias.includes is not a function` — it raises the regular "unsupported vendor" error like any unknown alias.
+- The dot prefix survives the `vendor:model` form: `resolve_model_spec('custom:.kimi-k3')` returns `{ model: 'kimi-k3', fast: true }` instead of sending the literal `.kimi-k3` to the endpoint.
+- An alias keeps its expansion when the thinking slot is unknown: `resolve_model_spec('openai:g:bogus')` resolves to `gpt-6.1-sol:bogus` (the alias `g` used to be shipped verbatim as the model id).
+- `extract_runs` returns **every** `<RUN>` script (the array used to hold at most one, while the visible text dropped all of them) and closes a block only at the last `</RUN>` before the next `<RUN>`, so a command containing the literal `</RUN>` (`echo "</RUN>"`) is no longer truncated mid-script.
+- `list_custom_models` reports a malformed `/models` payload as a clear error instead of a raw `TypeError`, collapses duplicate ids and never builds a `//models` URL from a base URL with a trailing slash.
+- The provider cache key for injected headers is JSON-encoded, so two configs with different headers (`{"x-tenant":"a,region=b"}` vs `{"x-tenant":"a","region":"b"}`) no longer share one provider.
+- `summarize_context` strips the summarizer's `<think>` block: the reasoning never reaches the summary the CLI persists and replays as context.
+- `ask()`/`ask_stream()` accept a missing options object (the type is now the optional `AskOptions`); the call used to die with `TypeError: Cannot read properties of undefined`.
+
+### Tests
+- New `test/test-fuzz-coverage.js` (`bun run test:fuzz`, in `test`/`ci`, 41 checks): seeded PRNG (mulberry32) driving `run_property`, with a delta-debugging shrinker — every failure reports the seed and the minimal input. SDK invariants pinned: `resolve_model_spec` never crashes on hostile input, prototype keys stay unknown aliases, dot-prefix fast mode and alias expansion survive malformed slots, `extract_runs` returns every block (frontier closing, so a literal `</RUN>` inside a command is kept), `list_custom_models` tolerates malformed payloads.
+- New `test/test-live-model.js` (`bun run test:live-model`, opt-in, self-skips without `OPENROUTER_API_KEY`, 7 checks): one-shot answer, `<RUN>` extraction, streaming tokens, CLI resolution/execution and key non-leak against `openrouter:minimax/minimax-m3.1-flash:free`.
 
 ### Notes
 - `resolve_wire` takes only the model id (no base URL): wire selection is a property of the model, not of the endpoint. An endpoint that routes one id differently is handled by `config.wires`, not by a table in the SDK.
