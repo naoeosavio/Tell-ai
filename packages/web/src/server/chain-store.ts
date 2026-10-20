@@ -189,6 +189,27 @@ export function createChainStore(options: ChainStoreOptions = {}): {
     return at - run.updatedAt > ttlMs;
   }
 
+  /**
+   * Drops every run whose TTL has passed.
+   *
+   * Without this sweep an expired run would live in the map until someone
+   * asked for that exact id again — an unbounded leak (each run holds the
+   * whole client message history plus every event).
+   *
+   * @returns The number of reaped runs.
+   */
+  function pruneExpired(): number {
+    const at = now();
+    let reaped = 0;
+    for (const [runId, run] of runs) {
+      if (isExpired(run, at)) {
+        runs.delete(runId);
+        reaped += 1;
+      }
+    }
+    return reaped;
+  }
+
   function takeSnapshot(run: ChainRun): ChainRunSnapshot {
     return {
       runId: run.runId,
@@ -237,6 +258,7 @@ export function createChainStore(options: ChainStoreOptions = {}): {
 
   return {
     createRun(messages: ChainMessage[]): ChainRunSnapshot {
+      pruneExpired();
       const at = now();
       const run: ChainRun = {
         runId: crypto.randomUUID(),
@@ -471,6 +493,7 @@ export function createChainStore(options: ChainStoreOptions = {}): {
     },
 
     size(): number {
+      pruneExpired();
       return runs.size;
     },
   };

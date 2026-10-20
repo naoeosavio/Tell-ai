@@ -5,7 +5,12 @@
  * payload caps) are owned by `@tell-ai/core` and only re-exported here.
  */
 
-import { PAYLOAD_MAX_CONTENT_CHARS, PAYLOAD_MAX_MESSAGES, PAYLOAD_MAX_SYSTEM_CHARS } from '@tell-ai/core';
+import {
+  assess_base_risk,
+  PAYLOAD_MAX_CONTENT_CHARS,
+  PAYLOAD_MAX_MESSAGES,
+  PAYLOAD_MAX_SYSTEM_CHARS,
+} from '@tell-ai/core';
 
 // ---------------------------------------------------------------------------
 // Sensitive paths (read/write deny regardless of traversal state)
@@ -114,7 +119,15 @@ export function createRateLimiter(options: RateLimiterOptions): RateLimiter {
   return {
     check(key: string, now: number = Date.now()): boolean {
       if (!key) return false;
-      if (hits.size >= RATE_LIMIT_MAX_KEYS) purge(now);
+      if (hits.size >= RATE_LIMIT_MAX_KEYS) {
+        purge(now);
+        // The map is a hard cap: when every tracked key is still inside the
+        // window, the oldest entry is evicted (the flood is bounded).
+        if (hits.size >= RATE_LIMIT_MAX_KEYS) {
+          const oldest = hits.keys().next();
+          if (!oldest.done) hits.delete(oldest.value);
+        }
+      }
       const stamps = (hits.get(key) || []).filter((t) => now - t < windowMs);
       if (stamps.length >= max) {
         hits.set(key, stamps);
@@ -250,47 +263,20 @@ export function resolveStreamMode(requestValue: unknown, serverDefault: boolean)
 }
 
 // ---------------------------------------------------------------------------
-// Command risk assessment (moved from server.ts, extended)
+// Command risk assessment (owned by @tell-ai/core)
 // ---------------------------------------------------------------------------
 
-function highRiskPatterns(): RegExp[] {
-  const privilegedPath = [
-    String.raw`(?:/(?:etc|boot|dev|proc|sys|usr|bin|sbin|lib|lib64)(?:\b|/)|`,
-    String.raw`/(?:var/(?:spool/cron|cron)|etc/cron(?:\.(?:d|daily|hourly|monthly|weekly))?)(?:\b|/)|`,
-    String.raw`(?:~|\$HOME)/(?:\.config/(?:autostart|systemd/user)|\.local/share/systemd/user)(?:\b|/))`,
-  ].join('');
-  return [
-    /\b(?:sudo|doas|pkexec)\b/,
-    /(?:^|[\s;&|(])(?:[^\s;&|()]*\/)?(?:ba|z|da|k)?sh\b[^;&|]*\s-c(?:\s|$)/,
-    /(?:^|[\s;&|(])(?:[^\s;&|()]*\/)?(?:curl|wget|nc|ncat|netcat|telnet|ssh|scp|sftp|ftp)\b/,
-    /(?:^|[\s;&|(])(?:[^\s;&|()]*\/)?printenv\b/,
-    /\/proc(?:\/|\b)/,
-    /\brm\s+(?:-[^\s]*[rRfF][^\s]*)(?:\s|$)/,
-    /\bgit\s+clean\b[^;&|]*(?:--force\b|-[^-][^\s]*[fdx])/,
-    /\b(?:mkfs|shutdown|reboot)\b/,
-    /\bdd\b.*\bof=/,
-    /\b(chmod|chown)\s+-R\b.*\s\/(?:\s|$)/,
-    /(?:curl|wget)\b[^|;&]*\|\s*(?:ba)?sh\b/,
-    /(?:^|[\s;&|])(?:crontab|systemctl\s+--user\s+enable)\b/,
-    new RegExp(String.raw`(?:^|[\s;&|])(?:cp|mv|ln)\b[^;&|]*\s["']?${privilegedPath}`),
-    new RegExp(String.raw`(?:^|[\s;&|])sed\b[^;&|]*\s-i[^\s;&|]*[^;&|]*\s["']?${privilegedPath}`),
-    new RegExp(String.raw`(?:^|[\s;&|])tee\b[^;&|]*\s["']?${privilegedPath}`),
-    new RegExp(String.raw`(?:^|[\s;&|])\d*(?:>>?|>\||&>)\s*["']?${privilegedPath}`),
-    // Interpreter eval: python|python3|node|perl|ruby with -c/-e (RCE via stdin of the exec shell)
-    /\b(?:python3?|node|perl|ruby)\b[^;&|]*\s(?:-c|-e|--eval)\b/,
-    // `env` used to launch commands (bypasses alias/scope expectations)
-    /\benv\b/,
-    // Payload de-obfuscation
-    /\bbase64\s+(?:-[a-zA-Z]+\s+)*(?:-d\b|--decode\b)/,
-    // Shell expansion / substitution
-    /\$\{[^}]*\}/,
-    /\$\([^)]*\)/,
-    /`[^`]*\|[^`]*`/,
-  ];
-}
-
-/** True when the script matches high-risk patterns and must be blocked. */
+/**
+ * True when the script matches the core's strict risk profile.
+ *
+ * The sandbox uses the core owner (`assess_base_risk(script, 'strict')`) —
+ * the Web profile is the strict one (any interpreter eval, bare `env`,
+ * `base64 -d`, shell expansions), so the rules live in a single place and
+ * can never drift from the CLI's matrix.
+ *
+ * @param script - Command script to classify.
+ * @returns Whether the script must be blocked.
+ */
 export function isHighRiskScript(script: string): boolean {
-  const compact = script.replace(/\\\n/g, ' ').replace(/\s+/g, ' ').trim();
-  return highRiskPatterns().some((pattern) => pattern.test(compact));
+  return assess_base_risk(script, 'strict').risky;
 }

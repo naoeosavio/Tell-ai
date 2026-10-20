@@ -247,6 +247,25 @@ function dropContinuationIfTerminal(runId: string, snapshot: ChainRunSnapshot | 
     // Still advancing — the next confirm needs the stored context.
   }
 }
+
+/**
+ * Drops the continuations of runs the store no longer knows.
+ *
+ * A run that expired (or was reaped) without ever producing a terminal
+ * snapshot would keep its model spec and system prompt alive forever.
+ */
+function pruneContinuations(): void {
+  for (const runId of [...chainContinuations.keys()]) {
+    if (chainStore.getRun(runId) === null) {
+      chainContinuations.delete(runId);
+    }
+  }
+}
+
+// Periodic sweep: an idle server must not keep expired runs (and their
+// continuations) alive between requests.
+const continuationSweep = setInterval(pruneContinuations, 60_000);
+continuationSweep.unref?.();
 // Brute-force shield for the login page: 5 attempts per 15min per IP.
 const authRateLimit = createRateLimiter({ max: 5, windowMs: 15 * 60_000 });
 let activeExecutions = 0;
@@ -304,7 +323,9 @@ app.use((req, res, next) => {
   if (!apiPath.startsWith('/api/')) return next();
   if (apiPath === '/api/auth/status' || apiPath === '/api/auth/verify') return next();
   const header = req.headers.authorization || '';
-  const provided = header.startsWith('Bearer ') ? header.slice(7) : '';
+  // RFC 7235: the auth scheme is case-insensitive (`bearer`, `Bearer`).
+  const scheme_match = /^bearer\s+(.*)$/i.exec(header);
+  const provided = scheme_match?.[1] ?? '';
   if (provided && tokensEqual(provided, TELL_TOKEN)) return next();
   res.setHeader('WWW-Authenticate', 'Bearer realm="tell-web"');
   res.status(401).json({ error: 'Unauthorized: missing or invalid token' });
@@ -365,6 +386,11 @@ function getFileTree(dir: string, baseDir = dir, depth = 0, count = { nodes: 0 }
 
     const fullPath = path.join(dir, item);
     const relPath = path.relative(baseDir, fullPath);
+    // Sensitive files are never served (the file API denies them): the tree
+    // must not even leak their names.
+    if (isSensitiveRelPath(relPath)) {
+      continue;
+    }
     let stat: fs.Stats | undefined;
     try {
       stat = fs.lstatSync(fullPath);
@@ -402,14 +428,44 @@ function getFileTree(dir: string, baseDir = dir, depth = 0, count = { nodes: 0 }
 // ---------------------------------------------------------------------------
 function mergePaneScrollback(session: TellSession): TellSession {
   const next = { ...session, terminal: { ...session.terminal } };
-  next.terminal.tabs = next.terminal.tabs.map((tab) => ({
-    ...tab,
-    panes: tab.panes.map((pane) => {
-      const live = getScrollback(pane.id);
-      return { ...pane, scrollback: live || pane.scrollback || '' };
-    }),
-  }));
+  const tabs = Array.isArray(next.terminal.tabs) ? next.terminal.tabs : [];
+  next.terminal.tabs = tabs.map((tab) => {
+    const panes = Array.isArray(tab?.panes) ? tab.panes : [];
+    return {
+      ...tab,
+      panes: panes.map((pane) => {
+        const live = getScrollback(pane.id);
+        return { ...pane, scrollback: live || pane.scrollback || '' };
+      }),
+    };
+  });
   return next;
+}
+
+/**
+ * Validates the client-owned session payload before it is merged.
+ *
+ * A malformed `terminal` (tabs/panes that are not arrays) must be rejected
+ * with a 400 instead of crashing the merge with a 500.
+ *
+ * @param body - Client payload.
+ * @returns An error message, or null when the payload is usable.
+ */
+function validateSessionPayload(body: Partial<TellSession>): string | null {
+  if (body.terminal !== undefined) {
+    if (typeof body.terminal !== 'object' || body.terminal === null) {
+      return 'invalid session payload';
+    }
+    const tabs = (body.terminal as { tabs?: unknown }).tabs;
+    if (tabs !== undefined) {
+      if (!Array.isArray(tabs)) return 'invalid session payload';
+      for (const tab of tabs) {
+        const panes = (tab as { panes?: unknown })?.panes;
+        if (panes !== undefined && !Array.isArray(panes)) return 'invalid session payload';
+      }
+    }
+  }
+  return null;
 }
 
 function buildMergedSession(body: Partial<TellSession>): TellSession {
@@ -456,8 +512,8 @@ app.get('/api/status', (_req, res) => {
 
 // API: Read file content (returns mtime for optimistic-concurrency save checks)
 app.get('/api/file', (req, res) => {
-  const filePath = req.query['path'] as string;
-  if (!filePath) {
+  const filePath = req.query['path'];
+  if (typeof filePath !== 'string' || !filePath) {
     return res.status(400).json({ error: 'File path is required' });
   }
 
@@ -501,8 +557,8 @@ app.get('/api/file', (req, res) => {
 
 // API: Download raw file bytes (used for binary/large files)
 app.get('/api/file/raw', (req, res) => {
-  const filePath = req.query['path'] as string;
-  if (!filePath) {
+  const filePath = req.query['path'];
+  if (typeof filePath !== 'string' || !filePath) {
     return res.status(400).json({ error: 'File path is required' });
   }
 
@@ -1013,6 +1069,41 @@ function denyChainScript(
 }
 
 /**
+ * Executes one chain command inside the run (Auto-Run path).
+ *
+ * The command is executed with the same executor as `/api/execute`; the
+ * output becomes the next model turn, and the run keeps going.
+ *
+ * @param runId - Server-side run to advance.
+ * @param script - Approved command script.
+ * @returns True when the command ran (even with a non-zero exit code).
+ */
+async function runChainScript(runId: string, script: string): Promise<boolean> {
+  serverState.commandsRun += 1;
+  activeExecutions += 1;
+  try {
+    const result = await core_execute({
+      script,
+      cwd: CWD,
+      timeout_ms: EXEC_TIMEOUT_MS,
+      max_output_bytes: EXEC_MAX_BUFFER,
+    });
+    const output = cap_execution_output(result.stdout, result.stderr);
+    chainStore.pushMessage(runId, {
+      role: 'user',
+      content: format_executed_command(script, truncateChainFeedbackTail(output)),
+    });
+    chainStore.appendEvent(runId, { type: 'executed', script, output, exitCode: result.exit_code });
+    return true;
+  } catch (error: unknown) {
+    chainStore.appendEvent(runId, { type: 'failed', script, text: model_error_message(error) });
+    return false;
+  } finally {
+    activeExecutions -= 1;
+  }
+}
+
+/**
  * Advances one chain run server-side: calls the model, and either completes
  * (final answer, deny, failure, round cap) or pauses with a pending approval.
  * Every command after a confirm re-enters here, so the loop never lives in
@@ -1062,6 +1153,15 @@ async function advanceChainRun(runId: string, modelSpec: string, system: string)
     } else if (isHighRiskScript(script)) {
       chainStore.appendEvent(runId, { type: 'denied', script, text: 'high-risk: blocked without execution' });
       return chainStore.completeRun(runId, generated.text);
+    } else if (AUTO_EXECUTE) {
+      // Auto-Run (`-y`): the server executes the safe command itself instead
+      // of pausing for an approval the operator already granted.
+      const executed = await runChainScript(runId, script);
+      if (!executed) {
+        return chainStore.failRun(runId, 'Chain execution failed');
+      } else {
+        // The command output is now the context — the loop asks the model again.
+      }
     } else {
       const pending = chainStore.requestApproval(runId, script);
       if (pending === null) {
@@ -1101,6 +1201,7 @@ app.post('/api/chain', async (req, res) => {
 
   const modelSpec = modelAlias || DEFAULT_MODEL;
   serverState.aiTurns += 1;
+  pruneContinuations();
 
   try {
     try {
@@ -1199,7 +1300,17 @@ app.post('/api/chain/:runId/confirm', async (req, res) => {
       dropContinuationIfTerminal(runId, settled ?? skipped);
       return res.json(settled ?? skipped);
     } else {
-      const continued = await continueChainAfterConfirm(runId);
+      let continued: ChainRunSnapshot | null = null;
+      try {
+        continued = await continueChainAfterConfirm(runId);
+      } catch (error: unknown) {
+        // The continuation failed — the run stays answerable, but the caller
+        // must learn that the chain could not advance.
+        console.error('Chain continuation failed:', error instanceof Error ? error.message : String(error));
+        const settled_failed = chainStore.settleDecision(runId, decisionId);
+        dropContinuationIfTerminal(runId, settled_failed ?? skipped);
+        return res.status(500).json({ error: 'Chain continuation failed', run: settled_failed ?? skipped });
+      }
       // Settle the idempotency snapshot on the post-continuation state so a
       // retry replays exactly this answer (never a stale prefix, never a re-run).
       const settled = chainStore.settleDecision(runId, decisionId);
@@ -1309,6 +1420,10 @@ app.put('/api/session', (req, res) => {
   if (!body || typeof body !== 'object') {
     return res.status(400).json({ error: 'session object is required' });
   }
+  const invalid = validateSessionPayload(body);
+  if (invalid !== null) {
+    return res.status(400).json({ error: invalid });
+  }
   const merged = buildMergedSession(body);
   const ok = saveSession(CWD, merged);
   return res.json({ success: ok, session: merged });
@@ -1378,6 +1493,13 @@ app.post('/api/session/snapshot', async (req, res) => {
   } catch (error: any) {
     return res.status(500).json({ error: error.message });
   }
+});
+
+// A rejected promise in one request must never take the whole sandbox down
+// (every PTY pane and every in-flight run would die with it). Express 4 does
+// not catch async handler rejections, so the guard lives here.
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled rejection:', reason instanceof Error ? reason.message : String(reason));
 });
 
 // Setup Vite dev server middleware in development, and static file serving in production
