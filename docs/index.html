@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#0B0A08">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Instrument+Serif:ital,wght@1,400&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&family=Instrument+Serif:ital,wght@1,400&display=swap" rel="stylesheet">
 <style>
   :root{
     --bg:#0B0A08; --bg2:#12110D; --bg3:#181611;
@@ -118,6 +118,21 @@
   .tl.ok{color:var(--green)} .tl.dim{color:var(--fg2)} .tl.err{color:var(--red)}
   .tl .ps1{color:var(--mut)} .tl .tc{color:var(--fg)}
   .tl .run{color:var(--amber2)}
+  /* arte ASCII: precisa de fonte com box-drawing de largura uniforme —
+     o IBM Plex Mono (fonte do corpo) não tem █ ╗ ═ e cairia num fallback
+     de largura diferente, desmontando a arte. Mesma técnica do
+     TellLogoLoop do sandbox: stack própria, ligatures desligadas, sem
+     quebra de linha. */
+  .tl.ascii{
+    font-family:"JetBrains Mono","DejaVu Sans Mono","Noto Sans Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    font-size:.72em; line-height:1.35; white-space:pre; word-break:normal;
+    overflow-x:auto; overflow-y:hidden; color:var(--fg);
+    letter-spacing:0; word-spacing:0;
+    font-kerning:none; font-variant-ligatures:none; font-feature-settings:"liga" 0,"calt" 0;
+    font-synthesis:none; text-rendering:optimizeSpeed;
+  }
+  .tl.ascii::-webkit-scrollbar{height:5px}
+  .tl.ascii-dot{letter-spacing:.32em;color:var(--mut)}
 
   /* ---------- marquee ---------- */
   .mq{overflow:hidden;border-bottom:1px solid var(--line);padding:13px 0;user-select:none}
@@ -1883,7 +1898,7 @@
     const cmd = q.split(/\s+/)[0];
     const arg = raw.replace(/^\S+\s*/, '');
 
-    if (cmd === 'clear'){ tout.innerHTML = ''; await banner(true); return; }
+    if (cmd === 'clear'){ stopLogo(); logoEl = null; logoDotEl = null; tout.innerHTML = ''; await banner(true); return; }
     if (cmd === 'help'){ out(L.help); return; }
     if (cmd === 'models'){ out(OUT.models); return; }
     if (cmd === 'sdk'){ out(OUT.sdk); return; }
@@ -1937,18 +1952,66 @@
 
   async function banner(short){
     const L = T[CUR];
-    const b = out(BANNER_TEXT, 'ascii'); b.style.fontSize = '.74em'; b.style.lineHeight = '1.25';
+    logoIdx = 0;
+    logoEl = out('', 'ascii');
+    logoDotEl = out('', 'meta ascii-dot');
+    renderLogo();
+    startLogo();
     out(short ? L['bn.short'] : L['bn.2'], 'meta');
     out(L['bn.3'], 'meta');
     out('');
   }
-  const BANNER_TEXT = [
-    '████████╗███████╗██╗     ██╗        █████╗ ██╗',
-    '╚══██╔══╝██╔════╝██║     ██║       ██╔══██╗██║',
-    '   ██║   █████╗  ██║     ██║       ███████║██║',
-    '   ██║   ██╔══╝  ██║     ██║       ██╔══██║██║',
-    '   ██║   ███████╗███████╗███████╗  ██║  ██║██║'
-  ].join('\n');
+
+  /* ---------- logo ASCII: os mesmos frames do TellLogoLoop do sandbox ---------- */
+  const LOGO_FRAMES = [
+    { label:'TELL AI', art:[
+      '████████╗███████╗██╗     ██╗        █████╗ ██╗',
+      '╚══██╔══╝██╔════╝██║     ██║       ██╔══██╗██║',
+      '   ██║   █████╗  ██║     ██║       ███████║██║',
+      '   ██║   ██╔══╝  ██║     ██║       ██╔══██║██║',
+      '   ██║   ███████╗███████╗███████╗  ██║  ██║██║'] },
+    { label:'TELL SDK', art:[
+      '████████╗███████╗██╗     ██╗       ███████╗██████╗ ██╗  ██╗',
+      '╚══██╔══╝██╔════╝██║     ██║       ██╔════╝██╔══██╗██║ ██╔╝',
+      '   ██║   █████╗  ██║     ██║       ███████╗██║  ██║█████╔╝ ',
+      '   ██║   ██╔══╝  ██║     ██║       ╚════██║██║  ██║██╔═██╗ ',
+      '   ██║   ███████╗███████╗███████╗  ███████║██████╔╝██║  ██╗'] },
+    { label:'TELL CLI', art:[
+      '████████╗███████╗██╗     ██╗        ██████╗  ██████╗  ██████╗ ███████╗',
+      '╚══██╔══╝██╔════╝██║     ██║       ██╔════╝ ██╔═══██╗ ██╔══██╗██╔════╝',
+      '   ██║   █████╗  ██║     ██║       ██║      ██║   ██║ ██████╔╝█████╗  ',
+      '   ██║   ██╔══╝  ██║     ██║       ██║      ██║   ██║ ██╔══██╗██╔══╝  ',
+      '   ██║   ███████╗███████╗███████╗  ╚██████╗ ╚██████╔╝ ██║  ██║███████╗'] },
+    { label:'TELL AI', art:[
+      '████████╗███████╗██╗     ██╗        ██████╗██╗     ██╗',
+      '╚══██╔══╝██╔════╝██║     ██║       ██╔════╝██║     ██║',
+      '   ██║   █████╗  ██║     ██║       ██║     ██║     ██║',
+      '   ██║   ██╔══╝  ██║     ██║       ██║     ██║     ██║',
+      '   ██║   ███████╗███████╗███████╗  ╚██████╗███████╗██║'] },
+    { label:'TELL WEB', art:[
+      '████████╗███████╗██╗     ██╗       ██╗    ██╗███████╗██████╗ ',
+      '╚══██╔══╝██╔════╝██║     ██║       ██║    ██║██╔════╝██╔══██╗',
+      '   ██║   █████╗  ██║     ██║       ██║ ██╗ ██║█████╗  ██████╔╝',
+      '   ██║   ██╔══╝  ██║     ██║       ██║███╗██║██╔══╝  ██╔══██╗',
+      '   ██║   ███████╗███████╗███████╗  ╚███╔███╔╝███████╗██████╔╝'] },
+  ];
+  const LOGO_MS = 2000;
+  let logoIdx = 0, logoTimer = null, logoEl = null, logoDotEl = null;
+
+  function renderLogo(){
+    if (!logoEl) return;
+    const i = logoIdx % LOGO_FRAMES.length;
+    logoEl.textContent = LOGO_FRAMES[i].art.join('\n');
+    if (logoDotEl) logoDotEl.textContent = LOGO_FRAMES.map((_, k) => k === i ? '■' : '□').join('');
+  }
+  function startLogo(){
+    stopLogo();
+    if (reduced) { renderLogo(); return; }
+    logoTimer = setInterval(() => { logoIdx = (logoIdx + 1) % LOGO_FRAMES.length; renderLogo(); }, LOGO_MS);
+  }
+  function stopLogo(){
+    if (logoTimer) { clearInterval(logoTimer); logoTimer = null; }
+  }
 
   new IntersectionObserver((es, obs) => {
     if (es[0].isIntersecting){
