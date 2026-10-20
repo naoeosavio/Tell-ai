@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Tell-ai — CLI + SDK + web para LLMs</title>
+<title>Tell-ai — CLI + SDK + CORE + web para LLMs</title>
 <meta name="description" content="Tell-ai é open-source: CLI one-shot no shell com execução confirmada, SDK MIT para Node/Bun/browser, o core MIT (runtime compartilhado) e um web v0.3.2 (terminal, arquivos e chat no navegador via tell -w).">
 <meta name="theme-color" content="#0B0A08">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -324,7 +324,7 @@
       <a href="#recursos" data-i18n="nav.feat">recursos</a>
       <a href="#modelos" data-i18n="nav.models">modelos</a>
       <a href="#demo" data-i18n="nav.demo">demo</a>
-      <a href="#sdk" data-i18n="nav.sdk">sdk <i>4.1.0</i></a>
+      <a href="#sdk" data-i18n="nav.sdk">sdk <i>0.4.1</i></a>
       <a href="#core" data-i18n="nav.core">core <i>0.1.2</i></a>
       <a href="#sandbox" data-i18n="nav.sb">web <i>v0.3.2</i></a>
       <a href="#instalar" data-i18n="nav.inst">instalar</a>
@@ -377,7 +377,7 @@
           <span>★ <b class="gh-stars">—</b> <span data-i18n="hero.m2">stars</span></span>
           <span><b class="gh-forks">—</b> <span data-i18n="hero.m3">forks</span></span>
           <span>CLI: <b>0.7.1</b> · GPL-3.0</span>
-          <span>SDK: <b>4.1.0</b> · MIT</span>
+          <span>SDK: <b>0.4.1</b> · MIT</span>
           <span>Core: <b>0.1.2</b> · MIT</span>
           <span data-i18n="hero.m.sb">web: <b>v0.3.2</b></span>
         </div>
@@ -476,7 +476,7 @@
 
       <div class="feat rv"><span class="i">01</span><span class="f">&lt;RUN&gt;</span><p class="d" data-i18n="f1">O modelo propõe comandos entre tags e <b>você aprova um a um</b>. Timeout de 120s por comando; <code>sudo</code>, <code>rm -rf</code>, <code>mkfs</code>, <code>curl|sh</code> e escritas em <code>/etc</code> são bloqueados sempre.</p></div>
       <div class="feat rv"><span class="i">02</span><span class="f">| &nbsp;-i</span><p class="d" data-i18n="f2">Pipes de verdade: <code>npm test 2&gt;&amp;1 | tell -i "why are these failing?"</code> — stdin vira contexto, não vira bagunça.</p></div>
-      <div class="feat rv"><span class="i">03</span><span class="f">-m d</span><p class="d" data-i18n="f3"><b>152 aliases</b> para os modelos de OpenAI, Anthropic, Google, xAI, DeepSeek, Alibaba, Z.ai, Moonshot, Meta e Xiaomi + self-hosted — cada um com sua régua de thinking. O default é <code>g</code> (via <code>TELL_MODEL</code>). <a href="#modelos">resolvedor interativo ↘</a></p></div>
+      <div class="feat rv"><span class="i">03</span><span class="f">-m d</span><p class="d" data-i18n="f3"><b>152 aliases</b> para os modelos de OpenAI, Anthropic, Google, xAI, DeepSeek, Alibaba, Z.ai, Moonshot, Meta e Xiaomi + self-hosted — cada um com sua régua de thinking. O default é <code>g</code> (via <code>TELL_MODEL</code>); qualquer endpoint próprio entra como <code>custom:&lt;model&gt;</code> — e <code>tell --models</code> lista o catálogo do endpoint, agrupado por wire. <a href="#modelos">resolvedor interativo ↘</a></p></div>
       <div class="feat rv"><span class="i">04</span><span class="f">--stream<br>--think</span><p class="d" data-i18n="f4"><code>--stream</code> imprime token a token; <code>--think</code> mostra o reasoning. Só mudam o que aparece: log, contexto e extração de <code>&lt;RUN&gt;</code> ficam idênticos.</p></div>
       <div class="feat rv"><span class="i">05</span><span class="f">--chain</span><p class="d" data-i18n="f5">Multi-step: o modelo roda um comando, lê a saída e continua — até 8 rodadas até a resposta final.</p></div>
       <div class="feat rv"><span class="i">06</span><span class="f">-c / --ctx</span><p class="d" data-i18n="f6">Contexto persistente por diretório+modelo em <code>~/.ai/tell_context</code>. Nomeie com <code>--ctx %projeto</code>, retome por <code>@0</code>, reset com <code>-n</code>; <code>--ctx</code> sem ref é prompt do contexto default.</p></div>
@@ -485,7 +485,7 @@
       <div class="feat rv"><span class="i">09</span><span class="f">q / v</span><p class="d" data-i18n="f9">Modelos self-hosted com a mesma ergonomia: <code>q</code> para endpoints locais, <code>v</code> para Vast — e qualquer vendor sem handler cai no provider OpenAI-compatible genérico.</p></div>
       <div class="feat rv"><span class="i">10</span><span class="f">tell -w</span><p class="d" data-i18n="f10">O web v0.3.2 no navegador: terminal, explorador de arquivos e chat ancorados ao diretório. <code>--stream</code>, <code>--think</code>, <code>--chain</code>, <code>-y</code>, <code>--no-exec</code> e <code>--require-approval</code> são repassados. <a href="#sandbox">ver a seção ↘</a></p></div>
       <div class="feat rv"><span class="i">11</span><span class="f">@tell-ai/<br>core</span><p class="d" data-i18n="f11">O runtime compartilhado (MIT): contrato injetável, executor Node, risco base, caminhos fail-closed e os limites operacionais. A CLI e o web são adaptadores finos sobre ele. <a href="#core">ver a seção ↘</a></p></div>
-      <div class="feat rv"><span class="i">12</span><span class="f">.tellrc</span><p class="d" data-i18n="f12">Config em INI, sem JSON: <code>~/.tellrc</code> (usuário) e <code>&lt;cwd&gt;/.tellrc</code> (projeto). Precedência <b>flag › env › projeto › usuário</b>; o <code>deny</code> só acumula. Perfis, aliases, temperatura, <code>system-file</code> e limites.</p></div>
+      <div class="feat rv"><span class="i">12</span><span class="f">.tellrc</span><p class="d" data-i18n="f12">Config em INI, sem JSON: <code>~/.tellrc</code> (usuário) e <code>&lt;cwd&gt;/.tellrc</code> (projeto). Precedência <b>flag › env › projeto › usuário</b>; o <code>deny</code> só acumula. Perfis, aliases, temperatura, <code>system-file</code> e limites. <code>--profile node</code> (ou <code>security</code>, <code>devops</code>, ou o seu) troca a postura.</p></div>
       <div class="feat rv"><span class="i">13</span><span class="f">--exec-timeout<br>--max-chain</span><p class="d" data-i18n="f13">Todo número tem um dono: <code>--exec-timeout</code> (120s), <code>--stdin-timeout</code>, <code>--stdin-max-bytes</code>, <code>--context-max-chars</code>, <code>--max-chain</code> (1..128), <code>--max-buffer</code> e <code>--output-max-bytes</code>. Precedência <b>flag › env › tellrc › default</b> — e valor inválido falha antes de qualquer chamada ao modelo.</p></div>
       <div class="feat rv"><span class="i">14</span><span class="f">--system<br>--temperature</span><p class="d" data-i18n="f14">Contexto que você controla: <code>--system</code> (instruções custom), <code>--system-file</code> (64 KB) e <code>--temperature</code> (0..2) — por flag, env ou <code>.tellrc</code>. As instruções custom entram <b>antes</b> do prompt de segurança, nunca no lugar dele.</p></div>
     </div>
@@ -497,7 +497,7 @@
       <div class="man-top rv">
         <div>
           <p class="slabel" data-i18n="s4.label"><b>§ 04</b> — modelos</p>
-          <h2 data-i18n="s4.h2">Dez vendors, <em class="serif">uma letra.</em></h2>
+          <h2 data-i18n="s4.h2">Dez vendors, <em class="serif">uma letra.</em> E o seu endpoint, <code>custom</code>.</h2>
         </div>
         <p class="mini">TELL-MODEL(5) · 152 aliases</p>
       </div>
@@ -705,7 +705,7 @@
           </div>
           <div class="why-i">
             <h3 data-i18n="c3.h3">MIT, e <em>browser-safe</em></h3>
-            <p data-i18n="c3.p">O pacote é MIT (<code>packages/core/LICENSE</code> é MIT próprio) e a condition <code>browser</code> entrega a superfície pura: risk, limits, config, chain-decision, loop-feedback, custom-system e o adapter de storage. Ficam de fora só os valores que importam o SDK (<code>createTellRuntime</code>) e o que é Node: exec, paths, project-context e sdk-config.</p>
+            <p data-i18n="c3.p">O pacote é MIT (<code>packages/core/LICENSE</code> é MIT próprio) e a condition <code>browser</code> entrega o runtime inteiro: <code>createTellRuntime</code>, <code>create_core_runtime</code> e <code>run_primitive_loop</code>. O core só depende do SDK pela entry <code>@tell-ai/sdk/pure</code> (sem provider, sem rede, sem builtin), então o bundle é autocontido — zero import, ~30 KB. Ficam de fora só o que é Node: exec, paths, project-context e sdk-config.</p>
           </div>
         </div>
       </div>
@@ -791,7 +791,7 @@
 
   <section class="cta rv">
     <h2 data-i18n="cta.h2">O próximo prompt está a um <em class="serif">pipe</em> de distância.</h2>
-    <p data-i18n="cta.p">CLI GPL-3.0, SDK MIT, web v0.3.2 já rodando — e espaço para deixar a sua marca.</p>
+    <p data-i18n="cta.p">CLI 0.7.1 (GPL-3.0), SDK 0.4.1 (MIT), core 0.1.2 (MIT), web v0.3.2 já rodando — e espaço para deixar a sua marca.</p>
     <a class="gh-big" href="https://github.com/naoeosavio/Tell-ai" target="_blank" rel="noopener">
       <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
       github.com/naoeosavio/Tell-ai <span class="st">★ <span class="gh-stars">—</span></span>
@@ -829,7 +829,7 @@
   pt: {
     'meta.title':'Tell-ai — CLI + SDK + core + web para LLMs',
     'meta.desc':'Tell-ai é open-source: CLI one-shot no shell com execução confirmada, SDK MIT para Node/Bun/browser, o core MIT (runtime compartilhado) e um web v0.3.2 (terminal, arquivos e chat no navegador via tell -w).',
-    'nav.feat':'recursos','nav.models':'modelos','nav.demo':'demo','nav.sdk':'sdk','nav.core':'core','nav.sb':'web <i>v0.3.2</i>','nav.inst':'instalar',
+    'nav.feat':'recursos','nav.models':'modelos','nav.demo':'demo','nav.sdk':'sdk <i>0.4.1</i>','nav.core':'core <i>0.1.2</i>','nav.sb':'web <i>v0.3.2</i>','nav.inst':'instalar',
     'hero.eyebrow':'<b>//</b> CLI + SDK + core + web v0.3.2 — open-source, one-shot, execução confirmada',
     'h1a':'SUA IA,','h1b':'<em class="serif">no terminal.</em>',
     'hero.sub':'O Tell-ai leva modelos de linguagem para onde o seu código já vive: <b>o shell</b>. Pergunte, pipeie, deixe o modelo propor comandos — <b>você aprova cada um</b>. A mesma engine vira <b>SDK</b> no seu código — e, com <code>tell&nbsp;-w</code>, o <b>web no navegador</b>.',
@@ -959,11 +959,11 @@
     'reqs.h':'chaves — env ou ~/.config/&lt;vendor&gt;.token',
     'reqs.body':'export OPENAI_API_KEY="sk-..."<br>export DEEPSEEK_API_KEY="..."<br>export ZHIPU_API_KEY="..."        <span style="color:var(--mut)"># Z.ai GLM</span><br>export ALIBABA_API_KEY="..."      <span style="color:var(--mut)"># Qwen</span><br><span style="color:var(--mut)">…meta, mimo (xiaomi), google, xai, fireworks, cerebras, moonshotai, openrouter</span><br><br>tell "olá, terminal"<br>tell d "run ls -la"<br>tell -w                           <span style="color:var(--mut)"># web v0 no navegador</span><br><br>Problemas? <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener">As issues</a> são o melhor caminho — e contribuições são bem-vindas.',
     'cta.h2':'O próximo prompt está a um <em class="serif">pipe</em> de distância.',
-    'cta.p':'CLI 0.7.1 (GPL-3.0), SDK 4.1.0 (MIT), core 0.1.2 (MIT), web v0.3.2 já rodando — e espaço para deixar a sua marca.',
+    'cta.p':'CLI 0.7.1 (GPL-3.0), SDK 0.4.1 (MIT), core 0.1.2 (MIT), web v0.3.2 já rodando — e espaço para deixar a sua marca.',
     'foot.l':'© <span id="year"></span> naoeosavio — Tell-ai é open-source; esta página é só a vitrine.',
-    'foot.r':'<a href="https://github.com/naoeosavio/Tell-ai" target="_blank" rel="noopener">repo</a> · <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener">issues</a> · cli 0.7.1: GPL-3.0 · sdk 4.1.0: MIT · core 0.1.2: MIT · web: <span class="warn">v0.3.2</span> · um único arquivo HTML',
+    'foot.r':'<a href="https://github.com/naoeosavio/Tell-ai" target="_blank" rel="noopener">repo</a> · <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener">issues</a> · cli 0.7.1: GPL-3.0 · sdk 0.4.1: MIT · core 0.1.2: MIT · web: <span class="warn">v0.3.2</span> · um único arquivo HTML',
     'sb.mode':'modo',
-    'mq':'RUN-CONFIRMADO <i>·</i> 152 ALIASES <i>·</i> 10+ VENDORS <i>·</i> PIPE-FIRST <i>·</i> SEM LOGIN <i>·</i> CLI 0.7.1: GPL-3.0 <i>·</i> SDK 4.1.0: MIT <i>·</i> CORE 0.1.2: MIT <i>·</i> CUSTOM ENDPOINT <i>·</i> .TELLRC <i>·</i> SANDBOX V0.3.2 <i>·</i> ',
+    'mq':'RUN-CONFIRMADO <i>·</i> 152 ALIASES <i>·</i> 10+ VENDORS <i>·</i> PIPE-FIRST <i>·</i> SEM LOGIN <i>·</i> CLI 0.7.1: GPL-3.0 <i>·</i> SDK 0.4.1: MIT <i>·</i> CORE 0.1.2: MIT <i>·</i> CUSTOM ENDPOINT <i>·</i> .TELLRC <i>·</i> SANDBOX V0.3.2 <i>·</i> ',
     'hseq':[
       {t:'cmd', text:'git diff --staged | tell -i "msg de commit"'},
       {t:'meta', html:'<b>●</b> tell · g → openai:gpt-6.1-sol:medium · 1.2s'},
@@ -988,7 +988,7 @@
   en: {
     'meta.title':'Tell-ai — CLI + SDK + core + web for LLMs',
     'meta.desc':'Tell-ai is open-source: a one-shot shell CLI with confirmed execution, an MIT SDK for Node/Bun/browser, the MIT core (shared runtime) and a web v0.3.2 (terminal, files and chat in the browser via tell -w).',
-    'nav.feat':'features','nav.models':'models','nav.demo':'demo','nav.sdk':'sdk','nav.core':'core','nav.sb':'web <i>v0.3.2</i>','nav.inst':'install',
+    'nav.feat':'features','nav.models':'models','nav.demo':'demo','nav.sdk':'sdk <i>0.4.1</i>','nav.core':'core <i>0.1.2</i>','nav.sb':'web <i>v0.3.2</i>','nav.inst':'install',
     'hero.eyebrow':'<b>//</b> CLI + SDK + core + web v0.3.2 — open-source, one-shot, confirmed execution',
     'h1a':'YOUR AI,','h1b':'<em class="serif">in the terminal.</em>',
     'hero.sub':'Tell-ai brings language models to where your code already lives: <b>the shell</b>. Ask, pipe, let the model propose commands — <b>you approve each one</b>. The same engine becomes an <b>SDK</b> in your code — and, with <code>tell&nbsp;-w</code>, the <b>web in the browser</b>.',
@@ -1118,11 +1118,11 @@
     'reqs.h':'keys — env or ~/.config/&lt;vendor&gt;.token',
     'reqs.body':'export OPENAI_API_KEY="sk-..."<br>export DEEPSEEK_API_KEY="..."<br>export ZHIPU_API_KEY="..."        <span style="color:var(--mut)"># Z.ai GLM</span><br>export ALIBABA_API_KEY="..."      <span style="color:var(--mut)"># Qwen</span><br><span style="color:var(--mut)">…meta, mimo (xiaomi), google, xai, fireworks, cerebras, moonshotai, openrouter</span><br><br>tell "hello, terminal"<br>tell d "run ls -la"<br>tell -w                           <span style="color:var(--mut)"># web v0 in the browser</span><br><br>Something wrong? <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener">The issues</a> are the best path — contributions are welcome.',
     'cta.h2':'The next prompt is one <em class="serif">pipe</em> away.',
-    'cta.p':'CLI 0.7.1 (GPL-3.0), SDK 4.1.0 (MIT), core 0.1.2 (MIT), web v0.3.2 already running — and room to leave your mark.',
+    'cta.p':'CLI 0.7.1 (GPL-3.0), SDK 0.4.1 (MIT), core 0.1.2 (MIT), web v0.3.2 already running — and room to leave your mark.',
     'foot.l':'© <span id="year"></span> naoeosavio — Tell-ai is open-source; this page is just the storefront.',
-    'foot.r':'<a href="https://github.com/naoeosavio/Tell-ai" target="_blank" rel="noopener">repo</a> · <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener">issues</a> · cli 0.7.1: GPL-3.0 · sdk 4.1.0: MIT · core 0.1.2: MIT · web: <span class="warn">v0.3.2</span> · a single HTML file',
+    'foot.r':'<a href="https://github.com/naoeosavio/Tell-ai" target="_blank" rel="noopener">repo</a> · <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener">issues</a> · cli 0.7.1: GPL-3.0 · sdk 0.4.1: MIT · core 0.1.2: MIT · web: <span class="warn">v0.3.2</span> · a single HTML file',
     'sb.mode':'mode',
-    'mq':'CONFIRMED-RUN <i>·</i> 152 ALIASES <i>·</i> 10+ VENDORS <i>·</i> PIPE-FIRST <i>·</i> NO LOGIN <i>·</i> CLI 0.7.1: GPL-3.0 <i>·</i> SDK 4.1.0: MIT <i>·</i> CORE 0.1.2: MIT <i>·</i> CUSTOM ENDPOINT <i>·</i> .TELLRC <i>·</i> SANDBOX V0.3.2 <i>·</i> ',
+    'mq':'CONFIRMED-RUN <i>·</i> 152 ALIASES <i>·</i> 10+ VENDORS <i>·</i> PIPE-FIRST <i>·</i> NO LOGIN <i>·</i> CLI 0.7.1: GPL-3.0 <i>·</i> SDK 0.4.1: MIT <i>·</i> CORE 0.1.2: MIT <i>·</i> CUSTOM ENDPOINT <i>·</i> .TELLRC <i>·</i> SANDBOX V0.3.2 <i>·</i> ',
     'hseq':[
       {t:'cmd', text:'git diff --staged | tell -i "commit message"'},
       {t:'meta', html:'<b>●</b> tell · g → openai:gpt-6.1-sol:medium · 1.2s'},
@@ -1147,7 +1147,7 @@
   es: {
     'meta.title':'Tell-ai — CLI + SDK + core + web para LLMs',
     'meta.desc':'Tell-ai es open-source: CLI one-shot en el shell con ejecución confirmada, SDK MIT para Node/Bun/browser, el core MIT (runtime compartido) y un web v0.3.2 (terminal, archivos y chat en el navegador vía tell -w).',
-    'nav.feat':'recursos','nav.models':'modelos','nav.demo':'demo','nav.sdk':'sdk','nav.core':'core','nav.sb':'web <i>v0.3.2</i>','nav.inst':'instalar',
+    'nav.feat':'recursos','nav.models':'modelos','nav.demo':'demo','nav.sdk':'sdk <i>0.4.1</i>','nav.core':'core <i>0.1.2</i>','nav.sb':'web <i>v0.3.2</i>','nav.inst':'instalar',
     'hero.eyebrow':'<b>//</b> CLI + SDK + core + web v0.3.2 — open-source, one-shot, ejecución confirmada',
     'h1a':'TU IA,','h1b':'<em class="serif">en la terminal.</em>',
     'hero.sub':'Tell-ai lleva los modelos de lenguaje a donde tu código ya vive: <b>el shell</b>. Pregunta, pipea, deja que el modelo proponga comandos — <b>tú apruebas cada uno</b>. El mismo motor se convierte en <b>SDK</b> en tu código — y, con <code>tell&nbsp;-w</code>, la <b>web en el navegador</b>.',
@@ -1277,11 +1277,11 @@
     'reqs.h':'claves — env o ~/.config/&lt;vendor&gt;.token',
     'reqs.body':'export OPENAI_API_KEY="sk-..."<br>export DEEPSEEK_API_KEY="..."<br>export ZHIPU_API_KEY="..."        <span style="color:var(--mut)"># Z.ai GLM</span><br>export ALIBABA_API_KEY="..."      <span style="color:var(--mut)"># Qwen</span><br><span style="color:var(--mut)">…meta, mimo (xiaomi), google, xai, fireworks, cerebras, moonshotai, openrouter</span><br><br>tell "hola, terminal"<br>tell d "run ls -la"<br>tell -w                           <span style="color:var(--mut)"># web v0 en el navegador</span><br><br>¿Problemas? <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener">Las issues</a> son el mejor camino — las contribuciones son bienvenidas.',
     'cta.h2':'El próximo prompt está a un <em class="serif">pipe</em> de distancia.',
-    'cta.p':'CLI 0.7.1 (GPL-3.0), SDK 4.1.0 (MIT), core 0.1.2 (MIT), web v0.3.2 ya corriendo — y espacio para dejar tu marca.',
+    'cta.p':'CLI 0.7.1 (GPL-3.0), SDK 0.4.1 (MIT), core 0.1.2 (MIT), web v0.3.2 ya corriendo — y espacio para dejar tu marca.',
     'foot.l':'© <span id="year"></span> naoeosavio — Tell-ai es open-source; esta página es solo la vitrina.',
-    'foot.r':'<a href="https://github.com/naoeosavio/Tell-ai" target="_blank" rel="noopener">repo</a> · <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener">issues</a> · cli 0.7.1: GPL-3.0 · sdk 4.1.0: MIT · core 0.1.2: MIT · web: <span class="warn">v0.3.2</span> · un único archivo HTML',
+    'foot.r':'<a href="https://github.com/naoeosavio/Tell-ai" target="_blank" rel="noopener">repo</a> · <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener">issues</a> · cli 0.7.1: GPL-3.0 · sdk 0.4.1: MIT · core 0.1.2: MIT · web: <span class="warn">v0.3.2</span> · un único archivo HTML',
     'sb.mode':'modo',
-    'mq':'RUN CONFIRMADO <i>·</i> 152 ALIAS <i>·</i> 10+ VENDORS <i>·</i> PIPE-FIRST <i>·</i> SIN LOGIN <i>·</i> CLI 0.7.1: GPL-3.0 <i>·</i> SDK 4.1.0: MIT <i>·</i> CORE 0.1.2: MIT <i>·</i> CUSTOM ENDPOINT <i>·</i> .TELLRC <i>·</i> SANDBOX V0.3.2 <i>·</i> ',
+    'mq':'RUN CONFIRMADO <i>·</i> 152 ALIAS <i>·</i> 10+ VENDORS <i>·</i> PIPE-FIRST <i>·</i> SIN LOGIN <i>·</i> CLI 0.7.1: GPL-3.0 <i>·</i> SDK 0.4.1: MIT <i>·</i> CORE 0.1.2: MIT <i>·</i> CUSTOM ENDPOINT <i>·</i> .TELLRC <i>·</i> SANDBOX V0.3.2 <i>·</i> ',
     'hseq':[
       {t:'cmd', text:'git diff --staged | tell -i "mensaje de commit"'},
       {t:'meta', html:'<b>●</b> tell · g → openai:gpt-6.1-sol:medium · 1.2s'},
@@ -1306,7 +1306,7 @@
   jp: {
     'meta.title':'Tell-ai — LLMのためのCLI + SDK + core + Web',
     'meta.desc':'Tell-aiはオープンソース:実行確認制のワンショットCLI、Node/Bun/ブラウザ対応のMIT SDK、共有ランタイムであるMITのcore、そしてWeb v0.3.2(tell -w でターミナル・ファイル・チャットをブラウザへ)。',
-    'nav.feat':'機能','nav.models':'モデル','nav.demo':'デモ','nav.sdk':'sdk','nav.core':'core','nav.sb':'Web <i>v0.3.2</i>','nav.inst':'インストール',
+    'nav.feat':'機能','nav.models':'モデル','nav.demo':'デモ','nav.sdk':'sdk <i>0.4.1</i>','nav.core':'core <i>0.1.2</i>','nav.sb':'Web <i>v0.3.2</i>','nav.inst':'インストール',
     'hero.eyebrow':'<b>//</b> CLI + SDK + core + Web v0.3.2 — オープンソース・ワンショット・実行は確認制',
     'h1a':'あなたのAIを、','h1b':'<em class="serif">ターミナルに。</em>',
     'hero.sub':'Tell-aiは、コードのいる場所——<b>シェル</b>——にLLMを届けます。聞いて、パイプで繋いで、モデルがコマンドを提案——<b>実行はあなたの承認</b>。同じエンジンはコードの中では<b>SDK</b>に、<code>tell&nbsp;-w</code>では<b>ブラウザのWeb</b>になります。',
@@ -1436,11 +1436,11 @@
     'reqs.h':'キー — 環境変数または ~/.config/&lt;vendor&gt;.token',
     'reqs.body':'export OPENAI_API_KEY="sk-..."<br>export DEEPSEEK_API_KEY="..."<br>export ZHIPU_API_KEY="..."        <span style="color:var(--mut)"># Z.ai GLM</span><br>export ALIBABA_API_KEY="..."      <span style="color:var(--mut)"># Qwen</span><br><span style="color:var(--mut)">…meta, mimo (xiaomi), google, xai, fireworks, cerebras, moonshotai, openrouter</span><br><br>tell "こんにちは、ターミナル"<br>tell d "run ls -la"<br>tell -w                           <span style="color:var(--mut)"># ブラウザでWeb v0</span><br><br>困ったら <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener">issues</a> へ — コントリビューションも歓迎です。',
     'cta.h2':'次のプロンプトは、<em class="serif">パイプ1つ</em>の先に。',
-    'cta.p':'CLI 0.7.1 (GPL-3.0)、SDK 4.1.0 (MIT)、core 0.1.2 (MIT)、Web v0.3.2 は稼働中——あなたの一枚を刻む場所もある。',
+    'cta.p':'CLI 0.7.1 (GPL-3.0)、SDK 0.4.1 (MIT)、core 0.1.2 (MIT)、Web v0.3.2 は稼働中——あなたの一枚を刻む場所もある。',
     'foot.l':'© <span id="year"></span> naoeosavio — Tell-ai はオープンソース。このページはショーウィンドウです。',
-    'foot.r':'<a href="https://github.com/naoeosavio/Tell-ai" target="_blank" rel="noopener">repo</a> · <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener">issues</a> · cli 0.7.1: GPL-3.0 · sdk 4.1.0: MIT · core 0.1.2: MIT · web: <span class="warn">v0.3.2</span> · たった1つのHTMLファイル',
+    'foot.r':'<a href="https://github.com/naoeosavio/Tell-ai" target="_blank" rel="noopener">repo</a> · <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener">issues</a> · cli 0.7.1: GPL-3.0 · sdk 0.4.1: MIT · core 0.1.2: MIT · web: <span class="warn">v0.3.2</span> · たった1つのHTMLファイル',
     'sb.mode':'モード',
-    'mq':'実行確認制 <i>·</i> 152エイリアス <i>·</i> 10+ベンダー <i>·</i> パイプ優先 <i>·</i> ログイン不要 <i>·</i> CLI 0.7.1: GPL-3.0 <i>·</i> SDK 4.1.0: MIT <i>·</i> CORE 0.1.2: MIT <i>·</i> CUSTOM ENDPOINT <i>·</i> .TELLRC <i>·</i> Web V0.3.2 <i>·</i> ',
+    'mq':'実行確認制 <i>·</i> 152エイリアス <i>·</i> 10+ベンダー <i>·</i> パイプ優先 <i>·</i> ログイン不要 <i>·</i> CLI 0.7.1: GPL-3.0 <i>·</i> SDK 0.4.1: MIT <i>·</i> CORE 0.1.2: MIT <i>·</i> CUSTOM ENDPOINT <i>·</i> .TELLRC <i>·</i> Web V0.3.2 <i>·</i> ',
     'hseq':[
       {t:'cmd', text:'git diff --staged | tell -i "コミットメッセージ"'},
       {t:'meta', html:'<b>●</b> tell · g → openai:gpt-6.1-sol:medium · 1.2s'},
