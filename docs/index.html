@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tell-ai — fale com a IA direto do terminal</title>
+<meta name="description" content="Tell-ai é uma CLI open-source que leva modelos de linguagem para o seu shell. Pergunte, pipeie, scripte — respostas em texto puro.">
+<meta name="theme-color" content="#0B0A08">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Instrument+Serif:ital,wght@1,400&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0B0A08; --bg2:#12110D; --bg3:#181611;
+    --line:#262319; --line2:#39342a;
+    --fg:#EDE7DA; --fg2:#A69D89; --mut:#6C6555;
+    --amber:#FFB454; --amber2:#FFD08A;
+    --green:#7BD88F; --red:#E5715F;
+    --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+    --serif:'Instrument Serif',Georgia,serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    background:var(--bg); color:var(--fg);
+    font-family:var(--mono); font-size:15px; line-height:1.7;
+    -webkit-font-smoothing:antialiased; padding-bottom:34px;
+  }
+  ::selection{background:var(--amber);color:#0B0A08}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-track{background:var(--bg)}
+  ::-webkit-scrollbar-thumb{background:var(--line2);border:2px solid var(--bg)}
+  a{color:inherit;text-decoration:none}
+  b,strong{font-weight:600}
+  .wrap{max-width:1160px;margin:0 auto;padding:0 24px}
+  section[id]{scroll-margin-top:84px}
+  .serif{font-family:var(--serif);font-style:italic;font-weight:400;color:var(--amber)}
+  .cur{display:inline-block;width:.58em;height:1.05em;background:var(--amber);
+       vertical-align:text-bottom;animation:blink 1.1s steps(1) infinite}
+  @keyframes blink{50%{opacity:0}}
+
+  /* ---------- barra superior ---------- */
+  .top{position:sticky;top:0;z-index:60;background:rgba(11,10,8,.9);
+       backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+  .top-in{max-width:1160px;margin:0 auto;padding:13px 24px;
+          display:flex;align-items:center;justify-content:space-between;gap:20px}
+  .logo{font-weight:700;font-size:15px;letter-spacing:-.02em;display:inline-flex;align-items:center;gap:2px}
+  .logo em{font-style:normal;color:var(--amber)}
+  .logo .cur{height:.9em;margin-left:3px}
+  nav{display:flex;align-items:center;gap:26px;font-size:13px;color:var(--fg2)}
+  nav a:not(.ghbtn):hover{color:var(--amber);text-decoration:underline;text-underline-offset:5px;text-decoration-thickness:1px}
+  .ghbtn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line2);
+         padding:7px 14px;font-size:12.5px;color:var(--fg);transition:.15s}
+  .ghbtn svg{width:15px;height:15px;fill:currentColor}
+  .ghbtn:hover{background:var(--amber);border-color:var(--amber);color:#0B0A08}
+  .ghbtn .st{color:var(--amber)} .ghbtn:hover .st{color:#0B0A08}
+
+  /* ---------- hero ---------- */
+  .hero{border-bottom:1px solid var(--line)}
+  .hero-in{display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);
+           gap:56px;align-items:center;padding:96px 0 88px}
+  .eyebrow{font-size:12.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--mut);margin-bottom:28px}
+  .eyebrow b{color:var(--amber);font-weight:500}
+  .hero-h{font-size:clamp(3.1rem,8.4vw,7.6rem);line-height:.98;letter-spacing:-.035em;font-weight:600}
+  .hero-h .l{display:block;overflow:hidden}
+  .hero-h .l>span{display:inline-block;transform:translateY(110%);animation:rise .7s cubic-bezier(.2,.7,.2,1) forwards}
+  .hero-h .l:nth-child(2)>span{animation-delay:.12s}
+  .hero-h em{font-size:1.05em;letter-spacing:-.01em}
+  @keyframes rise{to{transform:none}}
+  .hero-sub{max-width:52ch;color:var(--fg2);margin:34px 0 36px}
+  .hero-sub b{color:var(--fg);font-weight:500}
+  .cmd{display:inline-flex;align-items:center;gap:16px;border:1px solid var(--line2);
+       background:var(--bg2);padding:13px 14px 13px 20px;max-width:100%}
+  .cmd .ps1{color:var(--mut)}
+  .cmd code{font-size:14px;white-space:nowrap}
+  .copy{border:1px solid var(--line2);background:transparent;color:var(--fg2);font:600 12px var(--mono);
+        padding:6px 12px;cursor:pointer;display:inline-flex;align-items:center;gap:7px;transition:.15s;letter-spacing:.03em}
+  .copy svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:1.6}
+  .copy:hover{border-color:var(--amber);color:var(--amber)}
+  .copy.ok{border-color:var(--green);color:var(--green)}
+  .hero-links{display:flex;gap:26px;margin-top:26px;font-size:13.5px}
+  .hero-links a{color:var(--fg2);border-bottom:1px dotted var(--line2);padding-bottom:2px;transition:.15s}
+  .hero-links a:hover{color:var(--amber);border-color:var(--amber)}
+  .hero-meta{margin-top:44px;padding-top:18px;border-top:1px solid var(--line);
+             font-size:12.5px;color:var(--mut);display:flex;flex-wrap:wrap;gap:8px 22px}
+  .hero-meta b{color:var(--fg2);font-weight:500}
+  .hero-meta .dot{width:7px;height:7px;border-radius:50%;background:var(--green);display:inline-block;margin-right:7px;animation:pulse 2.4s infinite}
+  @keyframes pulse{50%{opacity:.35}}
+
+  /* ---------- janela de terminal ---------- */
+  .term{border:1px solid var(--line2);background:#0E0D0A;display:flex;flex-direction:column}
+  .term-bar{display:flex;justify-content:space-between;align-items:center;gap:12px;
+            padding:8px 14px;border-bottom:1px solid var(--line);font-size:12px;color:var(--mut)}
+  .term-bar .ti{color:var(--fg2)}
+  .term-bar button{background:none;border:none;color:var(--mut);font:inherit;cursor:pointer;font-size:12px}
+  .term-bar button:hover{color:var(--amber)}
+  .term-body{padding:18px 20px;font-size:13.5px;line-height:1.8;overflow:auto}
+  .hero-term .term-body{min-height:342px;max-height:420px}
+  .tl{white-space:pre-wrap;word-break:break-word}
+  .tl.meta{color:var(--mut)} .tl.meta b{color:var(--green);font-weight:400}
+  .tl.ok{color:var(--green)} .tl.dim{color:var(--fg2)}
+  .tl .ps1{color:var(--mut)} .tl .tc{color:var(--fg)}
+
+  /* ---------- marquee ---------- */
+  .mq{overflow:hidden;border-bottom:1px solid var(--line);padding:13px 0;user-select:none}
+  .mq-track{display:flex;width:max-content;animation:mq 32s linear infinite}
+  .mq:hover .mq-track{animation-play-state:paused}
+  .mq span{font-size:12px;letter-spacing:.22em;color:var(--mut);white-space:nowrap;padding-right:18px}
+  .mq i{font-style:normal;color:var(--amber)}
+  @keyframes mq{to{transform:translateX(-50%)}}
+
+  /* ---------- seções ---------- */
+  .sec{padding:112px 0;border-bottom:1px solid var(--line)}
+  .slabel{font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:var(--mut);margin-bottom:20px}
+  .slabel b{color:var(--amber);font-weight:500}
+  h2{font-size:clamp(1.9rem,4.2vw,3.3rem);line-height:1.06;letter-spacing:-.03em;font-weight:600;max-width:22ch}
+
+  /* por quê — diff */
+  .why{display:grid;grid-template-columns:minmax(0,6fr) minmax(0,5fr);gap:56px;margin-top:56px;align-items:start}
+  .diff{border:1px solid var(--line2);background:var(--bg2)}
+  .diff-bar{padding:8px 16px;border-bottom:1px solid var(--line);font-size:12px;color:var(--mut);display:flex;justify-content:space-between}
+  .diff-body{padding:14px 0;font-size:13.5px;line-height:1.85;overflow-x:auto}
+  .dl{white-space:pre;padding:1px 18px 1px 0}
+  .dl .ln{display:inline-block;width:46px;text-align:right;padding-right:16px;color:var(--mut);user-select:none}
+  .dl.del{color:var(--red);background:rgba(229,113,95,.06)}
+  .dl.add{color:var(--green);background:rgba(123,216,143,.07)}
+  .dl.hdr{color:var(--mut)}
+  .why-i{padding:22px 0;border-bottom:1px solid var(--line)}
+  .why-i:first-child{border-top:1px solid var(--line)}
+  .why-i h3{font-size:20px;color:var(--amber);font-weight:600;letter-spacing:-.02em;margin-bottom:8px}
+  .why-i h3 em{font-family:var(--serif);font-weight:400;color:var(--fg);font-size:1.05em}
+  .why-i p{color:var(--fg2);font-size:14px;max-width:46ch}
+
+  /* passos */
+  .step{display:grid;grid-template-columns:150px minmax(0,1fr) minmax(0,420px);
+        gap:36px;align-items:center;padding:44px 0;border-bottom:1px solid var(--line)}
+  .step:first-of-type{margin-top:56px;border-top:1px solid var(--line)}
+  .step .n{font-size:66px;font-weight:700;line-height:1;letter-spacing:-.04em;
+           color:transparent;-webkit-text-stroke:1.2px var(--line2);transition:.25s}
+  .step:hover .n{color:var(--amber);-webkit-text-stroke:1.2px transparent}
+  .step h3{font-size:21px;font-weight:600;letter-spacing:-.02em;margin-bottom:6px}
+  .step p{color:var(--fg2);font-size:14px;max-width:44ch}
+  .step code{display:block;border:1px solid var(--line);background:var(--bg2);
+             padding:14px 18px;font-size:13.5px;color:var(--fg)}
+  .step code .ps1{color:var(--mut);user-select:none}
+  .step code .cm{color:var(--mut)}
+
+  /* recursos — man page */
+  .man-top{display:flex;justify-content:space-between;align-items:baseline;gap:20px;flex-wrap:wrap;margin-bottom:52px}
+  .man-top .mini{font-size:12px;color:var(--mut);letter-spacing:.08em}
+  .feat{display:grid;grid-template-columns:44px 230px minmax(0,1fr);gap:24px;align-items:baseline;
+        padding:24px 10px;border-bottom:1px solid var(--line);transition:background .15s}
+  .feat:first-of-type{border-top:1px solid var(--line)}
+  .feat:hover{background:var(--bg2)}
+  .feat .i{color:var(--mut);font-size:12px}
+  .feat .f{color:var(--amber);font-weight:600;font-size:14.5px;white-space:nowrap}
+  .feat .d{color:var(--fg2);font-size:14px}
+  .feat .d code{color:var(--fg);font-size:.94em}
+
+  /* demo interativa */
+  .demo-shell{max-width:880px;margin:52px auto 0}
+  .demo-shell .term-body{height:440px;overflow-y:auto;cursor:text}
+  .pline{display:flex;align-items:baseline;white-space:pre-wrap;word-break:break-word}
+  .pline .ps1{color:var(--green);margin-right:10px;flex:none}
+  .pwrap{position:relative;flex:1;min-width:8ch;display:inline-block}
+  .pline input{background:none;border:none;outline:none;color:var(--fg);font:inherit;
+               padding:0;width:100%;caret-color:transparent}
+  .pcur{position:absolute;top:.18em;left:0;width:.58em;height:1.15em;background:var(--amber);
+        pointer-events:none;animation:blink 1.1s steps(1) infinite}
+  .try{margin-top:18px;font-size:13px;color:var(--mut);display:flex;flex-wrap:wrap;gap:6px 18px;align-items:baseline}
+  .try a{color:var(--fg2);border-bottom:1px dotted var(--line2);cursor:pointer}
+  .try a:hover{color:var(--amber);border-color:var(--amber)}
+  .demo-note{max-width:880px;margin:16px auto 0;font-size:12.5px;color:var(--mut)}
+  .demo-note b{color:var(--fg2);font-weight:500}
+
+  /* instalar */
+  .inst{display:grid;grid-template-columns:minmax(0,7fr) minmax(0,4fr);gap:56px;margin-top:56px;align-items:start}
+  .inst-cmd .cmd{width:100%;justify-content:space-between}
+  .inst-cmd .cmd code{overflow-x:auto}
+  .inst-alt{margin-top:20px;font-size:13.5px;color:var(--fg2)}
+  .inst-alt code{color:var(--fg);background:var(--bg2);border:1px solid var(--line);padding:2px 8px;font-size:.95em}
+  .inst-alt a{color:var(--amber);border-bottom:1px dotted var(--amber)}
+  .inst-alt a:hover{background:var(--amber);color:#0B0A08}
+  .inst-side p{color:var(--fg2);font-size:14px;margin-bottom:18px}
+  .inst-side .hl{color:var(--fg)}
+  .reqs{border:1px solid var(--line);background:var(--bg2);padding:18px 20px;font-size:13px;color:var(--fg2)}
+  .reqs b{display:block;color:var(--amber);font-weight:500;margin-bottom:8px;letter-spacing:.1em;font-size:11.5px;text-transform:uppercase}
+
+  /* cta final */
+  .cta{text-align:center;padding:140px 24px;border-bottom:1px solid var(--line)}
+  .cta h2{font-size:clamp(2.2rem,5.5vw,4.2rem);max-width:none;margin:0 auto 20px}
+  .cta p{color:var(--fg2);margin-bottom:44px}
+  .gh-big{display:inline-flex;align-items:center;gap:12px;border:1px solid var(--line2);
+          padding:16px 28px;font-size:14.5px;transition:.15s}
+  .gh-big svg{width:18px;height:18px;fill:currentColor}
+  .gh-big .st{color:var(--amber)} .gh-big:hover{background:var(--amber);color:#0B0A08;border-color:var(--amber)}
+  .gh-big:hover .st{color:#0B0A08}
+
+  footer{padding:34px 0 40px;font-size:12.5px;color:var(--mut);display:flex;flex-wrap:wrap;gap:10px 28px;justify-content:space-between}
+  footer a{border-bottom:1px dotted var(--line2)} footer a:hover{color:var(--amber);border-color:var(--amber)}
+
+  /* barra de status inferior */
+  .sb{position:fixed;left:0;right:0;bottom:0;height:34px;z-index:60;background:var(--bg);
+      border-top:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;
+      padding:0 18px;font-size:11.5px;letter-spacing:.06em;color:var(--mut)}
+  .sb .md{color:var(--amber)} .sb .ok{color:var(--green)}
+  .sb .dot{width:7px;height:7px;border-radius:50%;background:var(--green);display:inline-block;margin-right:8px;animation:pulse 2.4s infinite}
+
+  /* reveal */
+  .rv{opacity:0;transform:translateY(18px);transition:opacity .6s ease,transform .6s cubic-bezier(.2,.7,.3,1)}
+  .rv.on{opacity:1;transform:none}
+
+  @media (max-width:1000px){
+    .hero-in{grid-template-columns:1fr;gap:52px;padding:72px 0 64px}
+    .why,.inst{grid-template-columns:1fr;gap:40px}
+    .step{grid-template-columns:90px 1fr;gap:22px}
+    .step code{grid-column:2}
+    .feat{grid-template-columns:34px 1fr;gap:10px 18px}
+    .feat .d{grid-column:2}
+  }
+  @media (max-width:720px){
+    nav a:not(.ghbtn){display:none}
+    .sec{padding:78px 0}
+    .step .n{font-size:48px}
+    .cmd{flex-wrap:wrap}
+  }
+  @media (prefers-reduced-motion:reduce){
+    .mq-track{animation:none}
+    .cur{animation:none}
+    .rv{opacity:1;transform:none;transition:none}
+    .hero-h .l>span{animation:none;transform:none}
+  }
+</style>
+</head>
+<body>
+
+<!-- barra superior -->
+<header class="top">
+  <div class="top-in">
+    <a class="logo" href="#">tell<em>-ai</em><i class="cur"></i></a>
+    <nav>
+      <a href="#porque">por quê</a>
+      <a href="#recursos">recursos</a>
+      <a href="#demo">demo</a>
+      <a href="#instalar">instalar</a>
+      <a class="ghbtn" href="https://github.com/naoeosavio/Tell-ai" target="_blank" rel="noopener">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+        GitHub <span class="st">★ <span class="gh-stars">—</span></span>
+      </a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <!-- hero -->
+  <section class="hero">
+    <div class="wrap hero-in">
+      <div>
+        <p class="eyebrow"><b>//</b> CLI open-source para LLMs — sem navegador, sem dashboard</p>
+        <h1 class="hero-h">
+          <span class="l"><span>SUA IA,</span></span>
+          <span class="l"><span><em class="serif">no terminal.</em></span></span>
+        </h1>
+        <p class="hero-sub">
+          O Tell-ai leva modelos de linguagem para onde o seu código já vive: <b>o shell</b>.
+          Pergunte, pipeie, scripte — a resposta chega em <b>texto puro</b>, pronta para o próximo comando.
+        </p>
+        <div class="cmd">
+          <span class="ps1">$</span>
+          <code>npm install -g tell-ai</code>
+          <button class="copy" data-copy="npm install -g tell-ai">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1"/><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/></svg>
+            copiar
+          </button>
+        </div>
+        <div class="hero-links">
+          <a href="https://github.com/naoeosavio/Tell-ai" target="_blank" rel="noopener">ver o código ↗</a>
+          <a href="#demo">testar a demo ↓</a>
+        </div>
+        <div class="hero-meta">
+          <span><span class="dot"></span>open-source</span>
+          <span>★ <b class="gh-stars">—</b> stars</span>
+          <span><b class="gh-forks">—</b> forks</span>
+          <span>último push: <b class="gh-push">—</b></span>
+        </div>
+      </div>
+
+      <div class="term hero-term">
+        <div class="term-bar">
+          <span class="ti">tell-ai — sessão de exemplo</span>
+          <button id="replay" title="rodar de novo">↻ replay</button>
+        </div>
+        <div class="term-body" id="heroTerm"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- marquee -->
+  <div class="mq" aria-hidden="true">
+    <div class="mq-track" id="mqTrack"></div>
+  </div>
+
+  <!-- §01 por quê -->
+  <section class="sec" id="porque">
+    <div class="wrap">
+      <div class="shead rv">
+        <p class="slabel"><b>§ 01</b> — por quê</p>
+        <h2>Copiar, colar, formatar, <em class="serif">repetir.</em></h2>
+      </div>
+      <div class="why">
+        <div class="diff rv">
+          <div class="diff-bar"><span>fluxo — antes / depois</span><span>unified</span></div>
+          <div class="diff-body">
+<div class="dl hdr"><span class="ln"></span>--- a/fluxo/sem-tell-ai</div>
+<div class="dl hdr"><span class="ln"></span>+++ b/fluxo/com-tell-ai</div>
+<div class="dl del"><span class="ln">1</span>- abrir uma aba nova no navegador</div>
+<div class="dl del"><span class="ln">2</span>- digitar o endereço do chat</div>
+<div class="dl del"><span class="ln">3</span>- autenticar (de novo)</div>
+<div class="dl del"><span class="ln">4</span>- colar código + contexto à mão</div>
+<div class="dl del"><span class="ln">5</span>- copiar a resposta e reformatar</div>
+<div class="dl del"><span class="ln">6</span>- voltar ao editor e colar de novo</div>
+<div class="dl add"><span class="ln">1</span>+ tell "por que esse teste falha?" &lt; output.log</div>
+          </div>
+        </div>
+        <div class="why-side rv" style="transition-delay:.1s">
+          <div class="why-i">
+            <h3>~23 <em>minutos</em></h3>
+            <p>é o que estudos de atenção estimam para retomar o foco depois de uma interrupção. Cada ida até o navegador é uma delas. O Tell-ai encurta o caminho para um comando.</p>
+          </div>
+          <div class="why-i">
+            <h3>stdout <em>é a interface</em></h3>
+            <p>A resposta é texto puro: pode ir para um arquivo, um pipe, uma mensagem de commit, um cron — sem formatação para "limpar" antes de usar.</p>
+          </div>
+          <div class="why-i">
+            <h3>$TELL_KEY <em>e pronto</em></h3>
+            <p>Sem cadastro, sem tela de login, sem servidor no meio do caminho: a sua chave, no seu ambiente, no limite do seu plano.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- §02 passos -->
+  <section class="sec" id="passos">
+    <div class="wrap">
+      <div class="shead rv">
+        <p class="slabel"><b>§ 02</b> — primeiros passos</p>
+        <h2>Três comandos até a <em class="serif">primeira resposta.</em></h2>
+      </div>
+
+      <div class="step rv">
+        <span class="n">01</span>
+        <div><h3>Instale</h3><p>Um binário, uma pergunta. Nada de daemon rodando em segundo plano.</p></div>
+        <code><span class="ps1">$ </span>npm install -g tell-ai</code>
+      </div>
+      <div class="step rv">
+        <span class="n">02</span>
+        <div><h3>Aponte a chave</h3><p>Só isso — sem cadastro, sem OAuth dance. A chave do ambiente que você já tem.</p></div>
+        <code><span class="ps1">$ </span>export TELL_KEY=<span class="cm">"sk-…"</span></code>
+      </div>
+      <div class="step rv">
+        <span class="n">03</span>
+        <div><h3>Converse</h3><p>E encadeie com tudo que você já usa: pipes, scripts, alias, cron.</p></div>
+        <code><span class="ps1">$ </span>tell <span class="cm">"explique este traceback"</span></code>
+      </div>
+    </div>
+  </section>
+
+  <!-- §03 recursos -->
+  <section class="sec" id="recursos">
+    <div class="wrap">
+      <div class="man-top rv">
+        <div>
+          <p class="slabel"><b>§ 03</b> — recursos</p>
+          <h2>Construído como ferramenta <em class="serif">unix.</em></h2>
+        </div>
+        <p class="mini">TELL(1) · General Commands Manual</p>
+      </div>
+
+      <div class="feat rv"><span class="i">01</span><span class="f">--stream</span><p class="d">Respostas token a token, direto no stdout — você lê enquanto o modelo gera.</p></div>
+      <div class="feat rv"><span class="i">02</span><span class="f">|</span><p class="d">Pipes de verdade: <code>git diff | tell "escreva a mensagem de commit"</code>.</p></div>
+      <div class="feat rv"><span class="i">03</span><span class="f">--model</span><p class="d">Troque de provedor com uma flag: OpenAI, Anthropic, Gemini ou modelos locais via Ollama.</p></div>
+      <div class="feat rv"><span class="i">04</span><span class="f">@arquivo</span><p class="d"><code>tell @server.ts "ache o memory leak"</code> — mencione arquivos e o contexto entra sozinho.</p></div>
+      <div class="feat rv"><span class="i">05</span><span class="f">~/.tellrc</span><p class="d">Prompt de sistema, temperatura e aliases configurados uma única vez. Configure e esqueça.</p></div>
+      <div class="feat rv"><span class="i">06</span><span class="f">--history</span><p class="d">Todo prompt e resposta num log local e pesquisável. Nada vai além do que você perguntar.</p></div>
+      <div class="feat rv"><span class="i">07</span><span class="f">$TELL_KEY</span><p class="d">Sem conta e sem login. A chave do seu ambiente é a única credencial que existe.</p></div>
+    </div>
+  </section>
+
+  <!-- §04 demo -->
+  <section class="sec" id="demo">
+    <div class="wrap">
+      <div class="shead rv">
+        <p class="slabel"><b>§ 04</b> — demo</p>
+        <h2>Experimente <em class="serif">sem instalar.</em></h2>
+      </div>
+
+      <div class="demo-shell rv">
+        <div class="term" id="demoTerm">
+          <div class="term-bar">
+            <span class="ti">visitante@tell-ai: ~ — demo interativa</span>
+            <span id="demoFocus">não conectado</span>
+          </div>
+          <div class="term-body" id="tout"></div>
+        </div>
+        <p class="try">↳ tente:
+          <a data-cmd="help">help</a>
+          <a data-cmd="tell oi">tell oi</a>
+          <a data-cmd="features">features</a>
+          <a data-cmd="piada">piada</a>
+          <a data-cmd="install">install</a>
+          <a data-cmd="github">github</a>
+        </p>
+        <p class="demo-note"><b>Simulação local:</b> este terminal roda 100% na sua aba — nenhuma chave, nenhuma chamada de rede. As respostas são pré-gravadas, mas o streaming é de verdade: <b>↑</b> repete comandos, <b>Tab</b> autocompleta, <b>Ctrl+C</b> interrompe.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- §05 instalar -->
+  <section class="sec" id="instalar">
+    <div class="wrap">
+      <div class="shead rv">
+        <p class="slabel"><b>§ 05</b> — instalar</p>
+        <h2>Uma linha e <em class="serif">pronto.</em></h2>
+      </div>
+      <div class="inst">
+        <div class="inst-cmd rv">
+          <div class="cmd">
+            <span class="ps1">$</span>
+            <code>npm install -g tell-ai</code>
+            <button class="copy" data-copy="npm install -g tell-ai">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1"/><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/></svg>
+              copiar
+            </button>
+          </div>
+          <p class="inst-alt">
+            ou do código-fonte: <code>git clone https://github.com/naoeosavio/Tell-ai</code> —
+            <a href="https://github.com/naoeosavio/Tell-ai#readme" target="_blank" rel="noopener">requisitos e binários no README ↗</a>
+          </p>
+        </div>
+        <div class="inst-side rv" style="transition-delay:.1s">
+          <div class="reqs">
+            <b>depois de instalar</b>
+            export TELL_KEY="sua-chave"<br>
+            tell "olá, terminal"<br><br>
+            Se algo der errado, <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener" style="color:var(--amber)">as issues</a> são o melhor caminho — e contribuições são bem-vindas.
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- cta -->
+  <section class="cta rv">
+    <h2>O próximo prompt está a um <em class="serif">pipe</em> de distância.</h2>
+    <p>Código aberto, comunidade pequena, espaço para deixar sua marca.</p>
+    <a class="gh-big" href="https://github.com/naoeosavio/Tell-ai" target="_blank" rel="noopener">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+      github.com/naoeosavio/Tell-ai <span class="st">★ <span class="gh-stars">—</span></span>
+    </a>
+  </section>
+
+  <div class="wrap">
+    <footer>
+      <span>© <span id="year"></span> naoeosavio — Tell-ai é open-source; esta página é só a vitrine.</span>
+      <span>
+        <a href="https://github.com/naoeosavio/Tell-ai" target="_blank" rel="noopener">repo</a> ·
+        <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener">issues</a> ·
+        um único arquivo HTML, zero build
+      </span>
+    </footer>
+  </div>
+</main>
+
+<!-- barra de status inferior -->
+<div class="sb" aria-hidden="true">
+  <span><span class="dot"></span>tell-ai/demo · modo <span class="md" id="sbMode">NORMAL</span></span>
+  <span>↕ <span id="sbScroll">0%</span> · <span id="sbClock">--:--:--</span></span>
+</div>
+
+<script>
+(function(){
+  'use strict';
+  const $  = s => document.querySelector(s);
+  const $$ = s => document.querySelectorAll(s);
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const rand  = (a,b) => a + Math.random()*(b-a);
+
+  /* ---------- ano + marquee ---------- */
+  $('#year').textContent = new Date().getFullYear();
+  const words = 'TERMINAL-NATIVE <i>·</i> PIPE-FIRST <i>·</i> SEM LOGIN <i>·</i> TEXTO PURO <i>·</i> MULTI-MODELO <i>·</i> OPEN-SOURCE <i>·</i> ZERO-DASHBOARD <i>·</i> ';
+  $('#mqTrack').innerHTML = '<span>'+words.repeat(3)+'</span><span>'+words.repeat(3)+'</span>';
+
+  /* ---------- reveal ao rolar ---------- */
+  const io = new IntersectionObserver(es => es.forEach(e => {
+    if (e.isIntersecting){ e.target.classList.add('on'); io.unobserve(e.target); }
+  }), {threshold:.12});
+  $$('.rv').forEach(el => io.observe(el));
+
+  /* ---------- copiar ---------- */
+  $$('.copy').forEach(btn => btn.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(btn.dataset.copy); }
+    catch { /* clipboard bloqueado: seleção manual ainda funciona */ }
+    const old = btn.lastChild.textContent;
+    btn.classList.add('ok'); btn.lastChild.textContent = ' copiado';
+    setTimeout(() => { btn.classList.remove('ok'); btn.lastChild.textContent = old; }, 1600);
+  }));
+
+  /* ---------- stats do GitHub (API pública, sem chave) ---------- */
+  (async () => {
+    try {
+      const r = await fetch('https://api.github.com/repos/naoeosavio/Tell-ai');
+      if (!r.ok) return;
+      const d = await r.json();
+      const n = new Intl.NumberFormat('pt-BR');
+      $$('.gh-stars').forEach(el => el.textContent = n.format(d.stargazers_count ?? 0));
+      $$('.gh-forks').forEach(el => el.textContent = n.format(d.forks_count ?? 0));
+      if (d.pushed_at) $$('.gh-push').forEach(el =>
+        el.textContent = new Date(d.pushed_at).toLocaleDateString('pt-BR', {day:'2-digit', month:'short', year:'numeric'}));
+    } catch { /* offline: mantém "—" */ }
+  })();
+
+  /* ---------- statusbar ---------- */
+  const sbScroll = $('#sbScroll'), sbClock = $('#sbClock');
+  function tick(){
+    const max = document.documentElement.scrollHeight - innerHeight;
+    sbScroll.textContent = Math.round(max > 0 ? scrollY / max * 100 : 0) + '%';
+  }
+  addEventListener('scroll', tick, {passive:true}); tick();
+  setInterval(() => sbClock.textContent = new Date().toLocaleTimeString('pt-BR'), 1000);
+  sbClock.textContent = new Date().toLocaleTimeString('pt-BR');
+
+  /* ---------- engine de linhas ---------- */
+  function mkLine(body, cls){
+    const d = document.createElement('div');
+    d.className = 'tl' + (cls ? ' ' + cls : '');
+    if (typeof body === 'string') d.textContent = body;
+    else if (body) d.appendChild(body);
+    return d;
+  }
+
+  /* ---------- terminal do hero (digita sozinho) ---------- */
+  const heroBody = $('#heroTerm');
+  let heroRun = 0;
+  async function runHero(){
+    const my = ++heroRun;
+    heroBody.innerHTML = '';
+    const seq = [
+      {t:'cmd', text:'tell "revise o último commit"'},
+      {t:'meta', html:'<b>●</b> tell-ai · gpt-4o-mini · 1.4s'},
+      {t:'out', text:'O commit mistura refactor e fix. Dois pontos:'},
+      {t:'out', cls:'dim', text:'  1. parseHeader() falha com BOM — normalize'},
+      {t:'out', cls:'dim', text:'     antes do split (linha 42).'},
+      {t:'out', cls:'dim', text:'  2. O teste novo cobre só o caminho feliz.'},
+      {t:'out', text:''},
+      {t:'cmd', text:'git log -1 --pretty=%B | tell "melhore esta msg"'},
+      {t:'meta', html:'<b>●</b> tell-ai · 0.9s'},
+      {t:'out', cls:'ok', text:'→ fix(parser): normalizar BOM antes do parse de headers'},
+      {t:'cur'}
+    ];
+    for (const s of seq){
+      if (my !== heroRun) return;
+      if (s.t === 'cmd'){
+        const frag = document.createDocumentFragment();
+        const p1 = document.createElement('span'); p1.className = 'ps1'; p1.textContent = '$ ';
+        const tv = document.createElement('span'); tv.className = 'tc';
+        frag.append(p1, tv);
+        const cur = document.createElement('i'); cur.className = 'cur';
+        const line = mkLine(); line.append(p1, tv, cur); heroBody.appendChild(line);
+        if (reduced){ tv.textContent = s.text; }
+        else for (const ch of s.text){
+          if (my !== heroRun) return;
+          tv.textContent += ch;
+          await sleep(rand(24, 60));
+        }
+        cur.remove();
+      } else if (s.t === 'cur'){
+        const line = mkLine(); const p1 = document.createElement('span');
+        p1.className = 'ps1'; p1.textContent = '$ '; line.append(p1, Object.assign(document.createElement('i'),{className:'cur'}));
+        heroBody.appendChild(line);
+      } else {
+        heroBody.appendChild(mkLine(s.html !== undefined ? null : s.text, s.cls || ''));
+        if (s.html !== undefined){ const l = heroBody.lastChild; l.innerHTML = s.html; }
+      }
+      await sleep(s.t === 'cmd' ? 260 : 130);
+    }
+  }
+  $('#replay').addEventListener('click', runHero);
+  new IntersectionObserver((es, obs) => {
+    if (es[0].isIntersecting){ runHero(); obs.disconnect(); }
+  }, {threshold:.3}).observe($('#heroTerm'));
+
+  /* ============================================================
+     TERMINAL INTERATIVO DA DEMO
+     ============================================================ */
+  const tout   = $('#tout');
+  const ti     = document.createElement('input');
+  ti.maxLength = 90; ti.spellcheck = false; ti.autocomplete = 'off';
+  ti.setAttribute('aria-label', 'digite um comando na demo');
+  const tcur   = document.createElement('span'); tcur.className = 'pcur';
+  let curPWrap = null, history = [], hIdx = -1;
+  let busy = false, stream = null;
+
+  function scrollBottom(){ tout.scrollTop = tout.scrollHeight; }
+  function out(text, cls){
+    const l = mkLine(text, cls); tout.appendChild(l); scrollBottom(); return l;
+  }
+
+  function newPrompt(){
+    const pl = document.createElement('div'); pl.className = 'pline';
+    const ps = document.createElement('span'); ps.className = 'ps1'; ps.textContent = 'visitante@tell-ai:~$';
+    curPWrap = document.createElement('span'); curPWrap.className = 'pwrap';
+    curPWrap.append(ti, tcur);
+    pl.append(ps, curPWrap);
+    tout.appendChild(pl);
+    ti.value = ''; hIdx = -1;
+    positionCursor(); scrollBottom();
+  }
+  function positionCursor(){ tcur.style.left = ti.value.length + 'ch'; }
+  function commitPrompt(){
+    tcur.remove();
+    const s = document.createElement('span'); s.textContent = ti.value;
+    ti.replaceWith(s);
+  }
+
+  ti.addEventListener('input', positionCursor);
+  ti.addEventListener('focus', () => { $('#demoFocus').textContent = '— CLI capturado —'; $('#demoFocus').style.color = 'var(--green)'; $('#sbMode').textContent = 'INSERT'; });
+  ti.addEventListener('blur',  () => { $('#demoFocus').textContent = 'clique para digitar';   $('#demoFocus').style.color = '';      $('#sbMode').textContent = 'NORMAL'; });
+
+  $('#demoTerm').addEventListener('click', () => ti.focus());
+
+  ti.addEventListener('keydown', async e => {
+    /* Ctrl+C interrompe o streaming — como num terminal de verdade */
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c'){
+      if (stream){ stream.cancelled = true; e.preventDefault(); }
+      return;
+    }
+    if (e.key === 'Enter'){
+      e.preventDefault();
+      if (busy){ out('… streaming em andamento — Ctrl+C para interromper', 'meta'); return; }
+      const raw = ti.value;
+      commitPrompt();
+      out(raw, 'dim'); /* eco congelado */
+      if (raw.trim()){ history.push(raw); }
+      busy = true;
+      try { await process(raw.trim()); } finally { busy = false; }
+      newPrompt(); ti.focus();
+      return;
+    }
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown'){
+      e.preventDefault();
+      if (!history.length) return;
+      hIdx = e.key === 'ArrowUp'
+        ? Math.min(hIdx + 1, history.length - 1)
+        : Math.max(hIdx - 1, -1);
+      ti.value = hIdx === -1 ? '' : history[history.length - 1 - hIdx];
+      positionCursor();
+      return;
+    }
+    if (e.key === 'Tab'){
+      e.preventDefault();
+      const cmds = ['help','tell ','install','features','github','clear','history','whoami','banner','date','exit','piada'];
+      const m = cmds.find(c => c.startsWith(ti.value) && ti.value);
+      if (m){ ti.value = m; positionCursor(); }
+    }
+  });
+
+  async function streamText(text, cls){
+    const el = out('', cls || '');
+    if (reduced){ el.textContent = text; scrollBottom(); return; }
+    for (const ch of text){
+      if (stream && stream.cancelled){ el.textContent += ''; out('^C', 'meta'); return; }
+      el.textContent += ch;
+      scrollBottom();
+      await sleep(rand(7, 24));
+    }
+  }
+  async function streamOut(lines, cls){
+    stream = {cancelled:false};
+    for (const l of lines) await streamText(l, cls);
+    stream = null;
+  }
+
+  /* ---------- respostas pré-gravadas ---------- */
+  const jokes = [
+    'Por que programadores confundem Halloween com Natal? Porque OCT 31 == DEC 25.',
+    'Um SQL entra num bar, aproxima-se de duas tabelas e pergunta: "posso dar um JOIN?"',
+    'Há dois tipos de pessoas: as que entendem recursão e as que entendem recursão.'
+  ];
+  let jokeIdx = 0;
+  const pick = a => a[Math.floor(Math.random()*a.length)];
+
+  function brainRoute(q){
+    const p = q.toLowerCase();
+    if (/^(oi|ol[áa]|hello|hey|e a[íi]|eai|bom dia|boa tarde|boa noite)/.test(p))
+      return [pick([
+        'Olá! Aqui é a demo da landing — nenhuma rede, nenhuma chave, tudo pré-gravado. No Tell-ai de verdade, esta frase teria vindo de um LLM, token a token, direto no seu stdout.',
+        'Oi! Experimente pedir uma piada, ou digite `features` para ver o que a CLI faz.'])];
+    if (/piada|engra[çc]ad|humor/.test(p)) return [jokes[jokeIdx++ % jokes.length]];
+    if (/quem (é|e) voc|[oó] que (é|e) (o |a )?tell|sobre o projeto|o que faz/.test(p))
+      return ['Tell-ai é uma CLI open-source: você fala com modelos de linguagem direto do shell.',
+              'Sem navegador, sem dashboard — o prompt entra, o texto puro sai, e tudo encadeia com pipes.',
+              'O código vive em github.com/naoeosavio/Tell-ai (digite `github` e eu abro).'];
+    if (/instal|como uso|como come|começar|comecar/.test(p))
+      return ['Resumo rápido: `npm install -g tell-ai`, depois `export TELL_KEY=…`,',
+              'e aí é só `tell "sua pergunta"`. Detalhes completos: `install` ou o README.'];
+    if (/obrigad|valeu|brigad/.test(p))
+      return ['De nada! Se curtiu, uma star no repositório ajuda mais do que parece.'];
+    if (/star|github|reposit[oó]rio|repo|c[oó]digo/.test(p))
+      return ['O código vive em github.com/naoeosavio/Tell-ai — digite `github` e eu abro para você.'];
+    return [pick([
+      '[demo] Nenhuma rede aqui — esta página é 100% estática. No seu terminal, esse prompt iria para o modelo configurado em --model e a resposta seria streamada token a token.',
+      '[demo] Resposta pré-gravada, é claro. Mas no Tell-ai real isso chegaria em texto puro, pronto para `|`, `>` ou um commit.',
+      '[demo] Boa pergunta — para o modelo de verdade, não para mim. Digite `help` para ver o que este terminal faz por conta própria.'])];
+  }
+
+  async function process(raw){
+    if (!raw) return;
+    const q = raw.toLowerCase();
+    const cmd = q.split(/\s+/)[0];
+    const arg = raw.replace(/^\S+\s*/, '');
+
+    if (cmd === 'clear'){ tout.innerHTML = ''; await banner(true); return; }
+    if (cmd === 'help'){
+      out([
+        '',
+        '  help          esta lista',
+        '  tell <texto>  conversa com o modelo (simulado aqui)',
+        '  install       instruções de instalação',
+        '  features      recursos principais da CLI',
+        '  github        abre o repositório no navegador',
+        '  history       seus comandos nesta sessão',
+        '  whoami        quem você é por aqui',
+        '  banner        o letreiro de novo',
+        '  clear         limpa a tela',
+        '',
+        '  DICA   ↑ repete o último · Tab autocompleta · Ctrl+C interrompe',
+        '  Qualquer coisa que não for comando vira prompt para o modelo.',
+        ''].join('\n'));
+      return;
+    }
+    if (cmd === 'install'){
+      out('');
+      await streamOut([
+        '  # via npm',
+        '  npm install -g tell-ai',
+        '',
+        '  # do código-fonte',
+        '  git clone https://github.com/naoeosavio/Tell-ai',
+        '  cd Tell-ai && npm link',
+        '',
+        '  # depois',
+        '  export TELL_KEY="sua-chave"',
+        '  tell "olá, terminal"'], 'dim');
+      out('');
+      return;
+    }
+    if (cmd === 'features'){
+      out('');
+      out('  --stream    resposta token a token, direto no stdout', 'dim');
+      out('  |           pipes unix de verdade: git diff | tell "revise"', 'dim');
+      out('  --model     troca de provedor (OpenAI, Anthropic, Ollama…)', 'dim');
+      out('  @arquivo    injeta arquivos no contexto do prompt', 'dim');
+      out('  ~/.tellrc   aliases, temperatura e prompt de sistema', 'dim');
+      out('  --history   log local e pesquisável de tudo', 'dim');
+      out('');
+      return;
+    }
+    if (cmd === 'github'){
+      out('→ abrindo github.com/naoeosavio/Tell-ai …', 'ok');
+      const w = window.open('https://github.com/naoeosavio/Tell-ai', '_blank', 'noopener');
+      if (!w) out('  o navegador bloqueou o pop-up — copie o link acima', 'meta');
+      return;
+    }
+    if (cmd === 'history'){
+      out(history.length ? '\n' + history.map((h,i) => '  ' + String(i+1).padStart(3) + '  ' + h).join('\n') + '\n'
+                         : '\n  (nada ainda — sua sessão começa agora)\n');
+      return;
+    }
+    if (cmd === 'whoami'){
+      out('\n  visitante — anônimo, sem login, como tudo por aqui.\n', 'dim'); return;
+    }
+    if (cmd === 'banner'){ await banner(false); return; }
+    if (cmd === 'date'){ out('\n  ' + new Date().toLocaleString('pt-BR') + '\n', 'dim'); return; }
+    if (cmd === 'exit'){
+      await streamText('até já — o terminal continua aqui quando você voltar.');
+      return;
+    }
+    if (q.startsWith('sudo')){
+      await streamText('visitante não está no arquivo sudoers. Este incidente será reportado. (brincadeira — não há nada para reportar.)');
+      return;
+    }
+    if (q.startsWith('rm')){
+      await streamText('recusado. nem em simulação.'); return;
+    }
+    if (q === 'vim' || q === 'vi' || q.startsWith(':q') || q.startsWith(':wq')){
+      await streamText('para sair do vim: :q! — para sair desta demo: exit. Um dos dois é mais fácil.');
+      return;
+    }
+    if (cmd === 'echo'){ out(arg || '', 'dim'); return; }
+
+    /* não é comando → vira prompt (é assim que o Tell-ai funciona) */
+    const lines = (cmd === 'tell' ? (arg.trim() ? brainRoute(arg) : ['uso: tell <pergunta> — por exemplo: tell oi'])
+                                  : brainRoute(raw));
+    const ms = (rand(0.3, 0.9)).toFixed(1);
+    out('● tell-ai[demo] · resposta local · ' + ms + 's', 'meta');
+    out('');
+    await streamOut(lines, 'dim');
+    out('');
+  }
+
+  const BANNER = [
+    '████████╗███████╗██╗     ██╗        █████╗ ██╗',
+    '╚══██╔══╝██╔════╝██║     ██║       ██╔══██╗██║',
+    '   ██║   █████╗  ██║     ██║       ███████║██║',
+    '   ██║   ██╔══╝  ██║     ██║       ██╔══██║██║',
+    '   ██║   ███████╗███████╗███████╗  ██║  ██║██║'
+  ].join('\n');
+  async function banner(short){
+    const b = out(BANNER, 'ascii'); b.style.fontSize = '.74em'; b.style.lineHeight = '1.25';
+    out(short ? 'tell-ai — digite `help`' : 'demo interativa · respostas pré-gravadas · nenhuma chamada de rede', 'meta');
+    out('digite `help` para começar — ou clique numa sugestão abaixo.', 'meta');
+    out('');
+  }
+
+  /* boot da demo quando entra na viewport */
+  new IntersectionObserver((es, obs) => {
+    if (es[0].isIntersecting){
+      (async () => { await banner(false); newPrompt(); })(); obs.disconnect();
+    }
+  }, {threshold:.25}).observe($('#demoTerm'));
+
+  /* sugestões clicáveis digitam de verdade */
+  $$('.try a').forEach(a => a.addEventListener('click', async () => {
+    if (busy) return;
+    ti.focus();
+    const cmdText = a.dataset.cmd;
+    if (reduced){ ti.value = cmdText; }
+    else {
+      ti.value = '';
+      for (const ch of cmdText){ ti.value += ch; positionCursor(); await sleep(28); }
+    }
+    ti.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true}));
+  }));
+})();
+</script>
+</body>
+</html>
