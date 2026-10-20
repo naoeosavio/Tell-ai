@@ -662,7 +662,9 @@ function assertPromptInjectionPolicy(result) {
   result = await runTell(['-w', '-m', 'd'], 'unused response', { spawnError: enoent });
   assert.strictEqual(result.exitCode, 1);
   assert.match(result.stderr, /Web interface not installed/);
-  assert.match(result.stderr, /npm install -g @tell-ai\/web/);
+  // The install line keeps `--ignore-scripts=false`: the web package builds
+  // native deps (node-pty), so the install scripts must run.
+  assert.match(result.stderr, /npm i -g --ignore-scripts=false @tell-ai\/web/);
 
   // --web surfaces other spawn failures.
   result = await runTell(['-w', '-m', 'd'], 'unused response', { spawnError: new Error('denied') });

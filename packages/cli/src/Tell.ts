@@ -1003,7 +1003,9 @@ async function launch_web(opts: {
     child.on('error', (err: unknown) => {
       const code = (err as { code?: string })?.code;
       if (code === 'ENOENT') {
-        console.error('\x1b[31mWeb interface not installed. Install it with:\x1b[0m\n  npm install -g @tell-ai/web\n');
+        console.error(
+          '\x1b[31mWeb interface not installed. Install it with:\x1b[0m\n npm i -g --ignore-scripts=false @tell-ai/web\n',
+        );
         process.exitCode = EXIT_MODEL_ERROR;
       } else {
         console.error(

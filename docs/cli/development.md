@@ -40,10 +40,12 @@ npm run ci             # build + lint + format check + test
 >
 > Intentional divergences (test-pinned, do not "dedupe"): `isHighRiskScript`
 > blocks all interpreter `-c`/`-e`, `env`, `base64 -d` and shell expansions
-> (the CLI allows local one-liners by design); the frontend `extractRunScripts`
-> matches `<RUN>` case-insensitively like the SDK `extract_runs` (the SDK
-> resolves a block only when it owns a closing tag);
-> `App.tsx` keeps a static fallback prompt so the frontend stays SDK-free.
+> (the CLI allows local one-liners by design); the frontend executes only the
+> first `<RUN>` script by design (with an explicit warning about extras) while
+> extraction itself delegates to the SDK `extract_runs` via
+> `@tell-ai/sdk/browser` (the SDK resolves a block only when it owns a closing
+> tag); `App.tsx` keeps a static fallback prompt and never imports the SDK Node
+> entry (browser-safe subpath only).
 
 Package script (`packages/cli/package.json:10-16`): `build: tsup && chmod +x dist/Tell.mjs`, `lint: tsc -p tsconfig.json`, `format/check: biome … src`, `ci: lint + check + build`. Formatting: Biome 2.2.6, single quotes, 2-space, 120 cols (`biome.json`).
 

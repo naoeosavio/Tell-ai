@@ -1,6 +1,14 @@
 # Changelog
 
-## v0.7.0 — 2026-10-119
+## v0.7.1 — 2026-10-20
+
+### Fixes
+- The "web interface not installed" hint now prints `npm i -g --ignore-scripts=false @tell-ai/web`: the web package builds native dependencies (`node-pty`), so the install scripts must run — the plain `npm install -g` could leave a half-installed sandbox.
+
+### Notes
+- The floors moved to `@tell-ai/core` `^0.1.2` and `@tell-ai/sdk` `^0.5.0` (the core's runtime wiring now depends on the SDK's dependency-free `./pure` entry). No CLI behavior changed: the chain still runs on the core's `create_core_runtime`, with the same rounds, wording, cancellation and fail-closed stops.
+
+## v0.7.0 — 2026-10-19
 
 ### Refactors
 - Catalog refresh: `i` selects `google:gemini-4-argon` and `h` selects `anthropic:claude-haiku-5-5`, which also gains the effort ladder `h-`/`h`/`h+`/`h++`/`H` (`tell -m --help` now lists 152 aliases; `docs/usage.md` is regenerated from it).
