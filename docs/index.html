@@ -41,6 +41,17 @@
   .warn{color:var(--amber)}
   .okc{color:var(--green)}
 
+  /* ---------- seletor de idioma ---------- */
+  .lng{display:flex;gap:2px;border:1px solid var(--line2);padding:2px}
+  .lng button{background:none;border:none;color:var(--mut);font:600 11px/1 var(--mono);
+    letter-spacing:.05em;padding:5px 8px;cursor:pointer;transition:.12s}
+  .lng button:hover{color:var(--amber)}
+  .lng button.on{background:var(--amber);color:#0B0A08}
+  /* ajustes tipográficos para japonês */
+  .lang-jp .hero-h{font-size:clamp(2.4rem,6vw,5.4rem)}
+  .lang-jp h2{font-size:clamp(1.7rem,3.6vw,2.8rem)}
+  .lang-jp .feat .f{font-size:13px}
+
   /* ---------- barra superior ---------- */
   .top{position:sticky;top:0;z-index:60;background:rgba(11,10,8,.9);
        backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
@@ -301,12 +312,18 @@
   <div class="top-in">
     <a class="logo" href="#">tell<em>-ai</em><i class="cur"></i></a>
     <nav>
-      <a href="#recursos">recursos</a>
-      <a href="#modelos">modelos</a>
-      <a href="#demo">demo</a>
-      <a href="#sdk">sdk</a>
-      <a href="#sandbox">sandbox <i>v0</i></a>
-      <a href="#instalar">instalar</a>
+      <a href="#recursos" data-i18n="nav.feat">recursos</a>
+      <a href="#modelos" data-i18n="nav.models">modelos</a>
+      <a href="#demo" data-i18n="nav.demo">demo</a>
+      <a href="#sdk" data-i18n="nav.sdk">sdk</a>
+      <a href="#sandbox" data-i18n="nav.sb">sandbox <i>v0</i></a>
+      <a href="#instalar" data-i18n="nav.inst">instalar</a>
+      <div class="lng" role="group" aria-label="language / idioma">
+        <button type="button" data-lang="pt">pt</button>
+        <button type="button" data-lang="en">en</button>
+        <button type="button" data-lang="es">es</button>
+        <button type="button" data-lang="jp">日</button>
+      </div>
       <a class="ghbtn" href="https://github.com/naoeosavio/Tell-ai" target="_blank" rel="noopener">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
         GitHub <span class="st">★ <span class="gh-stars">—</span></span>
@@ -320,12 +337,12 @@
   <section class="hero">
     <div class="wrap hero-in">
       <div>
-        <p class="eyebrow"><b>//</b> CLI + SDK + sandbox web v0 — open-source, one-shot, execução confirmada</p>
+        <p class="eyebrow" data-i18n="hero.eyebrow"><b>//</b> CLI + SDK + sandbox web v0 — open-source, one-shot, execução confirmada</p>
         <h1 class="hero-h">
-          <span class="l"><span>SUA IA,</span></span>
-          <span class="l"><span><em class="serif">no terminal.</em></span></span>
+          <span class="l"><span data-i18n="h1a">SUA IA,</span></span>
+          <span class="l"><span data-i18n="h1b"><em class="serif">no terminal.</em></span></span>
         </h1>
-        <p class="hero-sub">
+        <p class="hero-sub" data-i18n="hero.sub">
           O Tell-ai leva modelos de linguagem para onde o seu código já vive: <b>o shell</b>.
           Pergunte, pipeie, deixe o modelo propor comandos — <b>você aprova cada um</b>.
           A mesma engine vira <b>SDK</b> no seu código — e, com <code>tell&nbsp;-w</code>, um <b>sandbox no navegador</b>.
@@ -335,29 +352,29 @@
           <code>npm install -g tell-ai</code>
           <button class="copy" data-copy="npm install -g tell-ai">
             <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1"/><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/></svg>
-            copiar
+            <span data-i18n="ui.copy">copiar</span>
           </button>
         </div>
         <div class="hero-links">
-          <a href="https://github.com/naoeosavio/Tell-ai" target="_blank" rel="noopener">ver o código ↗</a>
-          <a href="#demo">testar a demo ↓</a>
-          <a href="#modelos">resolvedor de modelos ↘</a>
-          <a href="#sandbox">sandbox v0 ↘</a>
+          <a href="https://github.com/naoeosavio/Tell-ai" target="_blank" rel="noopener" data-i18n="hero.l1">ver o código ↗</a>
+          <a href="#demo" data-i18n="hero.l2">testar a demo ↓</a>
+          <a href="#modelos" data-i18n="hero.l3">resolvedor de modelos ↘</a>
+          <a href="#sandbox" data-i18n="hero.l4">sandbox v0 ↘</a>
         </div>
         <div class="hero-meta">
-          <span><span class="dot"></span>open-source</span>
-          <span>★ <b class="gh-stars">—</b> stars</span>
-          <span><b class="gh-forks">—</b> forks</span>
+          <span><span class="dot"></span><span data-i18n="hero.m1">open-source</span></span>
+          <span>★ <b class="gh-stars">—</b> <span data-i18n="hero.m2">stars</span></span>
+          <span><b class="gh-forks">—</b> <span data-i18n="hero.m3">forks</span></span>
           <span>CLI: <b>GPL-3.0</b></span>
           <span>SDK: <b>MIT</b></span>
-          <span>sandbox web: <b class="warn">v0 preliminar</b></span>
+          <span data-i18n="hero.m.sb">sandbox web: <b class="warn">v0 preliminar</b></span>
         </div>
       </div>
 
       <div class="term hero-term">
         <div class="term-bar">
-          <span class="ti">tell-ai — sessão de exemplo</span>
-          <button id="replay" title="rodar de novo">↻ replay</button>
+          <span class="ti" data-i18n="term.title">tell-ai — sessão de exemplo</span>
+          <button id="replay" data-i18n="term.replay" title="replay">↻ replay</button>
         </div>
         <div class="term-body" id="heroTerm"></div>
       </div>
@@ -368,110 +385,110 @@
     <div class="mq-track" id="mqTrack"></div>
   </div>
 
-  <!-- §01 por quê -->
+  <!-- §01 -->
   <section class="sec" id="porque">
     <div class="wrap">
       <div class="shead rv">
-        <p class="slabel"><b>§ 01</b> — por quê</p>
-        <h2>Copiar, colar, formatar, <em class="serif">repetir.</em></h2>
+        <p class="slabel" data-i18n="s1.label"><b>§ 01</b> — por quê</p>
+        <h2 data-i18n="s1.h2">Copiar, colar, formatar, <em class="serif">repetir.</em></h2>
       </div>
       <div class="why">
         <div class="diff rv">
-          <div class="diff-bar"><span>fluxo — antes / depois</span><span>unified</span></div>
+          <div class="diff-bar"><span data-i18n="d.bar">fluxo — antes / depois</span><span>unified</span></div>
           <div class="diff-body">
-<div class="dl hdr"><span class="ln"></span>--- a/fluxo/sem-tell-ai</div>
-<div class="dl hdr"><span class="ln"></span>+++ b/fluxo/com-tell-ai</div>
-<div class="dl del"><span class="ln">1</span>- abrir uma aba nova no navegador</div>
-<div class="dl del"><span class="ln">2</span>- digitar o endereço do chat</div>
-<div class="dl del"><span class="ln">3</span>- autenticar (de novo)</div>
-<div class="dl del"><span class="ln">4</span>- colar código + contexto à mão</div>
-<div class="dl del"><span class="ln">5</span>- copiar a resposta e reformatar</div>
-<div class="dl del"><span class="ln">6</span>- voltar ao editor e colar de novo</div>
-<div class="dl add"><span class="ln">1</span>+ git diff --staged | tell -i "review this change"</div>
+<div class="dl hdr"><span class="ln"></span><span data-i18n="d.h1">--- a/fluxo/sem-tell-ai</span></div>
+<div class="dl hdr"><span class="ln"></span><span data-i18n="d.h2">+++ b/fluxo/com-tell-ai</span></div>
+<div class="dl del"><span class="ln">1</span>- <span data-i18n="d.r1">abrir uma aba nova no navegador</span></div>
+<div class="dl del"><span class="ln">2</span>- <span data-i18n="d.r2">digitar o endereço do chat</span></div>
+<div class="dl del"><span class="ln">3</span>- <span data-i18n="d.r3">autenticar (de novo)</span></div>
+<div class="dl del"><span class="ln">4</span>- <span data-i18n="d.r4">colar código + contexto à mão</span></div>
+<div class="dl del"><span class="ln">5</span>- <span data-i18n="d.r5">copiar a resposta e reformatar</span></div>
+<div class="dl del"><span class="ln">6</span>- <span data-i18n="d.r6">voltar ao editor e colar de novo</span></div>
+<div class="dl add"><span class="ln">1</span>+ git diff --staged | tell -i "<span data-i18n="d.a1">review this change</span>"</div>
           </div>
         </div>
         <div class="why-side rv" style="transition-delay:.1s">
           <div class="why-i">
-            <h3>~23 <em>minutos</em></h3>
-            <p>é o que estudos de atenção estimam para retomar o foco depois de uma interrupção. Cada ida até o navegador é uma delas. O Tell-ai encurta o caminho para um comando.</p>
+            <h3 data-i18n="w1.h3">~23 <em>minutos</em></h3>
+            <p data-i18n="w1.p">é o que estudos de atenção estimam para retomar o foco depois de uma interrupção. Cada ida até o navegador é uma delas. O Tell-ai encurta o caminho para um comando.</p>
           </div>
           <div class="why-i">
-            <h3>você <em>no comando</em></h3>
-            <p>O modelo propõe comandos entre tags <code>&lt;RUN&gt;</code> — e nada roda sem a sua confirmação. Com <code>-y</code> os seguros rodam sozinhos, mas padrões de alto risco (<code>sudo</code>, <code>rm -rf</code>, <code>curl|sh</code>…) sempre perguntam.</p>
+            <h3 data-i18n="w2.h3">você <em>no comando</em></h3>
+            <p data-i18n="w2.p">O modelo propõe comandos entre tags <code>&lt;RUN&gt;</code> — e nada roda sem a sua confirmação. Com <code>-y</code> os seguros rodam sozinhos, mas padrões de alto risco (<code>sudo</code>, <code>rm -rf</code>, <code>curl|sh</code>…) sempre perguntam.</p>
           </div>
           <div class="why-i">
-            <h3>shell, código <em>e a aba.</em></h3>
-            <p>CLI no terminal, SDK no seu código — e o sandbox web (v0 preliminar) via <code>tell -w</code>: terminal, explorador de arquivos e chat no navegador, ancorados num diretório.</p>
+            <h3 data-i18n="w3.h3">shell, código <em>e a aba.</em></h3>
+            <p data-i18n="w3.p">CLI no terminal, SDK no seu código — e o sandbox web (v0 preliminar) via <code>tell -w</code>: terminal, explorador de arquivos e chat no navegador, ancorados num diretório.</p>
           </div>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- §02 passos -->
+  <!-- §02 -->
   <section class="sec" id="passos">
     <div class="wrap">
       <div class="shead rv">
-        <p class="slabel"><b>§ 02</b> — primeiros passos</p>
-        <h2>Três comandos até a <em class="serif">primeira resposta.</em></h2>
+        <p class="slabel" data-i18n="s2.label"><b>§ 02</b> — primeiros passos</p>
+        <h2 data-i18n="s2.h2">Três comandos até a <em class="serif">primeira resposta.</em></h2>
       </div>
 
       <div class="step rv">
         <span class="n">01</span>
-        <div><h3>Instale</h3><p>Um binário, uma pergunta. Nada de daemon rodando em segundo plano.</p></div>
+        <div><h3 data-i18n="st1.h3">Instale</h3><p data-i18n="st1.p">Um binário, uma pergunta. Nada de daemon rodando em segundo plano.</p></div>
         <code><span class="ps1">$ </span>npm install -g tell-ai</code>
       </div>
       <div class="step rv">
         <span class="n">02</span>
-        <div><h3>Aponte uma chave</h3><p>Qualquer vendor que você já usa — via ambiente ou um arquivo <code>~/.config/&lt;vendor&gt;.token</code>. Sem cadastro novo.</p></div>
+        <div><h3 data-i18n="st2.h3">Aponte uma chave</h3><p data-i18n="st2.p">Qualquer vendor que você já usa — via ambiente ou um arquivo <code>~/.config/&lt;vendor&gt;.token</code>. Sem cadastro novo.</p></div>
         <code><span class="ps1">$ </span>export DEEPSEEK_API_KEY=<span class="cm">"…"</span></code>
       </div>
       <div class="step rv">
         <span class="n">03</span>
-        <div><h3>Converse</h3><p>A letra já escolhe o modelo — <code>d</code> de DeepSeek Flash (que já nasce em <code>high</code>), <code>D</code> de Pro, <code>g</code> de GPT.</p></div>
-        <code><span class="ps1">$ </span>tell d <span class="cm">"run ls -la"</span>   <span class="cm"># confirma antes de executar</span></code>
+        <div><h3 data-i18n="st3.h3">Converse</h3><p data-i18n="st3.p">A letra já escolhe o modelo — <code>d</code> de DeepSeek Flash (que já nasce em <code>high</code>), <code>D</code> de Pro, <code>g</code> de GPT.</p></div>
+        <code><span class="ps1">$ </span>tell d <span class="cm">"run ls -la"</span>   <span class="cm" data-i18n="st3.cm"># confirma antes de executar</span></code>
       </div>
     </div>
   </section>
 
-  <!-- §03 recursos -->
+  <!-- §03 -->
   <section class="sec" id="recursos">
     <div class="wrap">
       <div class="man-top rv">
         <div>
-          <p class="slabel"><b>§ 03</b> — recursos</p>
-          <h2>Construído como ferramenta <em class="serif">unix.</em></h2>
+          <p class="slabel" data-i18n="s3.label"><b>§ 03</b> — recursos</p>
+          <h2 data-i18n="s3.h2">Construído como ferramenta <em class="serif">unix.</em></h2>
         </div>
         <p class="mini">TELL(1) · General Commands Manual</p>
       </div>
 
-      <div class="feat rv"><span class="i">01</span><span class="f">&lt;RUN&gt;</span><p class="d">O modelo propõe comandos entre tags e <b>você aprova um a um</b>. Timeout de 120s por comando; <code>sudo</code>, <code>rm -rf</code>, <code>mkfs</code>, <code>curl|sh</code> e escritas em <code>/etc</code> são bloqueados sempre.</p></div>
-      <div class="feat rv"><span class="i">02</span><span class="f">| &nbsp;-i</span><p class="d">Pipes de verdade: <code>npm test 2&gt;&amp;1 | tell -i "why are these failing?"</code> — stdin vira contexto, não vira bagunça.</p></div>
-      <div class="feat rv"><span class="i">03</span><span class="f">-m d</span><p class="d"><b>142 aliases</b> para os modelos de OpenAI, Anthropic, Google, xAI, DeepSeek, Alibaba, Z.ai, Moonshot, Meta e Xiaomi + self-hosted — cada um com sua régua de thinking. O default é <code>g</code> (via <code>TELL_MODEL</code>). <a href="#modelos">resolvedor interativo ↘</a></p></div>
-      <div class="feat rv"><span class="i">04</span><span class="f">--stream<br>--think</span><p class="d"><code>--stream</code> imprime token a token; <code>--think</code> mostra o reasoning. Só mudam o que aparece: log, contexto e extração de <code>&lt;RUN&gt;</code> ficam idênticos.</p></div>
-      <div class="feat rv"><span class="i">05</span><span class="f">--chain</span><p class="d">Multi-step: o modelo roda um comando, lê a saída e continua — até 8 rodadas até a resposta final.</p></div>
-      <div class="feat rv"><span class="i">06</span><span class="f">-c / --ctx</span><p class="d">Contexto persistente por diretório+modelo em <code>~/.ai/tell_context</code>. Nomeie com <code>--ctx %projeto</code>, retome por <code>@0</code>, reset com <code>-n</code>; <code>--ctx</code> sem ref é prompt do contexto default.</p></div>
-      <div class="feat rv"><span class="i">07</span><span class="f">-l</span><p class="d"><code>tell -l</code> lista contextos (<code>@N</code>) e conversas (<code>%N</code>), busca por termo, reimprime com <code>-l @0</code> — <b>sem modelo, sem chave, sem rede</b>. Log completo em <code>~/.ai/tell_history</code>.</p></div>
-      <div class="feat rv"><span class="i">08</span><span class="f">--require-<br>approval</span><p class="d">Postura de execução explícita: com <code>-y</code>, seguros rodam direto e os de risco perguntam; sem <code>-y</code>, tudo pergunta. Comandos que tocam fora do cwd — <b>leitura inclusive</b> — sempre perguntam.</p></div>
-      <div class="feat rv"><span class="i">09</span><span class="f">q / v</span><p class="d">Modelos self-hosted com a mesma ergonomia: <code>q</code> para endpoints locais, <code>v</code> para Vast — e qualquer vendor sem handler cai no provider OpenAI-compatible genérico.</p></div>
-      <div class="feat rv"><span class="i">10</span><span class="f">tell -w</span><p class="d">O sandbox web v0 no navegador: terminal, explorador de arquivos e chat ancorados ao diretório. <code>--stream</code>, <code>--think</code>, <code>--chain</code>, <code>-y</code>, <code>--no-exec</code> e <code>--require-approval</code> são repassados. <a href="#sandbox">ver a seção ↘</a></p></div>
+      <div class="feat rv"><span class="i">01</span><span class="f">&lt;RUN&gt;</span><p class="d" data-i18n="f1">O modelo propõe comandos entre tags e <b>você aprova um a um</b>. Timeout de 120s por comando; <code>sudo</code>, <code>rm -rf</code>, <code>mkfs</code>, <code>curl|sh</code> e escritas em <code>/etc</code> são bloqueados sempre.</p></div>
+      <div class="feat rv"><span class="i">02</span><span class="f">| &nbsp;-i</span><p class="d" data-i18n="f2">Pipes de verdade: <code>npm test 2&gt;&amp;1 | tell -i "why are these failing?"</code> — stdin vira contexto, não vira bagunça.</p></div>
+      <div class="feat rv"><span class="i">03</span><span class="f">-m d</span><p class="d" data-i18n="f3"><b>142 aliases</b> para os modelos de OpenAI, Anthropic, Google, xAI, DeepSeek, Alibaba, Z.ai, Moonshot, Meta e Xiaomi + self-hosted — cada um com sua régua de thinking. O default é <code>g</code> (via <code>TELL_MODEL</code>). <a href="#modelos">resolvedor interativo ↘</a></p></div>
+      <div class="feat rv"><span class="i">04</span><span class="f">--stream<br>--think</span><p class="d" data-i18n="f4"><code>--stream</code> imprime token a token; <code>--think</code> mostra o reasoning. Só mudam o que aparece: log, contexto e extração de <code>&lt;RUN&gt;</code> ficam idênticos.</p></div>
+      <div class="feat rv"><span class="i">05</span><span class="f">--chain</span><p class="d" data-i18n="f5">Multi-step: o modelo roda um comando, lê a saída e continua — até 8 rodadas até a resposta final.</p></div>
+      <div class="feat rv"><span class="i">06</span><span class="f">-c / --ctx</span><p class="d" data-i18n="f6">Contexto persistente por diretório+modelo em <code>~/.ai/tell_context</code>. Nomeie com <code>--ctx %projeto</code>, retome por <code>@0</code>, reset com <code>-n</code>; <code>--ctx</code> sem ref é prompt do contexto default.</p></div>
+      <div class="feat rv"><span class="i">07</span><span class="f">-l</span><p class="d" data-i18n="f7"><code>tell -l</code> lista contextos (<code>@N</code>) e conversas (<code>%N</code>), busca por termo, reimprime com <code>-l @0</code> — <b>sem modelo, sem chave, sem rede</b>. Log completo em <code>~/.ai/tell_history</code>.</p></div>
+      <div class="feat rv"><span class="i">08</span><span class="f">--require-<br>approval</span><p class="d" data-i18n="f8">Postura de execução explícita: com <code>-y</code>, seguros rodam direto e os de risco perguntam; sem <code>-y</code>, tudo pergunta. Comandos que tocam fora do cwd — <b>leitura inclusive</b> — sempre perguntam.</p></div>
+      <div class="feat rv"><span class="i">09</span><span class="f">q / v</span><p class="d" data-i18n="f9">Modelos self-hosted com a mesma ergonomia: <code>q</code> para endpoints locais, <code>v</code> para Vast — e qualquer vendor sem handler cai no provider OpenAI-compatible genérico.</p></div>
+      <div class="feat rv"><span class="i">10</span><span class="f">tell -w</span><p class="d" data-i18n="f10">O sandbox web v0 no navegador: terminal, explorador de arquivos e chat ancorados ao diretório. <code>--stream</code>, <code>--think</code>, <code>--chain</code>, <code>-y</code>, <code>--no-exec</code> e <code>--require-approval</code> são repassados. <a href="#sandbox">ver a seção ↘</a></p></div>
     </div>
   </section>
 
-  <!-- §04 modelos (resolvedor) -->
+  <!-- §04 -->
   <section class="sec" id="modelos">
     <div class="wrap">
       <div class="man-top rv">
         <div>
-          <p class="slabel"><b>§ 04</b> — modelos</p>
-          <h2>Dez vendors, <em class="serif">uma letra.</em></h2>
+          <p class="slabel" data-i18n="s4.label"><b>§ 04</b> — modelos</p>
+          <h2 data-i18n="s4.h2">Dez vendors, <em class="serif">uma letra.</em></h2>
         </div>
         <p class="mini">TELL-MODEL(5) · 142 aliases</p>
       </div>
 
       <div class="res rv">
         <div class="res-hd">
-          <span>resolvedor de aliases — clique e compose</span>
+          <span data-i18n="res.hd">resolvedor de aliases — clique e compose</span>
           <span id="resCount"></span>
         </div>
         <div class="res-bd">
@@ -487,14 +504,7 @@
             <div id="resOut"></div>
           </div>
         </div>
-        <p class="res-foot">
-          régua de thinking <b>varia por modelo</b>: <code>g</code>/<code>e</code>/<code>r</code> não têm <code>none</code> (começam em low) ·
-          <code>d</code>/<code>D</code> já são <code>high</code> no alias base · xAI e Alibaba topam em <code>xhigh</code> ·
-          <code>h</code>/<code>k</code>/<code>q</code>/<code>v</code> têm alias único ·
-          maiúscula (<code>G</code>, <code>S</code>, <code>O</code>…) = atalho para <code>high</code> ·
-          modo rápido: <code>.</code> antes do alias (<code>.g</code>) · specs completas: <code>vendor:model[:thinking]</code> ·
-          lista oficial: <code>tell -m --help</code>
-        </p>
+        <p class="res-foot" data-i18n="res.foot"></p>
       </div>
     </div>
   </section>
@@ -503,28 +513,20 @@
   <section class="sec" id="demo">
     <div class="wrap">
       <div class="shead rv">
-        <p class="slabel"><b>§ 05</b> — demo</p>
-        <h2>Experimente <em class="serif">sem instalar.</em></h2>
+        <p class="slabel" data-i18n="s5.label"><b>§ 05</b> — demo</p>
+        <h2 data-i18n="s5.h2">Experimente <em class="serif">sem instalar.</em></h2>
       </div>
 
       <div class="demo-shell rv">
         <div class="term" id="demoTerm">
           <div class="term-bar">
-            <span class="ti">visitante@tell-ai: ~ — demo interativa</span>
-            <span id="demoFocus">não conectado</span>
+            <span class="ti" data-i18n="demo.title">visitante@tell-ai: ~ — demo interativa</span>
+            <span id="demoFocus" data-i18n="demo.f0">não conectado</span>
           </div>
           <div class="term-body" id="tout"></div>
         </div>
-        <p class="try">↳ tente:
-          <a data-cmd="help">help</a>
-          <a data-cmd="tell oi">tell oi</a>
-          <a data-cmd="run ls">run ls</a>
-          <a data-cmd="models">models</a>
-          <a data-cmd="sandbox">sandbox</a>
-          <a data-cmd="sdk">sdk</a>
-          <a data-cmd="github">github</a>
-        </p>
-        <p class="demo-note"><b>Simulação local:</b> este terminal roda 100% na sua aba — nenhuma chave, nenhuma chamada de rede. As respostas são pré-gravadas, mas o streaming é de verdade: <b>↑</b> repete comandos, <b>Tab</b> autocompleta, <b>Ctrl+C</b> interrompe.</p>
+        <p class="try"><span data-i18n="demo.try">↳ tente:</span> <span id="tryList"></span></p>
+        <p class="demo-note" data-i18n="demo.note"></p>
       </div>
     </div>
   </section>
@@ -533,8 +535,8 @@
   <section class="sec" id="sdk">
     <div class="wrap">
       <div class="shead rv">
-        <p class="slabel"><b>§ 06</b> — sdk</p>
-        <h2>A mesma <em class="serif">tell()</em>, fora do shell.</h2>
+        <p class="slabel" data-i18n="s6.label"><b>§ 06</b> — sdk</p>
+        <h2 data-i18n="s6.h2">A mesma <em class="serif">tell(),</em> fora do shell.</h2>
       </div>
       <div class="inst">
         <div class="inst-cmd rv">
@@ -543,71 +545,71 @@
             <code>npm add @tell-ai/sdk</code>
             <button class="copy" data-copy="npm add @tell-ai/sdk">
               <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1"/><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/></svg>
-              copiar
+              <span data-i18n="ui.copy">copiar</span>
             </button>
           </div>
-          <p class="inst-alt">ou <code>bun add @tell-ai/sdk</code> — pacote próprio da biblioteca, separado da CLI.</p>
+          <p class="inst-alt" data-i18n="s6.alt">ou <code>bun add @tell-ai/sdk</code> — pacote próprio da biblioteca, separado da CLI.</p>
 
           <div class="term">
             <div class="term-bar">
               <span class="ti">sdk/exemplo.ts — Node / Bun</span>
-              <button class="copy" data-copy-target="#sdkCode">copiar</button>
+              <button class="copy" data-copy-target="#sdkCode"><span data-i18n="ui.copy">copiar</span></button>
             </div>
-            <div class="term-body"><pre class="code" id="sdkCode"><span class="c">// o "tell --no-exec" como função: chama o modelo e devolve</span>
-<span class="c">// o texto com tags &lt;RUN&gt; e reasoning já removidas</span>
+            <div class="term-body"><pre class="code" id="sdkCode"><span class="c" data-i18n="sdk.c1"></span>
+<span class="c" data-i18n="sdk.c2"></span>
 <span class="k">import</span> { tell, create_ask_ai, get_model, MODELS } <span class="k">from</span> <span class="s">'@tell-ai/sdk'</span>;
 
 <span class="k">const</span> resposta = <span class="k">await</span> <span class="f">tell</span>(<span class="s">'resuma o diff não commitado'</span>, {
   keys: { deepseek: process.env.DEEPSEEK_API_KEY },
 });
 
-<span class="c">// streaming token a token — eventos NDJSON (reasoning | text)</span>
+<span class="c" data-i18n="sdk.c3"></span>
 <span class="k">const</span> ai = <span class="f">create_ask_ai</span>(<span class="s">'g'</span>, { keys: { openai: process.env.OPENAI_API_KEY } });
 <span class="k">for await</span> (<span class="k">const</span> ev <span class="k">of</span> ai.<span class="f">ask_stream</span>(<span class="s">'explique este repo'</span>)) {
   <span class="k">if</span> (ev.type === <span class="s">'text'</span>) process.stdout.<span class="f">write</span>(ev.text);
 }
 
-<span class="c">// também exportados: MODELS (142 aliases), get_model() (o</span>
-<span class="c">// ModelHandle cru para o seu próprio generateText),</span>
-<span class="c">// get_system_prompt, extract_runs · strip_run_tags ·</span>
-<span class="c">// sanitize_reasoning · summarize_context</span></pre></div>
+<span class="c" data-i18n="sdk.c4"></span>
+<span class="c" data-i18n="sdk.c5"></span>
+<span class="c" data-i18n="sdk.c6"></span>
+<span class="c" data-i18n="sdk.c7"></span></pre></div>
           </div>
 
           <div class="term" style="margin-top:14px">
             <div class="term-bar">
-              <span class="ti">browser/index.html — zero build, via CDN</span>
-              <button class="copy" data-copy-target="#sdkWeb">copiar</button>
+              <span class="ti">browser/index.html — CDN</span>
+              <button class="copy" data-copy-target="#sdkWeb"><span data-i18n="ui.copy">copiar</span></button>
             </div>
             <div class="term-body"><pre class="code" id="sdkWeb">&lt;<span class="k">script</span> <span class="f">src</span>=<span class="s">"https://unpkg.com/@tell-ai/sdk"</span>&gt;&lt;/<span class="k">script</span>&gt;
 &lt;<span class="k">script</span>&gt;
-  <span class="c">// IIFE global — roda até em file://</span>
+  <span class="c" data-i18n="sdk.wc"></span>
   TellSDK.<span class="f">tell</span>(<span class="s">'olá'</span>, { keys: { google: MINHA_CHAVE } });
 &lt;/<span class="k">script</span>&gt;</pre></div>
           </div>
 
           <div class="reqs" style="margin-top:18px">
-            <b>três builds, mesmo import</b>
+            <b data-i18n="vt.h">três builds, mesmo import</b>
             <table class="vt">
-              <tr><td>@tell-ai/sdk</td><td>ESM + CJS + tipos</td><td>Node / Bun</td></tr>
-              <tr><td>@tell-ai/sdk/browser</td><td>ESM bundleado</td><td>bundlers</td></tr>
-              <tr><td>@tell-ai/sdk/browser-global</td><td>IIFE → <span style="color:var(--fg)">TellSDK</span></td><td>&lt;script&gt;, CDN, file://</td></tr>
+              <tr><td>@tell-ai/sdk</td><td data-i18n="vt1">ESM + CJS + tipos</td><td>Node / Bun</td></tr>
+              <tr><td>@tell-ai/sdk/browser</td><td data-i18n="vt2">ESM bundleado</td><td>bundlers</td></tr>
+              <tr><td>@tell-ai/sdk/browser-global</td><td data-i18n="vt3">IIFE → TellSDK</td><td>&lt;script&gt;, CDN, file://</td></tr>
             </table>
-            <p class="vend">12 vendors via <code>keys</code>/<code>urls</code>: openai · anthropic · google · xai · deepseek · cerebras · moonshotai · openrouter · alibaba <code>(qwen)</code> · zai <code>(glm)</code> · meta <code>(llama)</code> · xiaomi <code>(mimo)</code> + <code>vast</code>/<code>local</code> self-hosted. Budget de reasoning resolvido por vendor (<code>max</code> vira o teto de cada um); provider caches por base URL <b>e</b> credencial.</p>
+            <p class="vend" data-i18n="s6.vend"></p>
           </div>
         </div>
 
         <div class="why-side rv" style="transition-delay:.1s">
           <div class="why-i">
-            <h3>dois pacotes, <em>duas licenças</em></h3>
-            <p>A CLI (<code>tell-ai</code>) é GPL-3.0. O SDK (<code>@tell-ai/sdk</code>) é <b>MIT</b> — pode embutir em produto fechado sem dor de cabeça.</p>
+            <h3 data-i18n="k1.h3">dois pacotes, <em>duas licenças</em></h3>
+            <p data-i18n="k1.p">A CLI (<code>tell-ai</code>) é GPL-3.0. O SDK (<code>@tell-ai/sdk</code>) é <b>MIT</b> — pode embutir em produto fechado sem dor de cabeça.</p>
           </div>
           <div class="why-i">
-            <h3>zero <code>process.env</code></h3>
-            <p>O SDK nunca lê o ambiente: chaves e base URLs são <b>injetadas</b> via <code>keys</code> e <code>urls</code>. É o que o torna browser-safe — e <code>urls</code> aceita proxy CORS, como no <code>examples/web/</code> do repo.</p>
+            <h3 data-i18n="k2.h3">zero <code>process.env</code></h3>
+            <p data-i18n="k2.p">O SDK nunca lê o ambiente: chaves e base URLs são <b>injetadas</b> via <code>keys</code> e <code>urls</code>. É o que o torna browser-safe — e <code>urls</code> aceita proxy CORS, como no <code>examples/web/</code> do repo.</p>
           </div>
           <div class="why-i">
-            <h3>a fundação <em>do sandbox</em></h3>
-            <p>Os builds de browser já sobem numa <code>&lt;script&gt;</code> tag pura — é por cima deles que o sandbox v0 do <a href="#sandbox" style="color:var(--amber);border-bottom:1px dotted var(--amber)">§07</a> foi construído.</p>
+            <h3 data-i18n="k3.h3">a fundação <em>do sandbox</em></h3>
+            <p data-i18n="k3.p">Os builds de browser já sobem numa <code>&lt;script&gt;</code> tag pura — é por cima deles que o sandbox v0 do <a href="#sandbox" style="color:var(--amber);border-bottom:1px dotted var(--amber)">§07</a> foi construído.</p>
           </div>
         </div>
       </div>
@@ -618,47 +620,41 @@
   <section class="sec" id="sandbox">
     <div class="wrap">
       <div class="shead rv">
-        <p class="slabel"><b>§ 07</b> — sandbox web</p>
-        <h2>O sandbox chegou — <em class="serif">versão preliminar.</em></h2>
+        <p class="slabel" data-i18n="s7.label"><b>§ 07</b> — sandbox web</p>
+        <h2 data-i18n="s7.h2">O sandbox chegou — <em class="serif">versão preliminar.</em></h2>
       </div>
       <div class="why">
         <div class="term sbox rv">
           <div class="term-bar">
-            <span class="ti">tell-web — sandbox v0 <span class="v0-badge" style="margin-left:8px">PRELIMINAR</span></span>
-            <button id="sboxReplay">↻ rodar de novo</button>
+            <span class="ti" data-i18n="s7.title">tell-web — sandbox v0 <span class="v0-badge" style="margin-left:8px">PRELIMINAR</span></span>
+            <button id="sboxReplay" data-i18n="term.replay2">↻ rodar de novo</button>
           </div>
           <div class="term-body" id="sboxBody"></div>
         </div>
         <div class="why-side rv" style="transition-delay:.1s">
           <div class="road-i done">
             <span class="rd">[✓]</span>
-            <div class="rb"><b>CLI</b><p>lançada — <code>tell "…"</code> no seu shell, com <code>&lt;RUN&gt;</code> confirmado, <code>--chain</code>, contexto <code>%id</code>/<code>@N</code> e <code>-l</code> offline.</p></div>
+            <div class="rb"><b data-i18n="r1.b">CLI</b><p data-i18n="r1.p">lançada — <code>tell "…"</code> no seu shell, com <code>&lt;RUN&gt;</code> confirmado, <code>--chain</code>, contexto <code>%id</code>/<code>@N</code> e <code>-l</code> offline.</p></div>
           </div>
           <div class="road-i done">
             <span class="rd">[✓]</span>
-            <div class="rb"><b>SDK</b><p>disponível (MIT) — <code>ask_stream()</code>, <code>get_model()</code>, 142 aliases, 12 vendors, builds de browser IIFE via unpkg.</p></div>
+            <div class="rb"><b data-i18n="r2.b">SDK</b><p data-i18n="r2.p">disponível (MIT) — <code>ask_stream()</code>, <code>get_model()</code>, 142 aliases, 12 vendors, builds de browser IIFE via unpkg.</p></div>
           </div>
           <div class="road-i pre">
             <span class="rd">[~]</span>
-            <div class="rb"><b>sandbox web <i class="v0-badge">V0 PRELIMINAR</i></b><p>abre com <code>tell -w</code>: terminal, explorador de arquivos e chat ancorados ao diretório. Local-first — pensado para <code>127.0.0.1</code>.</p></div>
+            <div class="rb"><b data-i18n="r3.b">sandbox web</b><p data-i18n="r3.p">abre com <code>tell -w</code>: terminal, explorador de arquivos e chat ancorados ao diretório. Local-first — pensado para <code>127.0.0.1</code>.</p></div>
           </div>
           <div class="road-i next">
             <span class="rd">[ ]</span>
-            <div class="rb"><b>o que vem depois</b><p>preliminar significa: falta o que <b>você</b> reclamar — <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener" style="color:var(--amber);border-bottom:1px dotted var(--amber)">abra uma issue</a> e a v1 sai disso.</p></div>
+            <div class="rb"><b data-i18n="r4.b">o que vem depois</b><p data-i18n="r4.p">preliminar significa: falta o que <b>você</b> reclamar — <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener" style="color:var(--amber);border-bottom:1px dotted var(--amber)">abra uma issue</a> e a v1 sai disso.</p></div>
           </div>
 
           <div class="reqs" style="margin-top:26px">
-            <b>fora do localhost: modo seguro</b>
-            export TELL_TOKEN=$(openssl rand -hex 32)<br>
-            tell-web --cwd ~/projeto<br><br>
-            · Bearer em todo <code>/api/*</code> · WS via <code>?token=</code><br>
-            · token só em memória — reload pede de novo<br>
-            · verify limitado a 5 tentativas/15 min/IP<br>
-            · filhos nascem <b>sem</b> <code>TELL_TOKEN</code> nem chaves<br>
-            · checagem de Host/Origin contra DNS rebinding
+            <b data-i18n="sec.h">fora do localhost: modo seguro</b>
+            <span data-i18n="sec.body"></span>
           </div>
 
-          <p class="road-note">Segurança desde o v0: Auto-Run é <b>opt-in</b> (navegador novo sempre pergunta antes), <code>--no-exec</code> trava no servidor (<code>/api/execute</code> → <b>403</b>) e vence preferências salvas. A base é o build IIFE do SDK — a doc completa está em <a href="https://github.com/naoeosavio/Tell-ai/blob/main/packages/web/README.md" target="_blank" rel="noopener">packages/web/README.md</a>.</p>
+          <p class="road-note" data-i18n="road.note"></p>
         </div>
       </div>
     </div>
@@ -668,8 +664,8 @@
   <section class="sec" id="instalar">
     <div class="wrap">
       <div class="shead rv">
-        <p class="slabel"><b>§ 08</b> — instalar</p>
-        <h2>Uma linha e <em class="serif">pronto.</em></h2>
+        <p class="slabel" data-i18n="s8.label"><b>§ 08</b> — instalar</p>
+        <h2 data-i18n="s8.h2">Uma linha e <em class="serif">pronto.</em></h2>
       </div>
       <div class="inst">
         <div class="inst-cmd rv">
@@ -678,26 +674,15 @@
             <code>npm install -g tell-ai</code>
             <button class="copy" data-copy="npm install -g tell-ai">
               <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1"/><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/></svg>
-              copiar
+              <span data-i18n="ui.copy">copiar</span>
             </button>
           </div>
-          <p class="inst-alt">
-            CLI global. Para a biblioteca: <code>npm add @tell-ai/sdk</code> ·
-            <a href="https://github.com/naoeosavio/Tell-ai#readme" target="_blank" rel="noopener">requisitos e build do código-fonte no README ↗</a>
-          </p>
+          <p class="inst-alt" data-i18n="s8.alt"></p>
         </div>
         <div class="inst-side rv" style="transition-delay:.1s">
           <div class="reqs">
-            <b>chaves — env ou ~/.config/&lt;vendor&gt;.token</b>
-            export OPENAI_API_KEY="sk-..."<br>
-            export DEEPSEEK_API_KEY="..."<br>
-            export ZHIPU_API_KEY="..."        <span style="color:var(--mut)"># Z.ai GLM</span><br>
-            export ALIBABA_API_KEY="..."      <span style="color:var(--mut)"># Qwen</span><br>
-            <span style="color:var(--mut)">…meta, mimo (xiaomi), google, xai, fireworks, cerebras, moonshotai, openrouter</span><br><br>
-            tell "olá, terminal"<br>
-            tell d "run ls -la"<br>
-            tell -w                           <span style="color:var(--mut)"># sandbox v0 no navegador</span><br><br>
-            Problemas? <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener">As issues</a> são o melhor caminho — e contribuições são bem-vindas.
+            <b data-i18n="reqs.h">chaves — env ou ~/.config/&lt;vendor&gt;.token</b>
+            <span data-i18n="reqs.body"></span>
           </div>
         </div>
       </div>
@@ -705,8 +690,8 @@
   </section>
 
   <section class="cta rv">
-    <h2>O próximo prompt está a um <em class="serif">pipe</em> de distância.</h2>
-    <p>CLI GPL-3.0, SDK MIT, sandbox v0 já rodando — e espaço para deixar a sua marca.</p>
+    <h2 data-i18n="cta.h2">O próximo prompt está a um <em class="serif">pipe</em> de distância.</h2>
+    <p data-i18n="cta.p">CLI GPL-3.0, SDK MIT, sandbox v0 já rodando — e espaço para deixar a sua marca.</p>
     <a class="gh-big" href="https://github.com/naoeosavio/Tell-ai" target="_blank" rel="noopener">
       <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
       github.com/naoeosavio/Tell-ai <span class="st">★ <span class="gh-stars">—</span></span>
@@ -715,18 +700,14 @@
 
   <div class="wrap">
     <footer>
-      <span>© <span id="year"></span> naoeosavio — Tell-ai é open-source; esta página é só a vitrine.</span>
-      <span>
-        <a href="https://github.com/naoeosavio/Tell-ai" target="_blank" rel="noopener">repo</a> ·
-        <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener">issues</a> ·
-        cli: GPL-3.0 · sdk: MIT · sandbox: <span class="warn">v0 preliminar</span> · um único arquivo HTML
-      </span>
+      <span data-i18n="foot.l">© <span id="year"></span> naoeosavio — Tell-ai é open-source; esta página é só a vitrine.</span>
+      <span data-i18n="foot.r"></span>
     </footer>
   </div>
 </main>
 
 <div class="sb" aria-hidden="true">
-  <span><span class="dot"></span>tell-ai/demo · modo <span class="md" id="sbMode">NORMAL</span></span>
+  <span><span class="dot"></span>tell-ai/demo · <span data-i18n="sb.mode">modo</span> <span class="md" id="sbMode">NORMAL</span></span>
   <span>↕ <span id="sbScroll">0%</span> · <span id="sbClock">--:--:--</span> · <span class="warn">sandbox:v0</span></span>
 </div>
 
@@ -740,71 +721,118 @@
   const rand  = (a,b) => a + Math.random()*(b-a);
   const pick  = a => a[Math.floor(Math.random()*a.length)];
 
-  /* ---------- ano + marquee ---------- */
-  $('#year').textContent = new Date().getFullYear();
-  const words = 'RUN-CONFIRMADO <i>·</i> 142 ALIASES <i>·</i> 10+ VENDORS <i>·</i> PIPE-FIRST <i>·</i> SEM LOGIN <i>·</i> CLI: GPL-3.0 <i>·</i> SDK: MIT <i>·</i> SANDBOX V0: PRELIMINAR <i>·</i> ';
-  $('#mqTrack').innerHTML = '<span>'+words.repeat(3)+'</span><span>'+words.repeat(3)+'</span>';
-
-  /* ---------- reveal ---------- */
-  const io = new IntersectionObserver(es => es.forEach(e => {
-    if (e.isIntersecting){ e.target.classList.add('on'); io.unobserve(e.target); }
-  }), {threshold:.12});
-  $$('.rv').forEach(el => io.observe(el));
-
-  /* ---------- copiar ---------- */
-  $$('.copy').forEach(btn => btn.addEventListener('click', async () => {
-    let text = btn.dataset.copy;
-    if (btn.dataset.copyTarget){
-      const t = $(btn.dataset.copyTarget);
-      if (t) text = t.textContent.replace(/^\n+|\s+$/g, '');
-    }
-    try { await navigator.clipboard.writeText(text); }
-    catch { /* clipboard bloqueado: seleção manual ainda funciona */ }
-    const old = btn.lastChild.textContent;
-    btn.classList.add('ok'); btn.lastChild.textContent = ' copiado';
-    setTimeout(() => { btn.classList.remove('ok'); btn.lastChild.textContent = old; }, 1600);
-  }));
-
-  /* ---------- stats do GitHub (API pública) ---------- */
-  (async () => {
-    try {
-      const r = await fetch('https://api.github.com/repos/naoeosavio/Tell-ai');
-      if (!r.ok) return;
-      const d = await r.json();
-      const n = new Intl.NumberFormat('pt-BR');
-      $$('.gh-stars').forEach(el => el.textContent = n.format(d.stargazers_count ?? 0));
-      $$('.gh-forks').forEach(el => el.textContent = n.format(d.forks_count ?? 0));
-      if (d.pushed_at) $$('.gh-push').forEach(el =>
-        el.textContent = new Date(d.pushed_at).toLocaleDateString('pt-BR', {day:'2-digit', month:'short', year:'numeric'}));
-    } catch { /* offline: mantém "—" */ }
-  })();
-
-  /* ---------- statusbar ---------- */
-  const sbScroll = $('#sbScroll'), sbClock = $('#sbClock');
-  function tick(){
-    const max = document.documentElement.scrollHeight - innerHeight;
-    sbScroll.textContent = Math.round(max > 0 ? scrollY / max * 100 : 0) + '%';
-  }
-  addEventListener('scroll', tick, {passive:true}); tick();
-  setInterval(() => sbClock.textContent = new Date().toLocaleTimeString('pt-BR'), 1000);
-  sbClock.textContent = new Date().toLocaleTimeString('pt-BR');
-
-  /* ---------- engine de linhas ---------- */
-  function mkLine(body, cls){
-    const d = document.createElement('div');
-    d.className = 'tl' + (cls ? ' ' + cls : '');
-    if (typeof body === 'string') d.textContent = body;
-    else if (body) d.appendChild(body);
-    return d;
-  }
-
-  /* ---------- terminal do hero ---------- */
-  const heroBody = $('#heroTerm');
-  let heroRun = 0;
-  async function runHero(){
-    const my = ++heroRun;
-    heroBody.innerHTML = '';
-    const seq = [
+  /* ================================================================
+     i18n — dicionário completo (pt / en / es / jp)
+     ================================================================ */
+  const T = {
+  /* ------------------------- PORTUGUÊS ------------------------- */
+  pt: {
+    'meta.title':'Tell-ai — CLI + SDK + sandbox web para LLMs',
+    'meta.desc':'Tell-ai é open-source: CLI one-shot no shell com execução confirmada, SDK MIT para Node/Bun/browser e um sandbox web v0 (terminal, arquivos e chat no navegador via tell -w).',
+    'nav.feat':'recursos','nav.models':'modelos','nav.demo':'demo','nav.sdk':'sdk','nav.sb':'sandbox <i>v0</i>','nav.inst':'instalar',
+    'hero.eyebrow':'<b>//</b> CLI + SDK + sandbox web v0 — open-source, one-shot, execução confirmada',
+    'h1a':'SUA IA,','h1b':'<em class="serif">no terminal.</em>',
+    'hero.sub':'O Tell-ai leva modelos de linguagem para onde o seu código já vive: <b>o shell</b>. Pergunte, pipeie, deixe o modelo propor comandos — <b>você aprova cada um</b>. A mesma engine vira <b>SDK</b> no seu código — e, com <code>tell&nbsp;-w</code>, um <b>sandbox no navegador</b>.',
+    'ui.copy':'copiar',
+    'hero.l1':'ver o código ↗','hero.l2':'testar a demo ↓','hero.l3':'resolvedor de modelos ↘','hero.l4':'sandbox v0 ↘',
+    'hero.m1':'open-source','hero.m2':'stars','hero.m3':'forks',
+    'hero.m.sb':'sandbox web: <b class="warn">v0 preliminar</b>',
+    'term.title':'tell-ai — sessão de exemplo','term.replay':'↻ replay','term.replay2':'↻ rodar de novo',
+    's1.label':'<b>§ 01</b> — por quê','s1.h2':'Copiar, colar, formatar, <em class="serif">repetir.</em>',
+    'd.bar':'fluxo — antes / depois',
+    'd.h1':'--- a/fluxo/sem-tell-ai','d.h2':'+++ b/fluxo/com-tell-ai',
+    'd.r1':'abrir uma aba nova no navegador','d.r2':'digitar o endereço do chat','d.r3':'autenticar (de novo)','d.r4':'colar código + contexto à mão','d.r5':'copiar a resposta e reformatar','d.r6':'voltar ao editor e colar de novo','d.a1':'review this change',
+    'w1.h3':'~23 <em>minutos</em>','w1.p':'é o que estudos de atenção estimam para retomar o foco depois de uma interrupção. Cada ida até o navegador é uma delas. O Tell-ai encurta o caminho para um comando.',
+    'w2.h3':'você <em>no comando</em>','w2.p':'O modelo propõe comandos entre tags <code>&lt;RUN&gt;</code> — e nada roda sem a sua confirmação. Com <code>-y</code> os seguros rodam sozinhos, mas padrões de alto risco (<code>sudo</code>, <code>rm -rf</code>, <code>curl|sh</code>…) sempre perguntam.',
+    'w3.h3':'shell, código <em>e a aba.</em>','w3.p':'CLI no terminal, SDK no seu código — e o sandbox web (v0 preliminar) via <code>tell -w</code>: terminal, explorador de arquivos e chat no navegador, ancorados num diretório.',
+    's2.label':'<b>§ 02</b> — primeiros passos','s2.h2':'Três comandos até a <em class="serif">primeira resposta.</em>',
+    'st1.h3':'Instale','st1.p':'Um binário, uma pergunta. Nada de daemon rodando em segundo plano.',
+    'st2.h3':'Aponte uma chave','st2.p':'Qualquer vendor que você já usa — via ambiente ou um arquivo <code>~/.config/&lt;vendor&gt;.token</code>. Sem cadastro novo.',
+    'st3.h3':'Converse','st3.p':'A letra já escolhe o modelo — <code>d</code> de DeepSeek Flash (que já nasce em <code>high</code>), <code>D</code> de Pro, <code>g</code> de GPT.','st3.cm':'# confirma antes de executar',
+    's3.label':'<b>§ 03</b> — recursos','s3.h2':'Construído como ferramenta <em class="serif">unix.</em>',
+    'f1':'O modelo propõe comandos entre tags e <b>você aprova um a um</b>. Timeout de 120s por comando; <code>sudo</code>, <code>rm -rf</code>, <code>mkfs</code>, <code>curl|sh</code> e escritas em <code>/etc</code> são bloqueados sempre.',
+    'f2':'Pipes de verdade: <code>npm test 2&gt;&amp;1 | tell -i "why are these failing?"</code> — stdin vira contexto, não vira bagunça.',
+    'f3':'<b>142 aliases</b> para os modelos de OpenAI, Anthropic, Google, xAI, DeepSeek, Alibaba, Z.ai, Moonshot, Meta e Xiaomi + self-hosted — cada um com sua régua de thinking. O default é <code>g</code> (via <code>TELL_MODEL</code>). <a href="#modelos">resolvedor interativo ↘</a>',
+    'f4':'<code>--stream</code> imprime token a token; <code>--think</code> mostra o reasoning. Só mudam o que aparece: log, contexto e extração de <code>&lt;RUN&gt;</code> ficam idênticos.',
+    'f5':'Multi-step: o modelo roda um comando, lê a saída e continua — até 8 rodadas até a resposta final.',
+    'f6':'Contexto persistente por diretório+modelo em <code>~/.ai/tell_context</code>. Nomeie com <code>--ctx %projeto</code>, retome por <code>@0</code>, reset com <code>-n</code>; <code>--ctx</code> sem ref é prompt do contexto default.',
+    'f7':'<code>tell -l</code> lista contextos (<code>@N</code>) e conversas (<code>%N</code>), busca por termo, reimprime com <code>-l @0</code> — <b>sem modelo, sem chave, sem rede</b>. Log completo em <code>~/.ai/tell_history</code>.',
+    'f8':'Postura de execução explícita: com <code>-y</code>, seguros rodam direto e os de risco perguntam; sem <code>-y</code>, tudo pergunta. Comandos que tocam fora do cwd — <b>leitura inclusive</b> — sempre perguntam.',
+    'f9':'Modelos self-hosted com a mesma ergonomia: <code>q</code> para endpoints locais, <code>v</code> para Vast — e qualquer vendor sem handler cai no provider OpenAI-compatible genérico.',
+    'f10':'O sandbox web v0 no navegador: terminal, explorador de arquivos e chat ancorados ao diretório. <code>--stream</code>, <code>--think</code>, <code>--chain</code>, <code>-y</code>, <code>--no-exec</code> e <code>--require-approval</code> são repassados. <a href="#sandbox">ver a seção ↘</a>',
+    's4.label':'<b>§ 04</b> — modelos','s4.h2':'Dez vendors, <em class="serif">uma letra.</em>',
+    'res.hd':'resolvedor de aliases — clique e compose','res.count':'142 aliases · 29 grupos base acima',
+    'res.base':'base','res.na':'n/d','res.fast1':'. rápido','res.fast2':'sem reasoning','res.cp':' copiar spec',
+    'res.foot':'régua de thinking <b>varia por modelo</b>: <code>g</code>/<code>e</code>/<code>r</code> não têm <code>none</code> (começam em low) · <code>d</code>/<code>D</code> já são <code>high</code> no alias base · xAI e Alibaba topam em <code>xhigh</code> · <code>h</code>/<code>k</code>/<code>q</code>/<code>v</code> têm alias único · maiúscula (<code>G</code>, <code>S</code>, <code>O</code>…) = atalho para <code>high</code> · modo rápido: <code>.</code> antes do alias (<code>.g</code>) · specs completas: <code>vendor:model[:thinking]</code> · lista oficial: <code>tell -m --help</code>',
+    's5.label':'<b>§ 05</b> — demo','s5.h2':'Experimente <em class="serif">sem instalar.</em>',
+    'demo.title':'visitante@tell-ai: ~ — demo interativa','demo.f0':'não conectado','demo.ff':'clique para digitar','demo.fb':'— CLI capturado —',
+    'demo.try':'↳ tente:',
+    'try':['help','tell oi','run ls','models','sandbox','sdk','github'],
+    'demo.note':'<b>Simulação local:</b> este terminal roda 100% na sua aba — nenhuma chave, nenhuma chamada de rede. As respostas são pré-gravadas, mas o streaming é de verdade: <b>↑</b> repete comandos, <b>Tab</b> autocompleta, <b>Ctrl+C</b> interrompe.',
+    'demo.meta':'● tell[demo] · resposta local · ','demo.flow':'● tell[demo] · fluxo de execução',
+    'bn.1':'tell-ai — digite `help`','bn.2':'demo interativa · respostas pré-gravadas · nenhuma chamada de rede','bn.3':'digite `help` para começar — ou clique numa sugestão abaixo.',
+    'bn.short':'tell-ai — digite `help`',
+    'runs':['<RUN> npm test 2>&1 | tail -20 </RUN>','aqui na demo nada executa — no seu terminal, o tell pediria','confirmação: [s/N]. Com -y os seguros rodam sozinhos, mas','sudo, rm -rf, curl|sh e fora-do-cwd sempre perguntam — e','--no-exec nunca executa nada.'],
+    'usage':'uso: tell <pergunta> — por exemplo: tell oi',
+    'b.greetRe':/^(oi|ol[áa]|hello|hey|e a[íi]|eai|bom dia|boa tarde|boa noite)/,
+    'b.greet':['Olá! Aqui é a demo da landing — nenhuma rede, nenhuma chave, tudo pré-gravado. No Tell-ai de verdade, esta frase teria vindo de um LLM e chegado token a token no seu stdout.','Oi! Experimente `run ls`, `models` ou `sandbox` — ou peça uma piada.'],
+    'b.jokeRe':/piada|engra[çc]ad|humor/,
+    'b.jokes':['Por que programadores confundem Halloween com Natal? Porque OCT 31 == DEC 25.','Um SQL entra num bar, aproxima-se de duas tabelas e pergunta: "posso dar um JOIN?"','Há dois tipos de pessoas: as que entendem recursão e as que entendem recursão.'],
+    'b.sbRe':/sandbox|navegador|browser|tell -w|web|roadmap|futuro|planos/,
+    'b.sb':['O sandbox web existe nesta versão — preliminar: `tell -w` abre','terminal, explorador de arquivos e chat ancorados ao diretório.','Seguro por padrão: auto-run é opt-in, --no-exec responde 403 no','servidor e, em rede aberta, use TELL_TOKEN + TELL_ALLOWED_HOSTS.','A doc completa é packages/web/README.md no repo (digite `github`).'],
+    'b.sdkRe':/sdk|biblioteca|import|node|bun|usar no c[oó]digo|api\b/,
+    'b.sdk':['O SDK é um pacote próprio: `npm add @tell-ai/sdk` (licença MIT).','API real: `tell(msg, { keys })` one-shot; `create_ask_ai(spec, { keys })`','+ `ai.ask()` e `ai.ask_stream()` (eventos NDJSON reasoning|text);','`get_model()` expõe o ModelHandle cru. Zero process.env.','Exemplos completos no §06 da página.'],
+    'b.mdRe':/models?|alias|modelo|provedor|vendor/,
+    'b.md':['142 aliases: g → gpt-6.1-sol, o → claude-opus-5-5,','d → deepseek-flash (base já é high!), D → deepseek-v4-pro,','z → glm-5.3, a → qwen3.8-max, m → muse-spark, mi → mimo…','A régua de thinking varia por modelo: x++ e a++ = xhigh,','g-- = low (sem none), maiúscula G/S/O… = atalho para high.','Resolvedor interativo no §04 e `tell -m --help` no terminal.'],
+    'b.aboutRe':/quem (é|e) voc|[oó] que (é|e) (o |a )?tell|sobre o projeto|o que faz/,
+    'b.about':['Tell-ai é um monorepo open-source: CLI (tell-ai, GPL-3.0), SDK','(@tell-ai/sdk, MIT) e sandbox web v0 (tell -w, preliminar).','One-shot por padrão: o modelo propõe comandos via <RUN> e você aprova.','O código vive em github.com/naoeosavio/Tell-ai (digite `github`).'],
+    'b.instRe':/instal|como uso|como come|começar|comecar/,
+    'b.inst':['Resumo: `npm install -g tell-ai` para a CLI, `npm add @tell-ai/sdk`','para a biblioteca. Chaves: `export DEEPSEEK_API_KEY=…` ou','`~/.config/<vendor>.token`. O sandbox abre com `tell -w`.','Detalhes completos: `install` ou o README.'],
+    'b.thxRe':/obrigad|valeu|brigad/,'b.thx':'De nada! Se curtiu, uma star no repositório ajuda mais do que parece.',
+    'b.ghRe':/star|github|reposit[oó]rio|repo|c[oó]digo/,'b.gh':'O código vive em github.com/naoeosavio/Tell-ai — digite `github` e eu abro para você.',
+    'b.fb':['[demo] Nenhuma rede aqui — esta página é 100% estática. No seu terminal, esse prompt iria para o modelo do alias escolhido e voltaria em texto puro.','[demo] Resposta pré-gravada, é claro. Mas no Tell-ai real isso chegaria pronto para `|`, `>` ou um commit.','[demo] Boa pergunta — para o modelo de verdade, não para mim. Digite `help` para ver o que este terminal faz sozinho.'],
+    'b.sudo':'visitante não está no arquivo sudoers. Este incidente será reportado. (brincadeira — não há nada para reportar.)',
+    'b.rm':'recusado — e no tell real, rm -rf perguntaria mesmo com -y.',
+    'b.vim':'para sair do vim: :q! — para sair desta demo: exit. Um dos dois é mais fácil.',
+    'b.exit':'até já — o terminal continua aqui quando você voltar.',
+    'help':'\n  help          esta lista\n  tell <texto>  conversa com o modelo (simulado aqui)\n  run ls        mostra o fluxo de execução <RUN> → [s/N]\n  models        tabela curta de aliases e sufixos\n  sandbox       o sandbox web v0 (tell -w) explicado\n  sdk           como usar o @tell-ai/sdk no seu código\n  install       instalação da CLI e do SDK\n  features      recursos principais\n  github        abre o repositório no navegador\n  history / whoami / banner / date / clear / exit\n\n  DICA   ↑ repete o último · Tab autocompleta · Ctrl+C interrompe\n  Qualquer coisa que não for comando vira prompt para o modelo.\n',
+    's6.label':'<b>§ 06</b> — sdk','s6.h2':'A mesma <em class="serif">tell(),</em> fora do shell.',
+    's6.alt':'ou <code>bun add @tell-ai/sdk</code> — pacote próprio da biblioteca, separado da CLI.',
+    'sdk.c1':'// o "tell --no-exec" como função: chama o modelo e devolve','sdk.c2':'// o texto com tags <RUN> e reasoning já removidas',
+    'sdk.c3':'// streaming token a token — eventos NDJSON (reasoning | text)',
+    'sdk.c4':'// também exportados: MODELS (142 aliases), get_model() (o','sdk.c5':'// ModelHandle cru para o seu próprio generateText),','sdk.c6':'// get_system_prompt, extract_runs · strip_run_tags ·','sdk.c7':'// sanitize_reasoning · summarize_context',
+    'sdk.wc':'// IIFE global — roda até em file://',
+    'vt.h':'três builds, mesmo import','vt1':'ESM + CJS + tipos','vt2':'ESM bundleado','vt3':'IIFE → TellSDK',
+    's6.vend':'12 vendors via <code>keys</code>/<code>urls</code>: openai · anthropic · google · xai · deepseek · cerebras · moonshotai · openrouter · alibaba <code>(qwen)</code> · zai <code>(glm)</code> · meta <code>(llama)</code> · xiaomi <code>(mimo)</code> + <code>vast</code>/<code>local</code> self-hosted. Budget de reasoning resolvido por vendor (<code>max</code> vira o teto de cada um); provider caches por base URL <b>e</b> credencial.',
+    'k1.h3':'dois pacotes, <em>duas licenças</em>','k1.p':'A CLI (<code>tell-ai</code>) é GPL-3.0. O SDK (<code>@tell-ai/sdk</code>) é <b>MIT</b> — pode embutir em produto fechado sem dor de cabeça.',
+    'k2.h3':'zero <code>process.env</code>','k2.p':'O SDK nunca lê o ambiente: chaves e base URLs são <b>injetadas</b> via <code>keys</code> e <code>urls</code>. É o que o torna browser-safe — e <code>urls</code> aceita proxy CORS, como no <code>examples/web/</code> do repo.',
+    'k3.h3':'a fundação <em>do sandbox</em>','k3.p':'Os builds de browser já sobem numa <code>&lt;script&gt;</code> tag pura — é por cima deles que o sandbox v0 do <a href="#sandbox" style="color:var(--amber);border-bottom:1px dotted var(--amber)">§07</a> foi construído.',
+    's7.label':'<b>§ 07</b> — sandbox web','s7.h2':'O sandbox chegou — <em class="serif">versão preliminar.</em>',
+    's7.title':'tell-web — sandbox v0 <span class="v0-badge" style="margin-left:8px">PRELIMINAR</span>',
+    'r1.b':'CLI','r1.p':'lançada — <code>tell "…"</code> no seu shell, com <code>&lt;RUN&gt;</code> confirmado, <code>--chain</code>, contexto <code>%id</code>/<code>@N</code> e <code>-l</code> offline.',
+    'r2.b':'SDK','r2.p':'disponível (MIT) — <code>ask_stream()</code>, <code>get_model()</code>, 142 aliases, 12 vendors, builds de browser IIFE via unpkg.',
+    'r3.b':'sandbox web <i class="v0-badge">V0 PRELIMINAR</i>','r3.p':'abre com <code>tell -w</code>: terminal, explorador de arquivos e chat ancorados ao diretório. Local-first — pensado para <code>127.0.0.1</code>.',
+    'r4.b':'o que vem depois','r4.p':'preliminar significa: falta o que <b>você</b> reclamar — <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener" style="color:var(--amber);border-bottom:1px dotted var(--amber)">abra uma issue</a> e a v1 sai disso.',
+    'sec.h':'fora do localhost: modo seguro',
+    'sec.body':'export TELL_TOKEN=$(openssl rand -hex 32)<br>tell-web --cwd ~/projeto<br><br>· Bearer em todo <code>/api/*</code> · WS via <code>?token=</code><br>· token só em memória — reload pede de novo<br>· verify limitado a 5 tentativas/15 min/IP<br>· filhos nascem <b>sem</b> <code>TELL_TOKEN</code> nem chaves<br>· checagem de Host/Origin contra DNS rebinding',
+    'road.note':'Segurança desde o v0: Auto-Run é <b>opt-in</b> (navegador novo sempre pergunta antes), <code>--no-exec</code> trava no servidor (<code>/api/execute</code> → <b>403</b>) e vence preferências salvas. A base é o build IIFE do SDK — a doc completa está em <a href="https://github.com/naoeosavio/Tell-ai/blob/main/packages/web/README.md" target="_blank" rel="noopener">packages/web/README.md</a>.',
+    'boot.phases':['resolvendo runtime…','montando ptys…','indexando arquivos…','aquecendo chat…','pronto…'],
+    'boot.ok':'● tell-web v0 (preliminar) · ouvindo em http://127.0.0.1:3000',
+    'boot.m1':'  auto-run é opt-in: navegador novo sempre pergunta antes',
+    'boot.m2':'  --no-exec trava no servidor: /api/execute → 403',
+    'boot.lk':'  doc completa → ',
+    'wf':['┌ arquivos ─┬─ chat ────────┬─ terminal ─┐','│ src/      │ "revisa o     │ $ npm test │','│ main.ts   │  diff…"       │ 3 falhas   │','│ package…  │ ● corrigindo  │ ■ rodando… │','└───────────┴───────────────┴────────────┘'],
+    's8.label':'<b>§ 08</b> — instalar','s8.h2':'Uma linha e <em class="serif">pronto.</em>',
+    's8.alt':'CLI global. Para a biblioteca: <code>npm add @tell-ai/sdk</code> · <a href="https://github.com/naoeosavio/Tell-ai#readme" target="_blank" rel="noopener">requisitos e build do código-fonte no README ↗</a>',
+    'reqs.h':'chaves — env ou ~/.config/&lt;vendor&gt;.token',
+    'reqs.body':'export OPENAI_API_KEY="sk-..."<br>export DEEPSEEK_API_KEY="..."<br>export ZHIPU_API_KEY="..."        <span style="color:var(--mut)"># Z.ai GLM</span><br>export ALIBABA_API_KEY="..."      <span style="color:var(--mut)"># Qwen</span><br><span style="color:var(--mut)">…meta, mimo (xiaomi), google, xai, fireworks, cerebras, moonshotai, openrouter</span><br><br>tell "olá, terminal"<br>tell d "run ls -la"<br>tell -w                           <span style="color:var(--mut)"># sandbox v0 no navegador</span><br><br>Problemas? <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener">As issues</a> são o melhor caminho — e contribuições são bem-vindas.',
+    'cta.h2':'O próximo prompt está a um <em class="serif">pipe</em> de distância.',
+    'cta.p':'CLI GPL-3.0, SDK MIT, sandbox v0 já rodando — e espaço para deixar a sua marca.',
+    'foot.l':'© <span id="year"></span> naoeosavio — Tell-ai é open-source; esta página é só a vitrine.',
+    'foot.r':'<a href="https://github.com/naoeosavio/Tell-ai" target="_blank" rel="noopener">repo</a> · <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener">issues</a> · cli: GPL-3.0 · sdk: MIT · sandbox: <span class="warn">v0 preliminar</span> · um único arquivo HTML',
+    'sb.mode':'modo',
+    'mq':'RUN-CONFIRMADO <i>·</i> 142 ALIASES <i>·</i> 10+ VENDORS <i>·</i> PIPE-FIRST <i>·</i> SEM LOGIN <i>·</i> CLI: GPL-3.0 <i>·</i> SDK: MIT <i>·</i> SANDBOX V0: PRELIMINAR <i>·</i> ',
+    'hseq':[
       {t:'cmd', text:'git diff --staged | tell -i "msg de commit"'},
       {t:'meta', html:'<b>●</b> tell · g → openai:gpt-6.1-sol:medium · 1.2s'},
       {t:'out', cls:'ok', text:'→ fix(parser): normalizar BOM antes do parse'},
@@ -821,7 +849,479 @@
       {t:'meta', html:'<b>●</b> tell-web · sandbox v0 (preliminar)'},
       {t:'out', cls:'ok', text:'→ http://127.0.0.1:3000 — terminal, arquivos e chat'},
       {t:'cur'}
-    ];
+    ]
+  },
+
+  /* --------------------------- ENGLISH ------------------------- */
+  en: {
+    'meta.title':'Tell-ai — CLI + SDK + web sandbox for LLMs',
+    'meta.desc':'Tell-ai is open-source: a one-shot shell CLI with confirmed execution, an MIT SDK for Node/Bun/browser, and a web sandbox v0 (terminal, files and chat in the browser via tell -w).',
+    'nav.feat':'features','nav.models':'models','nav.demo':'demo','nav.sdk':'sdk','nav.sb':'sandbox <i>v0</i>','nav.inst':'install',
+    'hero.eyebrow':'<b>//</b> CLI + SDK + web sandbox v0 — open-source, one-shot, confirmed execution',
+    'h1a':'YOUR AI,','h1b':'<em class="serif">in the terminal.</em>',
+    'hero.sub':'Tell-ai brings language models to where your code already lives: <b>the shell</b>. Ask, pipe, let the model propose commands — <b>you approve each one</b>. The same engine becomes an <b>SDK</b> in your code — and, with <code>tell&nbsp;-w</code>, a <b>sandbox in the browser</b>.',
+    'ui.copy':'copy',
+    'hero.l1':'view the code ↗','hero.l2':'try the demo ↓','hero.l3':'model resolver ↘','hero.l4':'sandbox v0 ↘',
+    'hero.m1':'open-source','hero.m2':'stars','hero.m3':'forks',
+    'hero.m.sb':'web sandbox: <b class="warn">v0 preview</b>',
+    'term.title':'tell-ai — example session','term.replay':'↻ replay','term.replay2':'↻ run again',
+    's1.label':'<b>§ 01</b> — why','s1.h2':'Copy, paste, format, <em class="serif">repeat.</em>',
+    'd.bar':'flow — before / after',
+    'd.h1':'--- a/flow/without-tell-ai','d.h2':'+++ b/flow/with-tell-ai',
+    'd.r1':'open a new browser tab','d.r2':'type the chat address','d.r3':'authenticate (again)','d.r4':'paste code + context by hand','d.r5':'copy the answer and reformat it','d.r6':'go back to the editor and paste again','d.a1':'review this change',
+    'w1.h3':'~23 <em>minutes</em>','w1.p':'is what attention studies estimate it takes to refocus after an interruption. Every trip to the browser is one of them. Tell-ai shortens the path to a single command.',
+    'w2.h3':'you\'re <em>in command</em>','w2.p':'The model proposes commands between <code>&lt;RUN&gt;</code> tags — and nothing runs without your confirmation. With <code>-y</code>, safe ones run by themselves, but high-risk patterns (<code>sudo</code>, <code>rm -rf</code>, <code>curl|sh</code>…) always ask first.',
+    'w3.h3':'shell, code <em>and the tab.</em>','w3.p':'CLI in the terminal, SDK in your code — and the web sandbox (v0 preview) via <code>tell -w</code>: terminal, file explorer and chat in the browser, anchored to a directory.',
+    's2.label':'<b>§ 02</b> — first steps','s2.h2':'Three commands to the <em class="serif">first answer.</em>',
+    'st1.h3':'Install','st1.p':'One binary, one question. No daemon running in the background.',
+    'st2.h3':'Point to a key','st2.p':'Any vendor you already use — via the environment or a <code>~/.config/&lt;vendor&gt;.token</code> file. No new signup.',
+    'st3.h3':'Talk','st3.p':'The letter picks the model — <code>d</code> for DeepSeek Flash (which already starts at <code>high</code>), <code>D</code> for Pro, <code>g</code> for GPT.','st3.cm':'# asks before executing',
+    's3.label':'<b>§ 03</b> — features','s3.h2':'Built like a <em class="serif">unix tool.</em>',
+    'f1':'The model proposes commands between tags and <b>you approve them one by one</b>. 120s timeout per command; <code>sudo</code>, <code>rm -rf</code>, <code>mkfs</code>, <code>curl|sh</code> and writes to <code>/etc</code> are always blocked.',
+    'f2':'Real pipes: <code>npm test 2&gt;&amp;1 | tell -i "why are these failing?"</code> — stdin becomes context, not mess.',
+    'f3':'<b>142 aliases</b> for models from OpenAI, Anthropic, Google, xAI, DeepSeek, Alibaba, Z.ai, Moonshot, Meta and Xiaomi + self-hosted — each with its own thinking ladder. Default is <code>g</code> (via <code>TELL_MODEL</code>). <a href="#modelos">interactive resolver ↘</a>',
+    'f4':'<code>--stream</code> prints token by token; <code>--think</code> shows the reasoning. They only change what is printed: log, context and <code>&lt;RUN&gt;</code> extraction stay identical.',
+    'f5':'Multi-step: the model runs a command, reads the output and keeps going — up to 8 rounds to a final answer.',
+    'f6':'Persistent context per directory+model in <code>~/.ai/tell_context</code>. Name it with <code>--ctx %project</code>, resume by <code>@0</code>, reset with <code>-n</code>; bare <code>--ctx</code> is a prompt for the default context.',
+    'f7':'<code>tell -l</code> lists contexts (<code>@N</code>) and conversations (<code>%N</code>), searches by term, reprints with <code>-l @0</code> — <b>no model, no key, no network</b>. Full log in <code>~/.ai/tell_history</code>.',
+    'f8':'Explicit execution posture: with <code>-y</code>, safe ones run directly and risky ones ask; without <code>-y</code>, everything asks. Commands touching anything outside the cwd — <b>reads included</b> — always ask.',
+    'f9':'Self-hosted models with the same ergonomics: <code>q</code> for local endpoints, <code>v</code> for Vast — and any vendor without a handler falls back to the generic OpenAI-compatible provider.',
+    'f10':'The web sandbox v0 in the browser: terminal, file explorer and chat anchored to a directory. <code>--stream</code>, <code>--think</code>, <code>--chain</code>, <code>-y</code>, <code>--no-exec</code> and <code>--require-approval</code> are forwarded. <a href="#sandbox">see the section ↘</a>',
+    's4.label':'<b>§ 04</b> — models','s4.h2':'Ten vendors, <em class="serif">one letter.</em>',
+    'res.hd':'alias resolver — click and compose','res.count':'142 aliases · 29 base groups above',
+    'res.base':'base','res.na':'n/a','res.fast1':'. fast','res.fast2':'no reasoning','res.cp':' copy spec',
+    'res.foot':'the thinking ladder <b>varies per model</b>: <code>g</code>/<code>e</code>/<code>r</code> have no <code>none</code> (start at low) · <code>d</code>/<code>D</code> are <code>high</code> at the base alias · xAI and Alibaba top out at <code>xhigh</code> · <code>h</code>/<code>k</code>/<code>q</code>/<code>v</code> have a single alias · uppercase (<code>G</code>, <code>S</code>, <code>O</code>…) = shortcut to <code>high</code> · fast mode: <code>.</code> before the alias (<code>.g</code>) · full specs: <code>vendor:model[:thinking]</code> · official list: <code>tell -m --help</code>',
+    's5.label':'<b>§ 05</b> — demo','s5.h2':'Try it <em class="serif">without installing.</em>',
+    'demo.title':'guest@tell-ai: ~ — interactive demo','demo.f0':'not connected','demo.ff':'click to type','demo.fb':'— CLI captured —',
+    'demo.try':'↳ try:',
+    'try':['help','tell hi','run ls','models','sandbox','sdk','github'],
+    'demo.note':'<b>Local simulation:</b> this terminal runs 100% in your tab — no keys, no network calls. Responses are pre-recorded, but the streaming is real: <b>↑</b> repeats, <b>Tab</b> completes, <b>Ctrl+C</b> interrupts.',
+    'demo.meta':'● tell[demo] · local answer · ','demo.flow':'● tell[demo] · execution flow',
+    'bn.1':'tell-ai — type `help`','bn.2':'interactive demo · pre-recorded answers · no network calls','bn.3':'type `help` to start — or click a suggestion below.',
+    'bn.short':'tell-ai — type `help`',
+    'runs':['<RUN> npm test 2>&1 | tail -20 </RUN>','nothing executes in the demo — in your terminal, tell would ask','for confirmation: [y/N]. With -y safe ones run by themselves, but','sudo, rm -rf, curl|sh and outside-cwd always ask — and','--no-exec never executes anything.'],
+    'usage':'usage: tell <question> — for example: tell hi',
+    'b.greetRe':/^(hi|hey|hello|yo|good (morning|afternoon|evening))/,
+    'b.greet':['Hi! This is the landing demo — no network, no keys, everything pre-recorded. In the real Tell-ai, this sentence would have come from an LLM, token by token, straight to your stdout.','Hey! Try `run ls`, `models` or `sandbox` — or ask for a joke.'],
+    'b.jokeRe':/joke|funny|humor/,
+    'b.jokes':['Why do programmers confuse Halloween with Christmas? Because OCT 31 == DEC 25.','An SQL query walks into a bar, approaches two tables and asks: "may I JOIN you?"','There are two kinds of people: those who understand recursion and those who understand recursion.'],
+    'b.sbRe':/sandbox|browser|tell -w|roadmap|future|plans/,
+    'b.sb':['The web sandbox exists in this version — preview: `tell -w` opens','a terminal, file explorer and chat anchored to the directory.','Safe by default: auto-run is opt-in, --no-exec answers 403 on','the server and, on open networks, use TELL_TOKEN + TELL_ALLOWED_HOSTS.','Full docs: packages/web/README.md in the repo (type `github`).'],
+    'b.sdkRe':/\bsdk\b|library|import|node|bun|in my code|api\b/,
+    'b.sdk':['The SDK ships as its own package: `npm add @tell-ai/sdk` (MIT license).','Real API: `tell(msg, { keys })` one-shot; `create_ask_ai(spec, { keys })`','+ `ai.ask()` and `ai.ask_stream()` (NDJSON reasoning|text events);','`get_model()` exposes the raw ModelHandle. Zero process.env.','Full examples in §06 of the page.'],
+    'b.mdRe':/models?|alias|provider|vendor/,
+    'b.md':['142 aliases: g → gpt-6.1-sol, o → claude-opus-5-5,','d → deepseek-flash (base already high!), D → deepseek-v4-pro,','z → glm-5.3, a → qwen3.8-max, m → muse-spark, mi → mimo…','The thinking ladder varies per model: x++ and a++ = xhigh,','g-- = low (no none), uppercase G/S/O… = shortcut to high.','Interactive resolver in §04 and `tell -m --help` in your terminal.'],
+    'b.aboutRe':/who are you|what is tell|about (the )?project|what does it do/,
+    'b.about':['Tell-ai is an open-source monorepo: CLI (tell-ai, GPL-3.0), SDK','(@tell-ai/sdk, MIT) and web sandbox v0 (tell -w, preview).','One-shot by default: the model proposes commands via <RUN> and you approve.','The code lives at github.com/naoeosavio/Tell-ai (type `github`).'],
+    'b.instRe':/install|how do i (use|start)|getting started|begin/,
+    'b.inst':['Quick version: `npm install -g tell-ai` for the CLI, `npm add @tell-ai/sdk`','for the library. Keys: `export DEEPSEEK_API_KEY=…` or','`~/.config/<vendor>.token`. The sandbox opens with `tell -w`.','Full details: `install` or the README.'],
+    'b.thxRe':/thank|thx/,'b.thx':'You\'re welcome! If you liked it, a star on the repo helps more than it seems.',
+    'b.ghRe':/\bstar\b|github|repositor|repo|\bcode\b/,'b.gh':'The code lives at github.com/naoeosavio/Tell-ai — type `github` and I\'ll open it for you.',
+    'b.fb':['[demo] No network here — this page is 100% static. In your terminal, this prompt would go to the model of the chosen alias and come back as plain text.','[demo] Pre-recorded answer, of course. But in the real Tell-ai this would arrive ready for `|`, `>` or a commit.','[demo] Good question — for the real model, not for me. Type `help` to see what this terminal does on its own.'],
+    'b.sudo':'guest is not in the sudoers file. This incident will be reported. (kidding — there is nothing to report.)',
+    'b.rm':'refused. not even in a simulation.',
+    'b.vim':'to leave vim: :q! — to leave this demo: exit. One of the two is easier.',
+    'b.exit':'see you — the terminal stays here for when you get back.',
+    'help':'\n  help          this list\n  tell <text>   talk to the model (simulated here)\n  run ls        shows the <RUN> → [y/N] execution flow\n  models        short table of aliases and suffixes\n  sandbox       the web sandbox v0 (tell -w) explained\n  sdk           how to use @tell-ai/sdk in your code\n  install       CLI and SDK installation\n  features      main features\n  github        opens the repository in the browser\n  history / whoami / banner / date / clear / exit\n\n  TIP   ↑ repeats the last · Tab completes · Ctrl+C interrupts\n  Anything that is not a command becomes a prompt for the model.\n',
+    's6.label':'<b>§ 06</b> — sdk','s6.h2':'The same <em class="serif">tell(),</em> outside the shell.',
+    's6.alt':'or <code>bun add @tell-ai/sdk</code> — the library ships as its own package, separate from the CLI.',
+    'sdk.c1':'// the "tell --no-exec" as a function: calls the model and returns','sdk.c2':'// the text with <RUN> and reasoning tags already stripped',
+    'sdk.c3':'// token-by-token streaming — NDJSON events (reasoning | text)',
+    'sdk.c4':'// also exported: MODELS (142 aliases), get_model() (the','sdk.c5':'// raw ModelHandle for your own generateText),','sdk.c6':'// get_system_prompt, extract_runs · strip_run_tags ·','sdk.c7':'// sanitize_reasoning · summarize_context',
+    'sdk.wc':'// IIFE global — runs even from file://',
+    'vt.h':'three builds, one import','vt1':'ESM + CJS + types','vt2':'bundled ESM','vt3':'IIFE → TellSDK',
+    's6.vend':'12 vendors via <code>keys</code>/<code>urls</code>: openai · anthropic · google · xai · deepseek · cerebras · moonshotai · openrouter · alibaba <code>(qwen)</code> · zai <code>(glm)</code> · meta <code>(llama)</code> · xiaomi <code>(mimo)</code> + <code>vast</code>/<code>local</code> self-hosted. Reasoning budget resolved per vendor (<code>max</code> maps to each one\'s ceiling); provider caches keyed by base URL <b>and</b> credential.',
+    'k1.h3':'two packages, <em>two licenses</em>','k1.p':'The CLI (<code>tell-ai</code>) is GPL-3.0. The SDK (<code>@tell-ai/sdk</code>) is <b>MIT</b> — embed it in a closed product without headaches.',
+    'k2.h3':'zero <code>process.env</code>','k2.p':'The SDK never reads the environment: keys and base URLs are <b>injected</b> via <code>keys</code> and <code>urls</code>. That is what makes it browser-safe — and <code>urls</code> accepts a CORS proxy, as in the repo\'s <code>examples/web/</code>.',
+    'k3.h3':'the sandbox\'s <em>foundation</em>','k3.p':'The browser builds already boot from a bare <code>&lt;script&gt;</code> tag — that is what the sandbox v0 in <a href="#sandbox" style="color:var(--amber);border-bottom:1px dotted var(--amber)">§07</a> was built on.',
+    's7.label':'<b>§ 07</b> — web sandbox','s7.h2':'The sandbox is here — <em class="serif">early preview.</em>',
+    's7.title':'tell-web — sandbox v0 <span class="v0-badge" style="margin-left:8px">PREVIEW</span>',
+    'r1.b':'CLI','r1.p':'shipped — <code>tell "…"</code> in your shell, with confirmed <code>&lt;RUN&gt;</code>, <code>--chain</code>, <code>%id</code>/<code>@N</code> context and offline <code>-l</code>.',
+    'r2.b':'SDK','r2.p':'available (MIT) — <code>ask_stream()</code>, <code>get_model()</code>, 142 aliases, 12 vendors, browser IIFE builds via unpkg.',
+    'r3.b':'web sandbox <i class="v0-badge">V0 PREVIEW</i>','r3.p':'opens with <code>tell -w</code>: terminal, file explorer and chat anchored to a directory. Local-first — meant for <code>127.0.0.1</code>.',
+    'r4.b':'what\'s next','r4.p':'preview means: what\'s missing is what <b>you</b> complain about — <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener" style="color:var(--amber);border-bottom:1px dotted var(--amber)">open an issue</a> and v1 comes out of it.',
+    'sec.h':'beyond localhost: secure mode',
+    'sec.body':'export TELL_TOKEN=$(openssl rand -hex 32)<br>tell-web --cwd ~/project<br><br>· Bearer on every <code>/api/*</code> · WS via <code>?token=</code><br>· token lives in memory only — reload asks again<br>· verify capped at 5 attempts/15 min/IP<br>· children spawn <b>without</b> <code>TELL_TOKEN</code> or keys<br>· Host/Origin checks against DNS rebinding',
+    'road.note':'Security from day one of v0: Auto-Run is <b>opt-in</b> (a fresh browser always asks first), <code>--no-exec</code> is locked at the server (<code>/api/execute</code> → <b>403</b>) and overrides stored preferences. The foundation is the SDK IIFE build — full docs at <a href="https://github.com/naoeosavio/Tell-ai/blob/main/packages/web/README.md" target="_blank" rel="noopener">packages/web/README.md</a>.',
+    'boot.phases':['resolving runtime…','setting up ptys…','indexing files…','warming up chat…','ready…'],
+    'boot.ok':'● tell-web v0 (preview) · listening on http://127.0.0.1:3000',
+    'boot.m1':'  auto-run is opt-in: a fresh browser always asks first',
+    'boot.m2':'  --no-exec is locked server-side: /api/execute → 403',
+    'boot.lk':'  full docs → ',
+    'wf':['┌─ files ───┬─ chat ────────┬─ terminal ─┐','│ src/      │ "review the   │ $ npm test │','│ main.ts   │  diff…"       │ 3 failures │','│ package…  │ ● fixing      │ ■ running… │','└───────────┴───────────────┴────────────┘'],
+    's8.label':'<b>§ 08</b> — install','s8.h2':'One line and <em class="serif">you\'re done.</em>',
+    's8.alt':'Global CLI. For the library: <code>npm add @tell-ai/sdk</code> · <a href="https://github.com/naoeosavio/Tell-ai#readme" target="_blank" rel="noopener">requirements and source build in the README ↗</a>',
+    'reqs.h':'keys — env or ~/.config/&lt;vendor&gt;.token',
+    'reqs.body':'export OPENAI_API_KEY="sk-..."<br>export DEEPSEEK_API_KEY="..."<br>export ZHIPU_API_KEY="..."        <span style="color:var(--mut)"># Z.ai GLM</span><br>export ALIBABA_API_KEY="..."      <span style="color:var(--mut)"># Qwen</span><br><span style="color:var(--mut)">…meta, mimo (xiaomi), google, xai, fireworks, cerebras, moonshotai, openrouter</span><br><br>tell "hello, terminal"<br>tell d "run ls -la"<br>tell -w                           <span style="color:var(--mut)"># web sandbox v0 in the browser</span><br><br>Something wrong? <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener">The issues</a> are the best path — contributions are welcome.',
+    'cta.h2':'The next prompt is one <em class="serif">pipe</em> away.',
+    'cta.p':'GPL-3.0 CLI, MIT SDK, sandbox v0 already running — and room to leave your mark.',
+    'foot.l':'© <span id="year"></span> naoeosavio — Tell-ai is open-source; this page is just the storefront.',
+    'foot.r':'<a href="https://github.com/naoeosavio/Tell-ai" target="_blank" rel="noopener">repo</a> · <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener">issues</a> · cli: GPL-3.0 · sdk: MIT · sandbox: <span class="warn">v0 preview</span> · a single HTML file',
+    'sb.mode':'mode',
+    'mq':'CONFIRMED-RUN <i>·</i> 142 ALIASES <i>·</i> 10+ VENDORS <i>·</i> PIPE-FIRST <i>·</i> NO LOGIN <i>·</i> CLI: GPL-3.0 <i>·</i> SDK: MIT <i>·</i> SANDBOX V0: PREVIEW <i>·</i> ',
+    'hseq':[
+      {t:'cmd', text:'git diff --staged | tell -i "commit message"'},
+      {t:'meta', html:'<b>●</b> tell · g → openai:gpt-6.1-sol:medium · 1.2s'},
+      {t:'out', cls:'ok', text:'→ fix(parser): normalize BOM before parsing'},
+      {t:'out', cls:'dim', text:'  (ready for git commit --amend)'},
+      {t:'out', text:''},
+      {t:'cmd', text:'tell d "how many tests are failing?"'},
+      {t:'meta', html:'<b>●</b> tell · d → deepseek:deepseek-flash:high'},
+      {t:'out', cls:'dim', text:'<RUN> npm test 2>&1 | tail -20 </RUN>', run:true},
+      {t:'out', cls:'dim', text:'run? [y/N] y'},
+      {t:'out', cls:'dim', text:'  3 failures — all in parseHeader.spec.ts:'},
+      {t:'out', cls:'dim', text:'  the parser breaks with a BOM on line 42.'},
+      {t:'out', text:''},
+      {t:'cmd', text:'tell -w'},
+      {t:'meta', html:'<b>●</b> tell-web · sandbox v0 (preview)'},
+      {t:'out', cls:'ok', text:'→ http://127.0.0.1:3000 — terminal, files and chat'},
+      {t:'cur'}
+    ]
+  },
+
+  /* --------------------------- ESPAÑOL ------------------------- */
+  es: {
+    'meta.title':'Tell-ai — CLI + SDK + sandbox web para LLMs',
+    'meta.desc':'Tell-ai es open-source: CLI one-shot en el shell con ejecución confirmada, SDK MIT para Node/Bun/browser y un sandbox web v0 (terminal, archivos y chat en el navegador vía tell -w).',
+    'nav.feat':'recursos','nav.models':'modelos','nav.demo':'demo','nav.sdk':'sdk','nav.sb':'sandbox <i>v0</i>','nav.inst':'instalar',
+    'hero.eyebrow':'<b>//</b> CLI + SDK + sandbox web v0 — open-source, one-shot, ejecución confirmada',
+    'h1a':'TU IA,','h1b':'<em class="serif">en la terminal.</em>',
+    'hero.sub':'Tell-ai lleva los modelos de lenguaje a donde tu código ya vive: <b>el shell</b>. Pregunta, pipea, deja que el modelo proponga comandos — <b>tú apruebas cada uno</b>. El mismo motor se convierte en <b>SDK</b> en tu código — y, con <code>tell&nbsp;-w</code>, un <b>sandbox en el navegador</b>.',
+    'ui.copy':'copiar',
+    'hero.l1':'ver el código ↗','hero.l2':'probar la demo ↓','hero.l3':'resolvedor de modelos ↘','hero.l4':'sandbox v0 ↘',
+    'hero.m1':'open-source','hero.m2':'stars','hero.m3':'forks',
+    'hero.m.sb':'sandbox web: <b class="warn">v0 preliminar</b>',
+    'term.title':'tell-ai — sesión de ejemplo','term.replay':'↻ replay','term.replay2':'↻ repetir',
+    's1.label':'<b>§ 01</b> — por qué','s1.h2':'Copiar, pegar, formatear, <em class="serif">repetir.</em>',
+    'd.bar':'flujo — antes / después',
+    'd.h1':'--- a/flujo/sin-tell-ai','d.h2':'+++ b/flujo/con-tell-ai',
+    'd.r1':'abrir una pestaña nueva en el navegador','d.r2':'escribir la dirección del chat','d.r3':'autenticar (otra vez)','d.r4':'pegar código + contexto a mano','d.r5':'copiar la respuesta y reformatear','d.r6':'volver al editor y pegar de nuevo','d.a1':'review this change',
+    'w1.h3':'~23 <em>minutos</em>','w1.p':'es lo que estiman los estudios de atención para recuperar el foco tras una interrupción. Cada ida al navegador es una. Tell-ai acorta el camino a un comando.',
+    'w2.h3':'tú <em>al mando</em>','w2.p':'El modelo propone comandos entre tags <code>&lt;RUN&gt;</code> — y nada se ejecuta sin tu confirmación. Con <code>-y</code> los seguros corren solos, pero los patrones de alto riesgo (<code>sudo</code>, <code>rm -rf</code>, <code>curl|sh</code>…) siempre preguntan.',
+    'w3.h3':'shell, código <em>y la pestaña.</em>','w3.p':'CLI en la terminal, SDK en tu código — y el sandbox web (v0 preliminar) vía <code>tell -w</code>: terminal, explorador de archivos y chat en el navegador, anclados a un directorio.',
+    's2.label':'<b>§ 02</b> — primeros pasos','s2.h2':'Tres comandos hasta la <em class="serif">primera respuesta.</em>',
+    'st1.h3':'Instala','st1.p':'Un binario, una pregunta. Nada de daemon corriendo en segundo plano.',
+    'st2.h3':'Apunta una clave','st2.p':'Cualquier vendor que ya uses — por entorno o un archivo <code>~/.config/&lt;vendor&gt;.token</code>. Sin registro nuevo.',
+    'st3.h3':'Pregunta','st3.p':'La letra elige el modelo — <code>d</code> de DeepSeek Flash (que ya arranca en <code>high</code>), <code>D</code> de Pro, <code>g</code> de GPT.','st3.cm':'# pregunta antes de ejecutar',
+    's3.label':'<b>§ 03</b> — recursos','s3.h2':'Construido como herramienta <em class="serif">unix.</em>',
+    'f1':'El modelo propone comandos entre tags y <b>tú apruebas uno a uno</b>. Timeout de 120s por comando; <code>sudo</code>, <code>rm -rf</code>, <code>mkfs</code>, <code>curl|sh</code> y escrituras en <code>/etc</code> se bloquean siempre.',
+    'f2':'Pipes de verdad: <code>npm test 2&gt;&amp;1 | tell -i "why are these failing?"</code> — el stdin se vuelve contexto, no lío.',
+    'f3':'<b>142 alias</b> para modelos de OpenAI, Anthropic, Google, xAI, DeepSeek, Alibaba, Z.ai, Moonshot, Meta y Xiaomi + self-hosted — cada uno con su regla de thinking. El default es <code>g</code> (vía <code>TELL_MODEL</code>). <a href="#modelos">resolvedor interactivo ↘</a>',
+    'f4':'<code>--stream</code> imprime token a token; <code>--think</code> muestra el reasoning. Solo cambian lo que se imprime: log, contexto y extracción de <code>&lt;RUN&gt;</code> quedan idénticos.',
+    'f5':'Multi-paso: el modelo ejecuta un comando, lee la salida y sigue — hasta 8 rondas hasta la respuesta final.',
+    'f6':'Contexto persistente por directorio+modelo en <code>~/.ai/tell_context</code>. Nómbralo con <code>--ctx %proyecto</code>, retómalo por <code>@0</code>, resetea con <code>-n</code>; <code>--ctx</code> sin ref es prompt del contexto default.',
+    'f7':'<code>tell -l</code> lista contextos (<code>@N</code>) y conversaciones (<code>%N</code>), busca por término, reimprime con <code>-l @0</code> — <b>sin modelo, sin clave, sin red</b>. Log completo en <code>~/.ai/tell_history</code>.',
+    'f8':'Postura de ejecución explícita: con <code>-y</code>, los seguros corren directo y los de riesgo preguntan; sin <code>-y</code>, todo pregunta. Comandos que tocan fuera del cwd — <b>lectura incluida</b> — siempre preguntan.',
+    'f9':'Modelos self-hosted con la misma ergonomía: <code>q</code> para endpoints locales, <code>v</code> para Vast — y cualquier vendor sin handler cae en el provider genérico OpenAI-compatible.',
+    'f10':'El sandbox web v0 en el navegador: terminal, explorador de archivos y chat anclados al directorio. <code>--stream</code>, <code>--think</code>, <code>--chain</code>, <code>-y</code>, <code>--no-exec</code> y <code>--require-approval</code> se repasan. <a href="#sandbox">ver la sección ↘</a>',
+    's4.label':'<b>§ 04</b> — modelos','s4.h2':'Diez vendors, <em class="serif">una letra.</em>',
+    'res.hd':'resolvedor de alias — clic y compone','res.count':'142 alias · 29 grupos base arriba',
+    'res.base':'base','res.na':'n/d','res.fast1':'. rápido','res.fast2':'sin reasoning','res.cp':' copiar spec',
+    'res.foot':'la regla de thinking <b>varía por modelo</b>: <code>g</code>/<code>e</code>/<code>r</code> no tienen <code>none</code> (arrancan en low) · <code>d</code>/<code>D</code> ya son <code>high</code> en el alias base · xAI y Alibaba topan en <code>xhigh</code> · <code>h</code>/<code>k</code>/<code>q</code>/<code>v</code> tienen alias único · mayúscula (<code>G</code>, <code>S</code>, <code>O</code>…) = atajo a <code>high</code> · modo rápido: <code>.</code> antes del alias (<code>.g</code>) · specs completas: <code>vendor:model[:thinking]</code> · lista oficial: <code>tell -m --help</code>',
+    's5.label':'<b>§ 05</b> — demo','s5.h2':'Pruébalo <em class="serif">sin instalar.</em>',
+    'demo.title':'invitado@tell-ai: ~ — demo interactiva','demo.f0':'no conectado','demo.ff':'clic para escribir','demo.fb':'— CLI capturada —',
+    'demo.try':'↳ prueba:',
+    'try':['help','tell hola','run ls','models','sandbox','sdk','github'],
+    'demo.note':'<b>Simulación local:</b> este terminal corre 100% en tu pestaña — ninguna clave, ninguna llamada de red. Las respuestas son pregrabadas, pero el streaming es real: <b>↑</b> repite, <b>Tab</b> autocompleta, <b>Ctrl+C</b> interrumpe.',
+    'demo.meta':'● tell[demo] · respuesta local · ','demo.flow':'● tell[demo] · flujo de ejecución',
+    'bn.1':'tell-ai — escribe `help`','bn.2':'demo interactiva · respuestas pregrabadas · ninguna llamada de red','bn.3':'escribe `help` para empezar — o haz clic en una sugerencia.',
+    'bn.short':'tell-ai — escribe `help`',
+    'runs':['<RUN> npm test 2>&1 | tail -20 </RUN>','aquí en la demo nada se ejecuta — en tu terminal, tell pediría','confirmación: [s/N]. Con -y los seguros corren solos, pero','sudo, rm -rf, curl|sh y fuera-del-cwd siempre preguntan — y','--no-exec nunca ejecuta nada.'],
+    'usage':'uso: tell <pregunta> — por ejemplo: tell hola',
+    'b.greetRe':/^(hola|buenas|buen(os|as) (d[ií]as|tardes|noches)|ey|qu[eé] tal)/,
+    'b.greet':['¡Hola! Esta es la demo de la landing — sin red, sin claves, todo pregrabado. En el Tell-ai real, esta frase habría venido de un LLM, token a token, directo a tu stdout.','¡Hola! Prueba `run ls`, `models` o `sandbox` — o pide un chiste.'],
+    'b.jokeRe':/chiste|graciosa?|humor/,
+    'b.jokes':['¿Por qué los programadores confunden Halloween con Navidad? Porque OCT 31 == DEC 25.','Un SQL entra a un bar, se acerca a dos tablas y pregunta: "¿puedo hacer un JOIN?"','Hay dos tipos de personas: las que entienden la recursión y las que entienden la recursión.'],
+    'b.sbRe':/sandbox|navegador|browser|tell -w|hoja de ruta|futuro|planes/,
+    'b.sb':['El sandbox web existe en esta versión — preliminar: `tell -w` abre','terminal, explorador de archivos y chat anclados al directorio.','Seguro por defecto: auto-run es opt-in, --no-exec responde 403 en','el servidor y, en red abierta, usa TELL_TOKEN + TELL_ALLOWED_HOSTS.','La doc completa es packages/web/README.md en el repo (escribe `github`).'],
+    'b.sdkRe':/\bsdk\b|biblioteca|import|node|bun|usar en el c[oó]digo|api\b/,
+    'b.sdk':['El SDK es un paquete propio: `npm add @tell-ai/sdk` (licencia MIT).','API real: `tell(msg, { keys })` one-shot; `create_ask_ai(spec, { keys })`','+ `ai.ask()` y `ai.ask_stream()` (eventos NDJSON reasoning|text);','`get_model()` expone el ModelHandle crudo. Cero process.env.','Ejemplos completos en el §06 de la página.'],
+    'b.mdRe':/models?|alias|modelo|proveedor|vendor/,
+    'b.md':['142 alias: g → gpt-6.1-sol, o → claude-opus-5-5,','d → deepseek-flash (¡la base ya es high!), D → deepseek-v4-pro,','z → glm-5.3, a → qwen3.8-max, m → muse-spark, mi → mimo…','La regla de thinking varía por modelo: x++ y a++ = xhigh,','g-- = low (sin none), mayúscula G/S/O… = atajo a high.','Resolvedor interactivo en §04 y `tell -m --help` en tu terminal.'],
+    'b.aboutRe':/qui[eé]n (es|sos)|qu[eé] es (el )?tell|sobre el proyecto|qu[eé] hace/,
+    'b.about':['Tell-ai es un monorepo open-source: CLI (tell-ai, GPL-3.0), SDK','(@tell-ai/sdk, MIT) y sandbox web v0 (tell -w, preliminar).','One-shot por defecto: el modelo propone comandos vía <RUN> y tú apruebas.','El código vive en github.com/naoeosavio/Tell-ai (escribe `github`).'],
+    'b.instRe':/instal|c[oó]mo uso|c[oó]mo empiezo|empezar|comenzar/,
+    'b.inst':['Resumen: `npm install -g tell-ai` para la CLI, `npm add @tell-ai/sdk`','para la biblioteca. Claves: `export DEEPSEEK_API_KEY=…` o','`~/.config/<vendor>.token`. El sandbox abre con `tell -w`.','Detalles completos: `install` o el README.'],
+    'b.thxRe':/gracias|grax/,'b.thx':'¡De nada! Si te gustó, una star en el repo ayuda más de lo que parece.',
+    'b.ghRe':/star|github|repositorio|repo|c[oó]digo/,'b.gh':'El código vive en github.com/naoeosavio/Tell-ai — escribe `github` y te lo abro.',
+    'b.fb':['[demo] Sin red aquí — esta página es 100% estática. En tu terminal, este prompt iría al modelo del alias elegido y volvería en texto plano.','[demo] Respuesta pregrabada, claro. Pero en el Tell-ai real llegaría lista para `|`, `>` o un commit.','[demo] Buena pregunta — para el modelo de verdad, no para mí. Escribe `help` para ver lo que este terminal hace solo.'],
+    'b.sudo':'invitado no está en el archivo sudoers. Este incidente será reportado. (broma — no hay nada que reportar.)',
+    'b.rm':'rechazado. ni en simulación.',
+    'b.vim':'para salir de vim: :q! — para salir de esta demo: exit. Uno de los dos es más fácil.',
+    'b.exit':'hasta ya — el terminal sigue aquí cuando vuelvas.',
+    'help':'\n  help          esta lista\n  tell <texto>  habla con el modelo (simulado aquí)\n  run ls        muestra el flujo de ejecución <RUN> → [s/N]\n  models        tabla corta de alias y sufijos\n  sandbox       el sandbox web v0 (tell -w) explicado\n  sdk           cómo usar @tell-ai/sdk en tu código\n  install       instalación de CLI y SDK\n  features      recursos principales\n  github        abre el repositorio en el navegador\n  history / whoami / banner / date / clear / exit\n\n  TIP   ↑ repite el último · Tab autocompleta · Ctrl+C interrumpe\n  Todo lo que no sea comando se convierte en prompt para el modelo.\n',
+    's6.label':'<b>§ 06</b> — sdk','s6.h2':'La misma <em class="serif">tell(),</em> fuera del shell.',
+    's6.alt':'o <code>bun add @tell-ai/sdk</code> — paquete propio de la biblioteca, separado de la CLI.',
+    'sdk.c1':'// el "tell --no-exec" como función: llama al modelo y devuelve','sdk.c2':'// el texto con tags <RUN> y reasoning ya removidas',
+    'sdk.c3':'// streaming token a token — eventos NDJSON (reasoning | text)',
+    'sdk.c4':'// también exportados: MODELS (142 alias), get_model() (el','sdk.c5':'// ModelHandle crudo para tu propio generateText),','sdk.c6':'// get_system_prompt, extract_runs · strip_run_tags ·','sdk.c7':'// sanitize_reasoning · summarize_context',
+    'sdk.wc':'// IIFE global — corre incluso en file://',
+    'vt.h':'tres builds, un mismo import','vt1':'ESM + CJS + tipos','vt2':'ESM bundleado','vt3':'IIFE → TellSDK',
+    's6.vend':'12 vendors vía <code>keys</code>/<code>urls</code>: openai · anthropic · google · xai · deepseek · cerebras · moonshotai · openrouter · alibaba <code>(qwen)</code> · zai <code>(glm)</code> · meta <code>(llama)</code> · xiaomi <code>(mimo)</code> + <code>vast</code>/<code>local</code> self-hosted. Budget de reasoning resuelto por vendor (<code>max</code> se mapea al techo de cada uno); caches de provider por base URL <b>y</b> credencial.',
+    'k1.h3':'dos paquetes, <em>dos licencias</em>','k1.p':'La CLI (<code>tell-ai</code>) es GPL-3.0. El SDK (<code>@tell-ai/sdk</code>) es <b>MIT</b> — puedes embeberlo en producto cerrado sin dolores de cabeza.',
+    'k2.h3':'cero <code>process.env</code>','k2.p':'El SDK nunca lee el entorno: claves y base URLs se <b>inyectan</b> vía <code>keys</code> y <code>urls</code>. Es lo que lo hace browser-safe — y <code>urls</code> acepta proxy CORS, como en <code>examples/web/</code> del repo.',
+    'k3.h3':'la fundación <em>del sandbox</em>','k3.p':'Los builds de browser ya arrancan con una <code>&lt;script&gt;</code> tag pura — sobre ellos se construyó el sandbox v0 del <a href="#sandbox" style="color:var(--amber);border-bottom:1px dotted var(--amber)">§07</a>.',
+    's7.label':'<b>§ 07</b> — sandbox web','s7.h2':'El sandbox llegó — <em class="serif">versión preliminar.</em>',
+    's7.title':'tell-web — sandbox v0 <span class="v0-badge" style="margin-left:8px">PRELIMINAR</span>',
+    'r1.b':'CLI','r1.p':'lanzada — <code>tell "…"</code> en tu shell, con <code>&lt;RUN&gt;</code> confirmado, <code>--chain</code>, contexto <code>%id</code>/<code>@N</code> y <code>-l</code> offline.',
+    'r2.b':'SDK','r2.p':'disponible (MIT) — <code>ask_stream()</code>, <code>get_model()</code>, 142 alias, 12 vendors, builds de browser IIFE vía unpkg.',
+    'r3.b':'sandbox web <i class="v0-badge">V0 PRELIMINAR</i>','r3.p':'abre con <code>tell -w</code>: terminal, explorador de archivos y chat anclados al directorio. Local-first — pensado para <code>127.0.0.1</code>.',
+    'r4.b':'lo que viene después','r4.p':'preliminar significa: falta lo que <b>tú</b> reclames — <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener" style="color:var(--amber);border-bottom:1px dotted var(--amber)">abre una issue</a> y la v1 sale de ahí.',
+    'sec.h':'fuera de localhost: modo seguro',
+    'sec.body':'export TELL_TOKEN=$(openssl rand -hex 32)<br>tell-web --cwd ~/proyecto<br><br>· Bearer en todo <code>/api/*</code> · WS vía <code>?token=</code><br>· token solo en memoria — el reload lo pide de nuevo<br>· verify limitado a 5 intentos/15 min/IP<br>· los hijos nacen <b>sin</b> <code>TELL_TOKEN</code> ni claves<br>· chequeo de Host/Origin contra DNS rebinding',
+    'road.note':'Seguridad desde el v0: Auto-Run es <b>opt-in</b> (un navegador nuevo siempre pregunta antes), <code>--no-exec</code> queda fijo en el servidor (<code>/api/execute</code> → <b>403</b>) y vence a las preferencias guardadas. La base es el build IIFE del SDK — la doc completa está en <a href="https://github.com/naoeosavio/Tell-ai/blob/main/packages/web/README.md" target="_blank" rel="noopener">packages/web/README.md</a>.',
+    'boot.phases':['resolviendo runtime…','montando ptys…','indexando archivos…','calentando chat…','listo…'],
+    'boot.ok':'● tell-web v0 (preliminar) · escuchando en http://127.0.0.1:3000',
+    'boot.m1':'  auto-run es opt-in: un navegador nuevo siempre pregunta antes',
+    'boot.m2':'  --no-exec queda fijo en el servidor: /api/execute → 403',
+    'boot.lk':'  doc completa → ',
+    'wf':['┌ archivos ─┬─ chat ────────┬─ terminal ─┐','│ src/      │ "revisa el    │ $ npm test │','│ main.ts   │  diff…"       │ 3 fallos   │','│ package…  │ ● corrigiendo │ ■ running… │','└───────────┴───────────────┴────────────┘'],
+    's8.label':'<b>§ 08</b> — instalar','s8.h2':'Una línea y <em class="serif">listo.</em>',
+    's8.alt':'CLI global. Para la biblioteca: <code>npm add @tell-ai/sdk</code> · <a href="https://github.com/naoeosavio/Tell-ai#readme" target="_blank" rel="noopener">requisitos y build del código fuente en el README ↗</a>',
+    'reqs.h':'claves — env o ~/.config/&lt;vendor&gt;.token',
+    'reqs.body':'export OPENAI_API_KEY="sk-..."<br>export DEEPSEEK_API_KEY="..."<br>export ZHIPU_API_KEY="..."        <span style="color:var(--mut)"># Z.ai GLM</span><br>export ALIBABA_API_KEY="..."      <span style="color:var(--mut)"># Qwen</span><br><span style="color:var(--mut)">…meta, mimo (xiaomi), google, xai, fireworks, cerebras, moonshotai, openrouter</span><br><br>tell "hola, terminal"<br>tell d "run ls -la"<br>tell -w                           <span style="color:var(--mut)"># sandbox v0 en el navegador</span><br><br>¿Problemas? <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener">Las issues</a> son el mejor camino — las contribuciones son bienvenidas.',
+    'cta.h2':'El próximo prompt está a un <em class="serif">pipe</em> de distancia.',
+    'cta.p':'CLI GPL-3.0, SDK MIT, sandbox v0 ya corriendo — y espacio para dejar tu marca.',
+    'foot.l':'© <span id="year"></span> naoeosavio — Tell-ai es open-source; esta página es solo la vitrina.',
+    'foot.r':'<a href="https://github.com/naoeosavio/Tell-ai" target="_blank" rel="noopener">repo</a> · <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener">issues</a> · cli: GPL-3.0 · sdk: MIT · sandbox: <span class="warn">v0 preliminar</span> · un único archivo HTML',
+    'sb.mode':'modo',
+    'mq':'RUN CONFIRMADO <i>·</i> 142 ALIAS <i>·</i> 10+ VENDORS <i>·</i> PIPE-FIRST <i>·</i> SIN LOGIN <i>·</i> CLI: GPL-3.0 <i>·</i> SDK: MIT <i>·</i> SANDBOX V0: PRELIMINAR <i>·</i> ',
+    'hseq':[
+      {t:'cmd', text:'git diff --staged | tell -i "mensaje de commit"'},
+      {t:'meta', html:'<b>●</b> tell · g → openai:gpt-6.1-sol:medium · 1.2s'},
+      {t:'out', cls:'ok', text:'→ fix(parser): normalizar BOM antes del parseo'},
+      {t:'out', cls:'dim', text:'  (listo para git commit --amend)'},
+      {t:'out', text:''},
+      {t:'cmd', text:'tell d "cuántos tests están fallando?"'},
+      {t:'meta', html:'<b>●</b> tell · d → deepseek:deepseek-flash:high'},
+      {t:'out', cls:'dim', text:'<RUN> npm test 2>&1 | tail -20 </RUN>', run:true},
+      {t:'out', cls:'dim', text:'ejecutar? [s/N] s'},
+      {t:'out', cls:'dim', text:'  3 fallos — todos en parseHeader.spec.ts:'},
+      {t:'out', cls:'dim', text:'  el parser se rompe con BOM en la línea 42.'},
+      {t:'out', text:''},
+      {t:'cmd', text:'tell -w'},
+      {t:'meta', html:'<b>●</b> tell-web · sandbox v0 (preliminar)'},
+      {t:'out', cls:'ok', text:'→ http://127.0.0.1:3000 — terminal, archivos y chat'},
+      {t:'cur'}
+    ]
+  },
+
+  /* --------------------------- 日本語 -------------------------- */
+  jp: {
+    'meta.title':'Tell-ai — LLMのためのCLI + SDK + Webサンドボックス',
+    'meta.desc':'Tell-aiはオープンソース:実行確認制のワンショットCLI、Node/Bun/ブラウザ対応のMIT SDK、そしてWebサンドボックス v0(tell -w でターミナル・ファイル・チャットをブラウザへ)。',
+    'nav.feat':'機能','nav.models':'モデル','nav.demo':'デモ','nav.sdk':'sdk','nav.sb':'サンドボックス <i>v0</i>','nav.inst':'インストール',
+    'hero.eyebrow':'<b>//</b> CLI + SDK + Webサンドボックス v0 — オープンソース・ワンショット・実行は確認制',
+    'h1a':'あなたのAIを、','h1b':'<em class="serif">ターミナルに。</em>',
+    'hero.sub':'Tell-aiは、コードのいる場所——<b>シェル</b>——にLLMを届けます。聞いて、パイプで繋いで、モデルがコマンドを提案——<b>実行はあなたの承認</b>。同じエンジンはコードの中では<b>SDK</b>に、<code>tell&nbsp;-w</code>では<b>ブラウザのサンドボックス</b>になります。',
+    'ui.copy':'コピー',
+    'hero.l1':'コードを見る ↗','hero.l2':'デモを試す ↓','hero.l3':'モデル解決ツール ↘','hero.l4':'サンドボックス v0 ↘',
+    'hero.m1':'オープンソース','hero.m2':'スター','hero.m3':'フォーク',
+    'hero.m.sb':'Webサンドボックス: <b class="warn">v0 暫定版</b>',
+    'term.title':'tell-ai — サンプルセッション','term.replay':'↻ 再生','term.replay2':'↻ もう一度',
+    's1.label':'<b>§ 01</b> — なぜ','s1.h2':'コピーして、整形して、<em class="serif">また繰り返し。</em>',
+    'd.bar':'フロー — before / after',
+    'd.h1':'--- a/flow/without-tell-ai','d.h2':'+++ b/flow/with-tell-ai',
+    'd.r1':'ブラウザで新しいタブを開く','d.r2':'チャットのURLを入力','d.r3':'またログイン','d.r4':'コードと文脈を手作業で貼る','d.r5':'回答をコピーして整形し直す','d.r6':'エディタに戻って貼り直す','d.a1':'review this change',
+    'w1.h3':'約<em>23分</em>','w1.p':'は、中断後に集中を取り戻すまでの目安——注意に関する研究より。ブラウザへ行くたびに1回消費。Tell-aiはその道のりを1コマンドに短縮します。',
+    'w2.h3':'主導権は<em>あなたに</em>','w2.p':'モデルは <code>&lt;RUN&gt;</code> タグでコマンドを提案——実行には<b>毎回あなたの承認</b>が必要。<code>-y</code> なら安全なものは自動実行ですが、高リスクパターン(<code>sudo</code>、<code>rm -rf</code>、<code>curl|sh</code>…)は常に確認を求めます。',
+    'w3.h3':'シェル、コード、<em>そしてタブ。</em>','w3.p':'CLIはターミナル、SDKはあなたのコード——そしてWebサンドボックス(v0暫定版)は <code>tell -w</code> で:ターミナル・ファイルエクスプローラ・チャットをディレクトリに紐付けてブラウザへ。',
+    's2.label':'<b>§ 02</b> — はじめの一歩','s2.h2':'3つのコマンドで<em class="serif">最初の回答へ。</em>',
+    'st1.h3':'インストール','st1.p':'バイナリ1つ、質問1つ。バックグラウンドのデーモンはなし。',
+    'st2.h3':'キーを設定','st2.p':'既存のどのベンダーでも——環境変数か <code>~/.config/&lt;vendor&gt;.token</code> ファイルで。新規登録は不要。',
+    'st3.h3':'話しかける','st3.p':'1文字がモデルを選ぶ——<code>d</code> は DeepSeek Flash(ベースで既に <code>high</code>)、<code>D</code> は Pro、<code>g</code> は GPT。','st3.cm':'# 実行前に確認を求める',
+    's3.label':'<b>§ 03</b> — 機能','s3.h2':'UNIXツールのように<em class="serif">設計。</em>',
+    'f1':'モデルがタグ間にコマンドを提案し、<b>1件ずつあなたが承認</b>。コマンドごとに120秒のタイムアウト。<code>sudo</code>、<code>rm -rf</code>、<code>mkfs</code>、<code>curl|sh</code>、<code>/etc</code> への書き込みは常にブロック。',
+    'f2':'本物のパイプ:<code>npm test 2&gt;&amp;1 | tell -i "why are these failing?"</code> — stdinはそのまま文脈になる。',
+    'f3':'<b>142エイリアス</b>で OpenAI・Anthropic・Google・xAI・DeepSeek・Alibaba・Z.ai・Moonshot・Meta・Xiaomi のモデル+セルフホストをカバー——thinkingの段階はモデルごと。デフォルトは <code>g</code>(<code>TELL_MODEL</code>)。<a href="#modelos">インタラクティブ解決ツール ↘</a>',
+    'f4':'<code>--stream</code> はトークンごとに出力、<code>--think</code> は推論を表示。表示が変わるだけ:ログ・コンテキスト・<code>&lt;RUN&gt;</code> の抽出は同一。',
+    'f5':'マルチステップ:モデルがコマンドを実行し、出力を読み、続行——最大8ラウンドで最終回答まで。',
+    'f6':'ディレクトリ+モデルごとの永続コンテキストを <code>~/.ai/tell_context</code> に。<code>--ctx %プロジェクト</code> で名前付け、<code>@0</code> で再開、<code>-n</code> でリセット。refなしの <code>--ctx</code> はデフォルト文脈へのプロンプト。',
+    'f7':'<code>tell -l</code> はコンテキスト(<code>@N</code>)と会話(<code>%N</code>)を一覧・検索・再表示(<code>-l @0</code>)——<b>モデルもキーもネットワークも不要</b>。完全なログは <code>~/.ai/tell_history</code>。',
+    'f8':'実行ポリシーを明示的に:<code>-y</code> なら安全なものは直接実行、リスクのあるものは確認。なしでは全て確認。cwdの外に触れるコマンドは——<b>読み込みも含め</b>——常に確認。',
+    'f9':'セルフホストモデルも同じ操作感:<code>q</code> はローカルエンドポイント、<code>v</code> は Vast——ハンドラのないベンダーは汎用OpenAI互換プロバイダにフォールバック。',
+    'f10':'ブラウザのWebサンドボックス v0:ディレクトリに紐付いたターミナル・ファイルエクスプローラ・チャット。<code>--stream</code>、<code>--think</code>、<code>--chain</code>、<code>-y</code>、<code>--no-exec</code>、<code>--require-approval</code> は転送。<a href="#sandbox">セクションを見る ↘</a>',
+    's4.label':'<b>§ 04</b> — モデル','s4.h2':'10ベンダー、<em class="serif">1文字。</em>',
+    'res.hd':'エイリアス解決 — クリックして組み立て','res.count':'142エイリアス · 上は29グループ',
+    'res.base':'基本','res.na':'—','res.fast1':'. 高速','res.fast2':'推論なし','res.cp':' specをコピー',
+    'res.foot':'thinkingの段階は<b>モデルごとに異なる</b>:<code>g</code>/<code>e</code>/<code>r</code> に <code>none</code> なし(low開始) · <code>d</code>/<code>D</code> はベースで <code>high</code> · xAI と Alibaba の上限は <code>xhigh</code> · <code>h</code>/<code>k</code>/<code>q</code>/<code>v</code> は単一エイリアス · 大文字(<code>G</code>、<code>S</code>、<code>O</code>…)= <code>high</code> へのショートカット · 高速モード:エイリアスの前に <code>.</code>(<code>.g</code>) · 完全なspec:<code>vendor:model[:thinking]</code> · 公式リスト:<code>tell -m --help</code>',
+    's5.label':'<b>§ 05</b> — デモ','s5.h2':'インストールせずに<em class="serif">試す。</em>',
+    'demo.title':'ゲスト@tell-ai: ~ — インタラクティブデモ','demo.f0':'未接続','demo.ff':'クリックして入力','demo.fb':'— CLI取得中 —',
+    'demo.try':'↳ 入力例:',
+    'try':['help','tell こんにちは','run ls','models','sandbox','sdk','github'],
+    'demo.note':'<b>ローカルシミュレーション:</b>このターミナルは100%このタブ内で動作——キーも通信もなし。応答は事前収録ですが、ストリーミングは本物:<b>↑</b> で履歴、<b>Tab</b> で補完、<b>Ctrl+C</b> で中断。',
+    'demo.meta':'● tell[demo] · ローカル応答 · ','demo.flow':'● tell[demo] · 実行フロー',
+    'bn.1':'tell-ai — `help` と入力','bn.2':'インタラクティブデモ · 応答は事前収録 · 通信なし','bn.3':'`help` で開始 — 下の候補をクリックしてもOK。',
+    'bn.short':'tell-ai — `help` と入力',
+    'runs':['<RUN> npm test 2>&1 | tail -20 </RUN>','デモでは何も実行されません — 本物のターミナルでは tell が','確認を求めます:[y/N]。-y なら安全なものは自動実行ですが、','sudo・rm -rf・curl|sh・cwdの外は常に確認 — そして','--no-exec は何も実行しません。'],
+    'usage':'usage: tell <質問> — 例: tell こんにちは',
+    'b.greetRe':/^(こんにちは|おはよう|こんばんは|やあ|ハロー|どうも)/,
+    'b.greet':['こんにちは!ここはランディングのデモ — 通信もキーもなし、全部事前収録。本物のTell-aiなら、この文はLLMからトークンごとにstdoutへ届いています。','やあ!`run ls`、`models`、`sandbox` を試すか、ジョークをどうぞ。'],
+    'b.jokeRe':/冗談|ジョーク|笑|ギャグ|面白/,
+    'b.jokes':['プログラマーがハロウィンとクリスマスを混同する理由?OCT 31 == DEC 25 だから。','SQLがバーに入り、2つのテーブルに近づいて言った:「JOINしてもいい?」','世の中には2種類の人間がいる:再帰を理解できる人と、再帰を理解できる人だ。'],
+    'b.sbRe':/サンドボックス|ブラウザ|ロードマップ|今後|sandbox/,
+    'b.sb':['Webサンドボックスはこのバージョンにあります — 暫定版:`tell -w` で','ターミナル・ファイルエクスプローラ・チャットをディレクトリに紐付けて起動。','デフォルトで安全:auto-runはオプトイン、--no-exec はサーバーで403、','オープンネットワークでは TELL_TOKEN + TELL_ALLOWED_HOSTS を。','完全なドキュメントは repo の packages/web/README.md(`github` と入力)。'],
+    'b.sdkRe':/sdk|ライブラリ|インポート|コードから|api/,
+    'b.sdk':['SDKは独立パッケージ:`npm add @tell-ai/sdk`(MITライセンス)。','実際のAPI:ワンショットは `tell(msg, { keys })`、`create_ask_ai(spec, { keys })`','+ `ai.ask()` と `ai.ask_stream()`(NDJSONのreasoning|textイベント)、','`get_model()` で生のModelHandle。process.envはゼロ。','完全な例はページの§06。'],
+    'b.mdRe':/モデル|エイリアス|ベンダー|プロバイダ|models?|alias/,
+    'b.md':['142エイリアス:g → gpt-6.1-sol、o → claude-opus-5-5、','d → deepseek-flash(ベースで既にhigh!)、D → deepseek-v4-pro、','z → glm-5.3、a → qwen3.8-max、m → muse-spark、mi → mimo…','thinkingの段階はモデルごと:x++ と a++ は xhigh、','g-- は low(noneなし)、大文字 G/S/O… は high へのショートカット。','解決ツールは§04、ターミナルでは `tell -m --help`。'],
+    'b.aboutRe':/(あなたは)?誰|tellとは|tellって|何者|について教えて|何ができる/,
+    'b.about':['Tell-aiはオープンソースのモノレポ:CLI(tell-ai, GPL-3.0)、','SDK(@tell-ai/sdk, MIT)、Webサンドボックス v0(tell -w, 暫定版)。','デフォルトはワンショット:モデルが <RUN> でコマンドを提案、あなたが承認。','コードは github.com/naoeosavio/Tell-ai に(`github` と入力)。'],
+    'b.instRe':/インストール|どうやって|使い方|始め方|install/,
+    'b.inst':['要約:CLIは `npm install -g tell-ai`、ライブラリは `npm add @tell-ai/sdk`。','キーは `export DEEPSEEK_API_KEY=…` か','`~/.config/<vendor>.token`。サンドボックスは `tell -w` で起動。','詳細は `install` か README。'],
+    'b.thxRe':/ありがとう|サンキュー|助か/,'b.thx':'どういたしまして!気に入ったら、repoのスターがすごく助かります。',
+    'b.ghRe':/スター|github|リポジトリ|コード|star|repo/,'b.gh':'コードは github.com/naoeosavio/Tell-ai に — `github` と入力すれば開けます。',
+    'b.fb':['[demo] ここに通信はありません — このページは100%静的。実際のターミナルなら、このプロンプトは選んだエイリアスのモデルに渡り、プレーンテキストで返ってきます。','[demo] もちろん事前収録の応答です。でも本物のTell-aiなら `|`、`>`、コミットにそのまま使える形で届きます。','[demo] いい質問——でも答えるのは私じゃなくモデル。`help` でこのターミナルが自力でできることを確認してみて。'],
+    'b.sudo':'ゲストは sudoers ファイルにありません。この事故は報告されます。(冗談です — 報告先もありません。)',
+    'b.rm':'拒否します。シミュレーションでも。',
+    'b.vim':'vimを抜けるには :q! — このデモを抜けるには exit。簡単なのはどちらか、試してみて。',
+    'b.exit':'またね — ターミナルはここで待ってます。',
+    'help':'\n  help          この一覧\n  tell <text>   モデルと会話(ここではシミュレーション)\n  run ls        <RUN> → [y/N] の実行フローを見る\n  models        エイリアスとサフィックスの早見表\n  sandbox       Webサンドボックス v0 (tell -w) の説明\n  sdk           コードで @tell-ai/sdk を使う方法\n  install       CLI と SDK のインストール\n  features      主な機能\n  github        ブラウザでリポジトリを開く\n  history / whoami / banner / date / clear / exit\n\n  TIP   ↑ で履歴 · Tab で補完 · Ctrl+C で中断\n  コマンド以外の入力は、そのままモデルへのプロンプトになります。\n',
+    's6.label':'<b>§ 06</b> — sdk','s6.h2':'同じ<em class="serif">tell()</em>を、シェルの外へ。',
+    's6.alt':'または <code>bun add @tell-ai/sdk</code> — ライブラリはCLIと別パッケージ。',
+    'sdk.c1':'// 関数版の "tell --no-exec":モデルを呼び、<RUN> と','sdk.c2':'// reasoningタグを取り除いたテキストを返す',
+    'sdk.c3':'// トークンごとのストリーミング — NDJSONイベント(reasoning | text)',
+    'sdk.c4':'// 他のexport:MODELS(142エイリアス)、get_model()(自分の','sdk.c5':'// generateText用の生のModelHandle)、','sdk.c6':'// get_system_prompt、extract_runs · strip_run_tags ·','sdk.c7':'// sanitize_reasoning · summarize_context',
+    'sdk.wc':'// IIFEグローバル — file:// でも動く',
+    'vt.h':'3つのビルド、1つのimport','vt1':'ESM + CJS + 型','vt2':'バンドル済みESM','vt3':'IIFE → TellSDK',
+    's6.vend':'<code>keys</code>/<code>urls</code> で12ベンダー:openai · anthropic · google · xai · deepseek · cerebras · moonshotai · openrouter · alibaba <code>(qwen)</code> · zai <code>(glm)</code> · meta <code>(llama)</code> · xiaomi <code>(mimo)</code> + セルフホストの <code>vast</code>/<code>local</code>。reasoningバジェットはベンダーごとに解決(<code>max</code> は各社の上限へマッピング);プロバイダのキャッシュはベースURL<b>と</b>認証情報で分離。',
+    'k1.h3':'2パッケージ、<em>2ライセンス</em>','k1.p':'CLI(<code>tell-ai</code>)は GPL-3.0。SDK(<code>@tell-ai/sdk</code>)は <b>MIT</b>——クローズドな製品にも安心して組み込めます。',
+    'k2.h3':'<code>process.env</code> ゼロ','k2.p':'SDKは環境を読まない:キーとベースURLは <code>keys</code>・<code>urls</code> で<b>注入</b>。だからブラウザセーフ——<code>urls</code> はCORSプロキシも受け付けます(repoの <code>examples/web/</code> と同様)。',
+    'k3.h3':'サンドボックスの<em>土台</em>','k3.p':'ブラウザビルドは素の <code>&lt;script&gt;</code> タグで起動——<a href="#sandbox" style="color:var(--amber);border-bottom:1px dotted var(--amber)">§07</a> のサンドボックス v0 はその上に構築されています。',
+    's7.label':'<b>§ 07</b> — Webサンドボックス','s7.h2':'サンドボックス登場——<em class="serif">暫定版。</em>',
+    's7.title':'tell-web — sandbox v0 <span class="v0-badge" style="margin-left:8px">暫定版</span>',
+    'r1.b':'CLI','r1.p':'リリース済み——シェルで <code>tell "…"</code>。承認制の <code>&lt;RUN&gt;</code>、<code>--chain</code>、<code>%id</code>/<code>@N</code> コンテキスト、オフラインの <code>-l</code>。',
+    'r2.b':'SDK','r2.p':'公開中(MIT)——<code>ask_stream()</code>、<code>get_model()</code>、142エイリアス、12ベンダー、unpkg経由のIIFEブラウザビルド。',
+    'r3.b':'Webサンドボックス <i class="v0-badge">V0 暫定版</i>','r3.p':'<code>tell -w</code> で起動:ディレクトリに紐付いたターミナル・ファイルエクスプローラ・チャット。ローカルファースト——<code>127.0.0.1</code> 前提。',
+    'r4.b':'次に来るもの','r4.p':'暫定版ということは:足りないのは<b>あなたの</b>要望——<a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener" style="color:var(--amber);border-bottom:1px dotted var(--amber)">issueを立てて</a>、v1はそこから。',
+    'sec.h':'localhostの外へ:セキュアモード',
+    'sec.body':'export TELL_TOKEN=$(openssl rand -hex 32)<br>tell-web --cwd ~/project<br><br>· 全 <code>/api/*</code> に Bearer · WSは <code>?token=</code><br>· トークンはメモリのみ — リロードで再入力<br>· verifyは5回/15分/IPまで<br>· 子プロセスは <code>TELL_TOKEN</code> もキーも<b>持たず</b>に起動<br>· Host/Originチェックで DNS rebinding を防御',
+    'road.note':'v0の初日からセキュリティ重視:Auto-Run は<b>オプトイン</b>(新しいブラウザは必ず最初に確認)、<code>--no-exec</code> はサーバー側で固定(<code>/api/execute</code> → <b>403</b>)で保存済み設定より優先。土台はSDKのIIFEビルド——詳細は <a href="https://github.com/naoeosavio/Tell-ai/blob/main/packages/web/README.md" target="_blank" rel="noopener">packages/web/README.md</a>。',
+    'boot.phases':['ランタイムを解決中…','PTYを準備中…','ファイルを索引付け中…','チャットを準備中…','完了…'],
+    'boot.ok':'● tell-web v0(暫定版) · http://127.0.0.1:3000 で待受中',
+    'boot.m1':'  auto-runはオプトイン:新しいブラウザは必ず最初に確認します',
+    'boot.m2':'  --no-execはサーバー側で固定:/api/execute → 403',
+    'boot.lk':'  完全なドキュメント → ',
+    'wf':['┌ ファイル ─┬─ chat ────────┬─ terminal ─┐','│ src/      │ "diffを確認   │ $ npm test │','│ main.ts   │  して…"       │ 3件失敗    │','│ package…  │ ● 修正中      │ ■ 実行中…  │','└───────────┴───────────────┴────────────┘'],
+    's8.label':'<b>§ 08</b> — インストール','s8.h2':'1行で<em class="serif">準備完了。</em>',
+    's8.alt':'グローバルCLI。ライブラリとして:<code>npm add @tell-ai/sdk</code> · <a href="https://github.com/naoeosavio/Tell-ai#readme" target="_blank" rel="noopener">要件とソースビルドはREADME ↗</a>',
+    'reqs.h':'キー — 環境変数または ~/.config/&lt;vendor&gt;.token',
+    'reqs.body':'export OPENAI_API_KEY="sk-..."<br>export DEEPSEEK_API_KEY="..."<br>export ZHIPU_API_KEY="..."        <span style="color:var(--mut)"># Z.ai GLM</span><br>export ALIBABA_API_KEY="..."      <span style="color:var(--mut)"># Qwen</span><br><span style="color:var(--mut)">…meta, mimo (xiaomi), google, xai, fireworks, cerebras, moonshotai, openrouter</span><br><br>tell "こんにちは、ターミナル"<br>tell d "run ls -la"<br>tell -w                           <span style="color:var(--mut)"># ブラウザでサンドボックス v0</span><br><br>困ったら <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener">issues</a> へ — コントリビューションも歓迎です。',
+    'cta.h2':'次のプロンプトは、<em class="serif">パイプ1つ</em>の先に。',
+    'cta.p':'CLI は GPL-3.0、SDK は MIT、サンドボックス v0 は稼働中——あなたの一枚を刻む場所もある。',
+    'foot.l':'© <span id="year"></span> naoeosavio — Tell-ai はオープンソース。このページはショーウィンドウです。',
+    'foot.r':'<a href="https://github.com/naoeosavio/Tell-ai" target="_blank" rel="noopener">repo</a> · <a href="https://github.com/naoeosavio/Tell-ai/issues" target="_blank" rel="noopener">issues</a> · cli: GPL-3.0 · sdk: MIT · sandbox: <span class="warn">v0 暫定版</span> · たった1つのHTMLファイル',
+    'sb.mode':'モード',
+    'mq':'実行確認制 <i>·</i> 142エイリアス <i>·</i> 10+ベンダー <i>·</i> パイプ優先 <i>·</i> ログイン不要 <i>·</i> CLI: GPL-3.0 <i>·</i> SDK: MIT <i>·</i> サンドボックス V0: 暫定版 <i>·</i> ',
+    'hseq':[
+      {t:'cmd', text:'git diff --staged | tell -i "コミットメッセージ"'},
+      {t:'meta', html:'<b>●</b> tell · g → openai:gpt-6.1-sol:medium · 1.2s'},
+      {t:'out', cls:'ok', text:'→ fix(parser): パース前にBOMを正規化'},
+      {t:'out', cls:'dim', text:'  (git commit --amend で使えます)'},
+      {t:'out', text:''},
+      {t:'cmd', text:'tell d "失敗してるテストは何個?"'},
+      {t:'meta', html:'<b>●</b> tell · d → deepseek:deepseek-flash:high'},
+      {t:'out', cls:'dim', text:'<RUN> npm test 2>&1 | tail -20 </RUN>', run:true},
+      {t:'out', cls:'dim', text:'実行? [y/N] y'},
+      {t:'out', cls:'dim', text:'  失敗3件 — すべて parseHeader.spec.ts:'},
+      {t:'out', cls:'dim', text:'  42行目のBOMでパーサーが壊れています。'},
+      {t:'out', text:''},
+      {t:'cmd', text:'tell -w'},
+      {t:'meta', html:'<b>●</b> tell-web · sandbox v0(暫定版)'},
+      {t:'out', cls:'ok', text:'→ http://127.0.0.1:3000 — ターミナル・ファイル・チャット'},
+      {t:'cur'}
+    ]
+  }
+  };
+
+  /* saídas de dados da demo — universais em inglês, como man pages reais */
+  const OUT = {
+    models:'\n  ALIAS   →  ESPEC (vendor:model:thinking)\n  g       →  openai:gpt-6.1-sol:medium            (default)\n  t / c   →  openai:gpt-5.6-terra / gpt-6-luna\n  e / r   →  openai:gpt-6-astra / -astra-pro\n  s       →  anthropic:claude-sonnet-5-5:medium\n  o       →  anthropic:claude-opus-5-5:medium\n  f / h   →  claude-fable-5-1 / claude-haiku-4-5:none\n  i / j / l → gemini-3.1-pro / 3.5-flash-lite / 3.8-flash\n  x       →  xai:grok-4.7:medium        (x++ = xhigh)\n  a/at/af →  alibaba:qwen3.8-max / 27b / flash\n  d       →  deepseek:deepseek-flash:high   (base is already high)\n  D       →  deepseek:deepseek-v4-pro:high\n  z / zf  →  zai:glm-5.3 / glm-5.3-flash\n  k / K   →  moonshotai:kimi-k2.7-code / kimi-k3\n  m / mc  →  meta:muse-spark-1.3 / -contributor\n  mi/mif  →  xiaomi:mimo-v2.6-pro / -flash\n  q / v   →  self-hosted (local / vast)\n\n  thinking ladder: -- none · - low · base · + high · ++ max/xhigh\n  (g/e/r have no none · d/D base=high · uppercase = high shortcut)\n  fast mode .g · full list: tell -m --help · interactive widget in §04\n',
+    sdk:'\n  # the library ships as its own package (MIT)\n  npm add @tell-ai/sdk\n\n  # one-shot: the "tell --no-exec" as a function\n  import { tell } from \'@tell-ai/sdk\';\n  const r = await tell("summarize this diff",\n                       { keys: { deepseek: KEY } });\n\n  # token-by-token streaming (NDJSON events)\n  const ai = create_ask_ai(\'g\', { keys: {...} });\n  for await (const ev of ai.ask_stream("…"))\n    if (ev.type === \'text\') …\n\n  → full examples in §06 of the page\n',
+    sandbox:'\n  web sandbox v0  [■■■■■■■■■□]  preview\n\n  open with:  tell -w                     # current directory\n              tell -w --cwd ~/project -m s --stream\n\n  what opens: terminal + file explorer + chat,\n  anchored to the directory. forwarded flags: --stream,\n  --think, --chain, -y, --no-exec, --require-approval.\n\n  security:   auto-run is opt-in (a fresh browser always asks)\n              --no-exec is a server invariant: /api/execute → 403\n              on open networks: TELL_TOKEN + TELL_ALLOWED_HOSTS\n\n  preview = local-first (127.0.0.1) and evolving —\n  tell us what is missing in the issues.\n',
+    install:'\n  # CLI (global)\n  npm install -g tell-ai\n\n  # SDK (library, MIT)\n  npm add @tell-ai/sdk\n\n  # keys — env or ~/.config/<vendor>.token\n  export DEEPSEEK_API_KEY="..."\n  export ZHIPU_API_KEY="..."      # Z.ai GLM\n  export ALIBABA_API_KEY="..."    # Qwen\n\n  # use\n  tell "hello, terminal"\n  tell d "run ls -la"    # asks before executing\n  tell -w                # web sandbox v0 in the browser\n',
+    features:['  <RUN>       the model proposes commands; you approve one by one',
+              '  -y          auto-runs safe ones; high-risk and outside-cwd',
+              '              always ask (--require-approval makes it explicit)',
+              '  --no-exec   never executes; just shows what would run',
+              '  |  -i       pipes: git diff --staged | tell -i "review"',
+              '  -m d        142 aliases, 10 vendors in the table (`models`)',
+              '  --stream    prints token by token; --think shows reasoning',
+              '  --chain     up to 8 rounds: runs, reads output, continues',
+              '  -c / --ctx  context: %name, @0 (recent), -n (reset)',
+              '  -l          lists contexts/conversations — no network, no key',
+              '  tell -w     web sandbox v0 in the browser (`sandbox`)']
+  };
+
+  let CUR = 'pt';
+
+  /* ---------- ano + marquee ---------- */
+  $('#year').textContent = new Date().getFullYear();
+  function buildMarquee(){
+    const w = T[CUR].mq;
+    $('#mqTrack').innerHTML = '<span>'+w.repeat(3)+'</span><span>'+w.repeat(3)+'</span>';
+  }
+
+  /* ---------- reveal ---------- */
+  const io = new IntersectionObserver(es => es.forEach(e => {
+    if (e.isIntersecting){ e.target.classList.add('on'); io.unobserve(e.target); }
+  }), {threshold:.12});
+  $$('.rv').forEach(el => io.observe(el));
+
+  /* ---------- copiar ---------- */
+  $$('.copy').forEach(btn => btn.addEventListener('click', async () => {
+    let text = btn.dataset.copy;
+    if (btn.dataset.copyTarget){
+      const t = $(btn.dataset.copyTarget);
+      if (t) text = t.textContent.replace(/^\n+|\s+$/g, '');
+    }
+    try { await navigator.clipboard.writeText(text); } catch {}
+    const lab = btn.querySelector('[data-i18n]') || btn.lastChild;
+    const old = lab.textContent;
+    btn.classList.add('ok'); lab.textContent = T[CUR]['ui.copy'] === 'copiar' ? ' copiado' : (CUR==='en'?' copied':CUR==='jp'?' コピー済み':' copiado');
+    setTimeout(() => { btn.classList.remove('ok'); lab.textContent = old; }, 1600);
+  }));
+
+  /* ---------- stats do GitHub ---------- */
+  (async () => {
+    try {
+      const r = await fetch('https://api.github.com/repos/naoeosavio/Tell-ai');
+      if (!r.ok) return;
+      const d = await r.json();
+      const n = new Intl.NumberFormat(CUR==='jp'?'ja-JP':CUR==='en'?'en-US':CUR==='es'?'es-ES':'pt-BR');
+      $$('.gh-stars').forEach(el => el.textContent = n.format(d.stargazers_count ?? 0));
+      $$('.gh-forks').forEach(el => el.textContent = n.format(d.forks_count ?? 0));
+      if (d.pushed_at) $$('.gh-push').forEach(el =>
+        el.textContent = new Date(d.pushed_at).toLocaleDateString(CUR==='jp'?'ja-JP':CUR==='en'?'en-US':CUR==='es'?'es-ES':'pt-BR', {day:'2-digit', month:'short', year:'numeric'}));
+    } catch {}
+  })();
+
+  /* ---------- statusbar ---------- */
+  const sbScroll = $('#sbScroll'), sbClock = $('#sbClock');
+  function tick(){
+    const max = document.documentElement.scrollHeight - innerHeight;
+    sbScroll.textContent = Math.round(max > 0 ? scrollY / max * 100 : 0) + '%';
+  }
+  addEventListener('scroll', tick, {passive:true}); tick();
+  setInterval(() => sbClock.textContent = new Date().toLocaleTimeString(CUR==='jp'?'ja-JP':CUR==='en'?'en-GB':CUR==='es'?'es-ES':'pt-BR'), 1000);
+
+  /* ---------- engine de linhas ---------- */
+  function mkLine(body, cls){
+    const d = document.createElement('div');
+    d.className = 'tl' + (cls ? ' ' + cls : '');
+    if (typeof body === 'string') d.textContent = body;
+    else if (body) d.appendChild(body);
+    return d;
+  }
+
+  /* ---------- terminal do hero ---------- */
+  const heroBody = $('#heroTerm');
+  let heroRun = 0, heroStarted = false;
+  async function runHero(){
+    const my = ++heroRun;
+    heroStarted = true;
+    heroBody.innerHTML = '';
+    const seq = T[CUR].hseq;
     for (const s of seq){
       if (my !== heroRun) return;
       if (s.t === 'cmd'){
@@ -857,9 +1357,7 @@
   }, {threshold:.3}).observe($('#heroTerm'));
 
   /* ============================================================
-     RESOLVEDOR DE ALIASES
-     fonte: saída real de `tell -m --help` — 29 grupos base
-     (maiúsculas G/S/O/… são atalhos para high e ficam no rodapé)
+     RESOLVEDOR DE ALIASES (fonte: tell -m --help)
      ============================================================ */
   const ALIASES = {
     g:  {v:'openai',     m:'gpt-6.1-sol',      t:{'--':'low','-':'low','':'medium','+':'high','++':'max'}},
@@ -893,7 +1391,7 @@
     v:  {v:'vast',       m:'/root/model',      t:{'':'none'}}
   };
   const SUFS = ['--','-','','+','++'];
-  const SUF_LAB = {'--':'--','-':'-','':'base','+':'+','++':'++'};
+  const SUF_LAB = {'--':'--','-':'-','':'','+':'+','++':'++'};
   let rA = 'd', rS = '', rFast = false;
 
   const aliasChips = $('#aliasChips'), sufChips = $('#sufChips'), resOut = $('#resOut');
@@ -917,23 +1415,24 @@
   }
   function renderSufChips(){
     sufChips.innerHTML = '';
-    const ladder = ALIASES[rA].t;
+    const ladder = ALIASES[rA];
     SUFS.forEach(s => {
       const b = document.createElement('button');
-      const has = s in ladder;
+      const has = s in ladder.t;
       b.className = 'chip' + (s === rS ? ' on' : '');
       b.disabled = !has;
       b.setAttribute('aria-pressed', s === rS);
-      b.innerHTML = SUF_LAB[s] + '<span></span>';
-      b.lastChild.textContent = has ? ladder[s] : 'n/d';
+      b.innerHTML = (SUF_LAB[s] || T[CUR]['res.base']) + '<span></span>';
+      b.lastChild.textContent = has ? ladder.t[s] : T[CUR]['res.na'];
       if (has) b.addEventListener('click', () => { rS = s; renderSufChips(); renderOut(); });
       sufChips.appendChild(b);
     });
     const fast = document.createElement('button');
     fast.className = 'chip' + (rFast ? ' on' : '');
     fast.setAttribute('aria-pressed', rFast);
-    fast.title = 'modo rápido: sem tokens de reasoning';
-    fast.innerHTML = '<b>. rápido</b><span>sem reasoning</span>';
+    fast.innerHTML = '<b></b><span></span>';
+    fast.firstChild.textContent = T[CUR]['res.fast1'];
+    fast.lastChild.textContent = T[CUR]['res.fast2'];
     fast.addEventListener('click', () => { rFast = !rFast; renderSufChips(); renderOut(); });
     sufChips.appendChild(fast);
   }
@@ -941,47 +1440,42 @@
     const a = ALIASES[rA];
     const aliasStr = (rFast ? '.' : '') + rA + rS;
     const spec = a.v + ':' + a.m + ':' + a.t[rS];
-    $('#resCount').textContent = '142 aliases · 29 grupos base acima';
+    $('#resCount').textContent = T[CUR]['res.count'];
     resOut.innerHTML = '';
     const l1 = document.createElement('div'); l1.className = 'l1';
-    l1.innerHTML = '<span class="ps1">$ </span><span class="tg">tell</span> <span class="al"></span> <span class="ph">"sua pergunta aqui"</span>';
+    l1.innerHTML = '<span class="ps1">$ </span><span class="tg">tell</span> <span class="al"></span> <span class="ph">"…"</span>';
     l1.querySelector('.al').textContent = aliasStr;
     const l2 = document.createElement('div'); l2.className = 'l2 row';
     l2.innerHTML = '→ <b></b>';
     l2.querySelector('b').textContent = spec;
     const cp = document.createElement('button');
-    cp.className = 'copy'; cp.dataset.copy = 'tell -m ' + spec + ' "sua pergunta"';
-    cp.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1"/><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/></svg> copiar spec';
+    cp.className = 'copy'; cp.dataset.copy = 'tell -m ' + spec + ' "…"';
+    cp.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1"/><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/></svg><span></span>';
+    cp.lastChild.textContent = T[CUR]['res.cp'];
     cp.addEventListener('click', async () => {
       try { await navigator.clipboard.writeText(cp.dataset.copy); } catch {}
-      cp.classList.add('ok'); cp.lastChild.textContent = ' copiado';
-      setTimeout(() => { cp.classList.remove('ok'); cp.lastChild.textContent = ' copiar spec'; }, 1600);
+      cp.classList.add('ok');
+      cp.lastChild.textContent = CUR==='en'?' copied':CUR==='jp'?' コピー済み':' copiado';
+      setTimeout(() => { cp.classList.remove('ok'); cp.lastChild.textContent = T[CUR]['res.cp']; }, 1600);
     });
     l2.appendChild(cp);
     resOut.append(l1, l2);
   }
   renderAliasChips(); renderSufChips(); renderOut();
 
-  /* ---------- sandbox v0: boot que funciona ---------- */
+  /* ---------- sandbox v0: boot ---------- */
   const sboxBody = $('#sboxBody');
-  let sboxBusy = false;
-  const phases = ['resolvendo runtime…','montando ptys…','indexando arquivos…','aquecendo chat…','pronto…'];
-  const WIREFRAME = [
-    '┌ arquivos ─┬─ chat ────────┬─ terminal ─┐',
-    '│ src/      │ "revisa o     │ $ npm test │',
-    '│ main.ts   │  diff…"       │ 3 falhas   │',
-    '│ package…  │ ● corrigindo  │ ■ rodando… │',
-    '└───────────┴───────────────┴────────────┘'
-  ].join('\n');
+  let sboxBusy = false, sboxStarted = false;
   async function sboxBoot(){
     if (sboxBusy) return;
-    sboxBusy = true;
+    sboxBusy = true; sboxStarted = true;
     sboxBody.innerHTML = '';
+    const L = T[CUR];
     const scrollEnd = () => { sboxBody.scrollTop = sboxBody.scrollHeight; };
 
     const cl = mkLine(); cl.innerHTML = '<span class="ps1">$ </span><span class="tc"></span>';
     sboxBody.appendChild(cl);
-    const tv = cl.querySelector('.tc'); const CMD = 'tell -w --cwd ~/projeto';
+    const tv = cl.querySelector('.tc'); const CMD = 'tell -w --cwd ~';
     if (reduced) tv.textContent = CMD;
     else for (const ch of CMD){ tv.textContent += ch; scrollEnd(); await sleep(26); }
     await sleep(240);
@@ -989,23 +1483,23 @@
     const bar = mkLine('', 'dim'); sboxBody.appendChild(bar);
     for (let p = 0; p <= 100; p++){
       const f = Math.round(p/10);
-      const ph = phases[Math.min(phases.length-1, Math.floor(p/101*phases.length))];
+      const ph = L['boot.phases'][Math.min(L['boot.phases'].length-1, Math.floor(p/101*L['boot.phases'].length))];
       bar.textContent = '['+'■'.repeat(f)+'□'.repeat(10-f)+'] '+String(p).padStart(3,' ')+'% — '+ph;
       scrollEnd();
       await sleep(reduced ? 0 : 22);
     }
     await sleep(320);
 
-    sboxBody.appendChild(mkLine('● tell-web v0 (preliminar) · ouvindo em http://127.0.0.1:3000', 'ok'));
+    sboxBody.appendChild(mkLine(L['boot.ok'], 'ok'));
     await sleep(220);
-    const wf = mkLine(WIREFRAME, 'dim');
+    const wf = mkLine(L.wf.join('\n'), 'dim');
     wf.style.fontSize = '.72em'; wf.style.lineHeight = '1.35'; wf.style.whiteSpace = 'pre';
     sboxBody.appendChild(wf);
     await sleep(220);
-    sboxBody.appendChild(mkLine('  auto-run é opt-in: navegador novo sempre pergunta antes', 'meta'));
-    sboxBody.appendChild(mkLine('  --no-exec trava no servidor: /api/execute → 403', 'meta'));
+    sboxBody.appendChild(mkLine(L['boot.m1'], 'meta'));
+    sboxBody.appendChild(mkLine(L['boot.m2'], 'meta'));
     const l = document.createElement('div'); l.className = 'tl meta';
-    l.innerHTML = '  doc completa → <a href="https://github.com/naoeosavio/Tell-ai/blob/main/packages/web/README.md" target="_blank" rel="noopener" style="color:var(--amber);border-bottom:1px dotted var(--amber)">packages/web/README.md</a>';
+    l.innerHTML = L['boot.lk'].replace(/&/g,'&amp;') + '<a href="https://github.com/naoeosavio/Tell-ai/blob/main/packages/web/README.md" target="_blank" rel="noopener" style="color:var(--amber);border-bottom:1px dotted var(--amber)">packages/web/README.md</a>';
     sboxBody.appendChild(l);
     scrollEnd();
     sboxBusy = false;
@@ -1018,12 +1512,12 @@
   /* ============================================================
      TERMINAL INTERATIVO DA DEMO
      ============================================================ */
-  const tout   = $('#tout');
-  const ti     = document.createElement('input');
+  const tout = $('#tout');
+  const ti   = document.createElement('input');
   ti.maxLength = 90; ti.spellcheck = false; ti.autocomplete = 'off';
-  ti.setAttribute('aria-label', 'digite um comando na demo');
-  const tcur   = document.createElement('span'); tcur.className = 'pcur';
-  let history = [], hIdx = -1, busy = false, stream = null;
+  ti.setAttribute('aria-label', 'demo input');
+  const tcur = document.createElement('span'); tcur.className = 'pcur';
+  let history = [], hIdx = -1, busy = false, stream = null, demoBooted = false;
 
   function scrollBottom(){ tout.scrollTop = tout.scrollHeight; }
   function out(text, cls){
@@ -1031,7 +1525,7 @@
   }
   function newPrompt(){
     const pl = document.createElement('div'); pl.className = 'pline';
-    const ps = document.createElement('span'); ps.className = 'ps1'; ps.textContent = 'visitante@tell-ai:~$';
+    const ps = document.createElement('span'); ps.className = 'ps1'; ps.textContent = 'guest@tell-ai:~$';
     const pw = document.createElement('span'); pw.className = 'pwrap';
     pw.append(ti, tcur);
     pl.append(ps, pw);
@@ -1047,8 +1541,8 @@
   }
 
   ti.addEventListener('input', positionCursor);
-  ti.addEventListener('focus', () => { $('#demoFocus').textContent = '— CLI capturado —'; $('#demoFocus').style.color = 'var(--green)'; $('#sbMode').textContent = 'INSERT'; });
-  ti.addEventListener('blur',  () => { $('#demoFocus').textContent = 'clique para digitar';   $('#demoFocus').style.color = '';      $('#sbMode').textContent = 'NORMAL'; });
+  ti.addEventListener('focus', () => { $('#demoFocus').textContent = T[CUR]['demo.fb']; $('#demoFocus').style.color = 'var(--green)'; $('#sbMode').textContent = 'INSERT'; });
+  ti.addEventListener('blur',  () => { $('#demoFocus').textContent = T[CUR]['demo.ff']; $('#demoFocus').style.color = '';      $('#sbMode').textContent = 'NORMAL'; });
 
   $('#demoTerm').addEventListener('click', () => ti.focus());
 
@@ -1059,7 +1553,7 @@
     }
     if (e.key === 'Enter'){
       e.preventDefault();
-      if (busy){ out('… streaming em andamento — Ctrl+C para interromper', 'meta'); return; }
+      if (busy){ out('… Ctrl+C', 'meta'); return; }
       const raw = ti.value;
       commitPrompt();
       out(raw, 'dim');
@@ -1081,7 +1575,7 @@
     }
     if (e.key === 'Tab'){
       e.preventDefault();
-      const cmds = ['help','tell ','run ls','models','sandbox','sdk','install','features','github','clear','history','whoami','banner','date','exit','piada'];
+      const cmds = ['help','tell ','run ls','models','sandbox','sdk','install','features','github','clear','history','whoami','banner','date','exit'];
       const m = cmds.find(c => c.startsWith(ti.value) && ti.value);
       if (m){ ti.value = m; positionCursor(); }
     }
@@ -1103,275 +1597,106 @@
     stream = null;
   }
 
-  const jokes = [
-    'Por que programadores confundem Halloween com Natal? Porque OCT 31 == DEC 25.',
-    'Um SQL entra num bar, aproxima-se de duas tabelas e pergunta: "posso dar um JOIN?"',
-    'Há dois tipos de pessoas: as que entendem recursão e as que entendem recursão.'
-  ];
   let jokeIdx = 0;
-
-  function runSim(){
-    return ['<RUN> npm test 2>&1 | tail -20 </RUN>',
-            'aqui na demo nada executa — no seu terminal, o tell pediria',
-            'confirmação: [s/N]. Com -y os seguros rodam sozinhos, mas',
-            'sudo, rm -rf, curl|sh e fora-do-cwd sempre perguntam — e',
-            '--no-exec nunca executa nada.'];
-  }
-
   function brainRoute(q){
+    const L = T[CUR];
     const p = q.toLowerCase();
-    if (/^(oi|ol[áa]|hello|hey|e a[íi]|eai|bom dia|boa tarde|boa noite)/.test(p))
-      return [pick([
-        'Olá! Aqui é a demo da landing — nenhuma rede, nenhuma chave, tudo pré-gravado. No Tell-ai de verdade, esta frase teria vindo de um LLM e chegado token a token no seu stdout.',
-        'Oi! Experimente `run ls`, `models` ou `sandbox` — ou peça uma piada.'])];
-    if (/piada|engra[çc]ad|humor/.test(p)) return [jokes[jokeIdx++ % jokes.length]];
-    if (/sandbox|navegador|browser|tell -w|web|roadmap|futuro|planos/.test(p))
-      return ['O sandbox web existe nesta versão — preliminar: `tell -w` abre',
-              'terminal, explorador de arquivos e chat ancorados ao diretório.',
-              'Seguro por padrão: auto-run é opt-in, --no-exec responde 403 no',
-              'servidor e, em rede aberta, use TELL_TOKEN + TELL_ALLOWED_HOSTS.',
-              'A doc completa é packages/web/README.md no repo (digite `github`).'];
-    if (/sdk|biblioteca|import|node|bun|usar no c[oó]digo|api\b/.test(p))
-      return ['O SDK é um pacote próprio: `npm add @tell-ai/sdk` (licença MIT).',
-              'API real: `tell(msg, { keys })` one-shot; `create_ask_ai(spec, { keys })`',
-              '+ `ai.ask()` e `ai.ask_stream()` (eventos NDJSON reasoning|text);',
-              '`get_model()` expõe o ModelHandle cru. Zero process.env.',
-              'Exemplos completos no §06 da página.'];
-    if (/models?|alias|modelo|provedor|vendor/.test(p))
-      return ['142 aliases: g → gpt-6.1-sol, o → claude-opus-5-5,',
-              'd → deepseek-flash (base já é high!), D → deepseek-v4-pro,',
-              'z → glm-5.3, a → qwen3.8-max, m → muse-spark, mi → mimo…',
-              'A régua de thinking varia por modelo: x++ e a++ = xhigh,',
-              'g-- = low (sem none), maiúscula G/S/O… = atalho para high.',
-              'Resolvedor interativo no §04 e `tell -m --help` no terminal.'];
-    if (/quem (é|e) voc|[oó] que (é|e) (o |a )?tell|sobre o projeto|o que faz/.test(p))
-      return ['Tell-ai é um monorepo open-source: CLI (tell-ai, GPL-3.0), SDK',
-              '(@tell-ai/sdk, MIT) e sandbox web v0 (tell -w, preliminar).',
-              'One-shot por padrão: o modelo propõe comandos via <RUN> e você aprova.',
-              'O código vive em github.com/naoeosavio/Tell-ai (digite `github`).'];
-    if (/instal|como uso|como come|começar|comecar/.test(p))
-      return ['Resumo: `npm install -g tell-ai` para a CLI, `npm add @tell-ai/sdk`',
-              'para a biblioteca. Chaves: `export DEEPSEEK_API_KEY=…` ou',
-              '`~/.config/<vendor>.token`. O sandbox abre com `tell -w`.',
-              'Detalhes completos: `install` ou o README.'];
-    if (/obrigad|valeu|brigad/.test(p))
-      return ['De nada! Se curtiu, uma star no repositório ajuda mais do que parece.'];
-    if (/star|github|reposit[oó]rio|repo|c[oó]digo/.test(p))
-      return ['O código vive em github.com/naoeosavio/Tell-ai — digite `github` e eu abro para você.'];
-    return [pick([
-      '[demo] Nenhuma rede aqui — esta página é 100% estática. No seu terminal, esse prompt iria para o modelo do alias escolhido e voltaria em texto puro.',
-      '[demo] Resposta pré-gravada, é claro. Mas no Tell-ai real isso chegaria pronto para `|`, `>` ou um commit.',
-      '[demo] Boa pergunta — para o modelo de verdade, não para mim. Digite `help` para ver o que este terminal faz sozinho.'])];
+    if (L['b.greetRe'].test(p)) return [pick(L['b.greet'])];
+    if (L['b.jokeRe'].test(p))  return [L['b.jokes'][jokeIdx++ % L['b.jokes'].length]];
+    if (L['b.sbRe'].test(p))    return L['b.sb'];
+    if (L['b.sdkRe'].test(p))   return L['b.sdk'];
+    if (L['b.mdRe'].test(p))    return L['b.md'];
+    if (L['b.aboutRe'].test(p)) return L['b.about'];
+    if (L['b.instRe'].test(p))  return L['b.inst'];
+    if (L['b.thxRe'].test(p))   return [L['b.thx']];
+    if (L['b.ghRe'].test(p))    return [L['b.gh']];
+    return [pick(L['b.fb'])];
   }
 
   async function process(raw){
     if (!raw) return;
+    const L = T[CUR];
     const q = raw.toLowerCase();
     const cmd = q.split(/\s+/)[0];
     const arg = raw.replace(/^\S+\s*/, '');
 
     if (cmd === 'clear'){ tout.innerHTML = ''; await banner(true); return; }
-    if (cmd === 'help'){
-      out([
-        '',
-        '  help          esta lista',
-        '  tell <texto>  conversa com o modelo (simulado aqui)',
-        '  run ls        mostra o fluxo de execução <RUN> → [s/N]',
-        '  models        tabela curta de aliases e sufixos',
-        '  sandbox       o sandbox web v0 (tell -w) explicado',
-        '  sdk           como usar o @tell-ai/sdk no seu código',
-        '  install       instalação da CLI e do SDK',
-        '  features      recursos principais',
-        '  github        abre o repositório no navegador',
-        '  history / whoami / banner / date / clear / exit',
-        '',
-        '  DICA   ↑ repete o último · Tab autocompleta · Ctrl+C interrompe',
-        '  Qualquer coisa que não for comando vira prompt para o modelo.',
-        ''].join('\n'));
-      return;
-    }
-    if (cmd === 'models'){
-      out([
-        '',
-        '  ALIAS   →  ESPEC (vendor:model:thinking)',
-        '  g       →  openai:gpt-6.1-sol:medium            (default)',
-        '  t / c   →  openai:gpt-5.6-terra / gpt-6-luna',
-        '  e / r   →  openai:gpt-6-astra / -astra-pro',
-        '  s       →  anthropic:claude-sonnet-5-5:medium',
-        '  o       →  anthropic:claude-opus-5-5:medium',
-        '  f / h   →  claude-fable-5-1 / claude-haiku-4-5:none',
-        '  i / j / l → gemini-3.1-pro / 3.5-flash-lite / 3.8-flash',
-        '  x       →  xai:grok-4.7:medium        (x++ = xhigh)',
-        '  a/at/af →  alibaba:qwen3.8-max / 27b / flash',
-        '  d       →  deepseek:deepseek-flash:high   (base já é high)',
-        '  D       →  deepseek:deepseek-v4-pro:high',
-        '  z / zf  →  zai:glm-5.3 / glm-5.3-flash',
-        '  k / K   →  moonshotai:kimi-k2.7-code / kimi-k3',
-        '  m / mc  →  meta:muse-spark-1.3 / -contributor',
-        '  mi/mif  →  xiaomi:mimo-v2.6-pro / -flash',
-        '  q / v   →  self-hosted (local / vast)',
-        '',
-        '  régua por modelo: -- none · - low · base · + high · ++ max/xhigh',
-        '  (g/e/r sem none · d/D base=high · maiúscula = atalho high)',
-        '  modo rápido .g · completo: tell -m --help · §04 tem o widget',
-        ''].join('\n'));
-      return;
-    }
-    if (cmd === 'sdk'){
-      out('');
-      await streamOut([
-        '  # pacote próprio da biblioteca (MIT)',
-        '  npm add @tell-ai/sdk',
-        '',
-        '  # one-shot: o "tell --no-exec" como função',
-        "  import { tell } from '@tell-ai/sdk';",
-        '  const r = await tell("resuma o diff",',
-        '                       { keys: { deepseek: KEY } });',
-        '',
-        '  # streaming token a token (eventos NDJSON)',
-        "  const ai = create_ask_ai('g', { keys: {...} });",
-        '  for await (const ev of ai.ask_stream("…"))',
-        "    if (ev.type === 'text') …",
-        '',
-        '  → exemplos completos no §06 da página'], 'dim');
-      out('');
-      return;
-    }
-    if (cmd === 'sandbox'){
-      out('');
-      await streamOut([
-        '  sandbox web v0  [■■■■■■■■■□]  preliminar',
-        '',
-        '  abre com:  tell -w                     # diretório atual',
-        '             tell -w --cwd ~/projeto -m s --stream',
-        '',
-        '  o que abre: terminal + explorador de arquivos + chat,',
-        '  ancorados ao diretório. flags repassadas: --stream,',
-        '  --think, --chain, -y, --no-exec, --require-approval.',
-        '',
-        '  segurança:  auto-run opt-in (navegador novo sempre pergunta)',
-        '              --no-exec é invariant do servidor: /api/execute → 403',
-        '              em rede aberta: TELL_TOKEN + TELL_ALLOWED_HOSTS',
-        '',
-        '  preliminar = local-first (127.0.0.1) e em evolução —',
-        '  o que falta, reclame nas issues.'], 'dim');
-      out('');
-      return;
-    }
-    if (cmd === 'install'){
-      out('');
-      await streamOut([
-        '  # CLI (global)',
-        '  npm install -g tell-ai',
-        '',
-        '  # SDK (biblioteca, MIT)',
-        '  npm add @tell-ai/sdk',
-        '',
-        '  # chaves — env ou ~/.config/<vendor>.token',
-        '  export DEEPSEEK_API_KEY="..."',
-        '  export ZHIPU_API_KEY="..."      # Z.ai GLM',
-        '  export ALIBABA_API_KEY="..."    # Qwen',
-        '',
-        '  # usar',
-        '  tell "olá, terminal"',
-        '  tell d "run ls -la"    # confirma antes de executar',
-        '  tell -w                # sandbox web v0 no navegador'], 'dim');
-      out('');
-      return;
-    }
+    if (cmd === 'help'){ out(L.help); return; }
+    if (cmd === 'models'){ out(OUT.models); return; }
+    if (cmd === 'sdk'){ out(OUT.sdk); return; }
+    if (cmd === 'sandbox'){ out(OUT.sandbox); return; }
+    if (cmd === 'install'){ out(OUT.install); return; }
     if (cmd === 'features'){
-      out('');
-      out('  <RUN>       o modelo propõe comandos; você aprova um a um', 'dim');
-      out('  -y          auto-executa seguros; alto-risco e fora-do-cwd', 'dim');
-      out('              sempre perguntam (--require-approval deixa explícito)', 'dim');
-      out('  --no-exec   nunca executa; só mostra o que executaria', 'dim');
-      out('  |  -i       pipes: git diff --staged | tell -i "review"', 'dim');
-      out('  -m d        142 aliases, 10 vendors na tabela (`models`)', 'dim');
-      out('  --stream    imprime token a token; --think mostra o reasoning', 'dim');
-      out('  --chain     até 8 rodadas: roda, lê a saída, continua', 'dim');
-      out('  -c / --ctx  contexto: %nome, @0 (recente), -n (reset)', 'dim');
-      out('  -l          lista contextos/conversas — sem rede nem chave', 'dim');
-      out('  tell -w     sandbox web v0 no navegador (`sandbox`)', 'dim');
-      out('');
+      out('\n' + OUT.features.join('\n') + '\n');
       return;
     }
     if (cmd === 'github'){
-      out('→ abrindo github.com/naoeosavio/Tell-ai …', 'ok');
+      out('→ github.com/naoeosavio/Tell-ai', 'ok');
       const w = window.open('https://github.com/naoeosavio/Tell-ai', '_blank', 'noopener');
-      if (!w) out('  o navegador bloqueou o pop-up — copie o link acima', 'meta');
+      if (!w) out('  pop-up?', 'meta');
       return;
     }
     if (cmd === 'history'){
-      out(history.length ? '\n' + history.map((h,i) => '  ' + String(i+1).padStart(3) + '  ' + h).join('\n') + '\n'
-                         : '\n  (nada ainda — sua sessão começa agora)\n');
+      out(history.length ? '\n' + history.map((h,i) => '  ' + String(i+1).padStart(3) + '  ' + h).join('\n') + '\n' : '\n  ( )\n');
       return;
     }
-    if (cmd === 'whoami'){
-      out('\n  visitante — anônimo, sem login, como tudo por aqui.\n', 'dim'); return;
-    }
+    if (cmd === 'whoami'){ out('\n  ' + (CUR==='en'?'guest — anonymous, no login, like everything here.':CUR==='es'?'invitado — anónimo, sin login, como todo por aquí.':CUR==='jp'?'ゲスト — 匿名、ログインなし、ここでは全部そう。':'visitante — anônimo, sem login, como tudo por aqui.') + '\n', 'dim'); return; }
     if (cmd === 'banner'){ await banner(false); return; }
-    if (cmd === 'date'){ out('\n  ' + new Date().toLocaleString('pt-BR') + '\n', 'dim'); return; }
-    if (cmd === 'exit'){
-      await streamText('até já — o terminal continua aqui quando você voltar.');
-      return;
-    }
-    if (q.startsWith('sudo')){
-      await streamText('visitante não está no arquivo sudoers. Este incidente será reportado. (brincadeira — não há nada para reportar.)');
-      return;
-    }
-    if (q.startsWith('rm')){
-      await streamText('recusado — e no tell real, rm -rf perguntaria mesmo com -y.'); return;
-    }
-    if (q === 'vim' || q === 'vi' || q.startsWith(':q') || q.startsWith(':wq')){
-      await streamText('para sair do vim: :q! — para sair desta demo: exit. Um dos dois é mais fácil.');
-      return;
-    }
+    if (cmd === 'date'){ out('\n  ' + new Date().toLocaleString(CUR==='jp'?'ja-JP':CUR==='en'?'en-GB':CUR==='es'?'es-ES':'pt-BR') + '\n', 'dim'); return; }
+    if (cmd === 'exit'){ await streamText(L['b.exit']); return; }
+    if (q.startsWith('sudo')){ await streamText(L['b.sudo']); return; }
+    if (q.startsWith('rm')){ await streamText(L['b.rm']); return; }
+    if (q === 'vim' || q === 'vi' || q.startsWith(':q') || q.startsWith(':wq')){ await streamText(L['b.vim']); return; }
     if (cmd === 'echo'){ out(arg || '', 'dim'); return; }
 
-    /* run/executar → simula o fluxo <RUN> */
-    if (/^(run|executar?|rode)\b/.test(q) || /^ls\b/.test(q)){
-      out('● tell[demo] · fluxo de execução', 'meta'); out('');
-      await streamOut(runSim(), 'dim'); out('');
+    if (/^(run|executar?|rode|ejecutar|ejecuta|実行)\b/.test(q) || /^ls\b/.test(q)){
+      out(L['demo.flow'], 'meta'); out('');
+      await streamOut(L.runs, 'dim'); out('');
       return;
     }
 
-    /* não é comando → vira prompt (é assim que o Tell-ai funciona) */
     const isTell = cmd === 'tell';
     const prompt = isTell ? arg : raw;
     const lines = isTell
       ? (prompt.trim()
-          ? (/(run|execut|rode|ls\b|testes)/.test(prompt.toLowerCase()) ? runSim() : brainRoute(prompt))
-          : ['uso: tell <pergunta> — por exemplo: tell oi'])
+          ? (/(run|execut|rode|ls\b|testes|tests|テスト)/.test(prompt.toLowerCase()) ? L.runs : brainRoute(prompt))
+          : [L.usage])
       : brainRoute(raw);
     const ms = (rand(0.3, 0.9)).toFixed(1);
-    out('● tell[demo] · resposta local · ' + ms + 's', 'meta');
+    out(L['demo.meta'] + ms + 's', 'meta');
     out('');
     await streamOut(lines, 'dim');
     out('');
   }
 
-  const BANNER = [
+  async function banner(short){
+    const L = T[CUR];
+    const b = out(BANNER_TEXT, 'ascii'); b.style.fontSize = '.74em'; b.style.lineHeight = '1.25';
+    out(short ? L['bn.short'] : L['bn.2'], 'meta');
+    out(L['bn.3'], 'meta');
+    out('');
+  }
+  const BANNER_TEXT = [
     '████████╗███████╗██╗     ██╗        █████╗ ██╗',
     '╚══██╔══╝██╔════╝██║     ██║       ██╔══██╗██║',
     '   ██║   █████╗  ██║     ██║       ███████║██║',
     '   ██║   ██╔══╝  ██║     ██║       ██╔══██║██║',
     '   ██║   ███████╗███████╗███████╗  ██║  ██║██║'
   ].join('\n');
-  async function banner(short){
-    const b = out(BANNER, 'ascii'); b.style.fontSize = '.74em'; b.style.lineHeight = '1.25';
-    out(short ? 'tell-ai — digite `help`' : 'demo interativa · respostas pré-gravadas · nenhuma chamada de rede', 'meta');
-    out('digite `help` para começar — ou clique numa sugestão abaixo.', 'meta');
-    out('');
-  }
 
   new IntersectionObserver((es, obs) => {
     if (es[0].isIntersecting){
-      (async () => { await banner(false); newPrompt(); })(); obs.disconnect();
+      (async () => { await banner(false); newPrompt(); demoBooted = true; })(); obs.disconnect();
     }
   }, {threshold:.25}).observe($('#demoTerm'));
 
-  $$('.try a').forEach(a => a.addEventListener('click', async () => {
-    if (busy) return;
+  function buildTry(){
+    $('#tryList').innerHTML = T[CUR].try
+      .map(c => '<a data-cmd="'+c+'">'+c+'</a>').join(' ');
+  }
+  $('#tryList').addEventListener('click', async e => {
+    const a = e.target.closest('a[data-cmd]');
+    if (!a || busy) return;
     ti.focus();
     const cmdText = a.dataset.cmd;
     if (reduced){ ti.value = cmdText; }
@@ -1380,8 +1705,46 @@
       for (const ch of cmdText){ ti.value += ch; positionCursor(); await sleep(28); }
     }
     ti.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true}));
-  }));
+  });
+
+  /* ============================================================
+     TROCA DE IDIOMA
+     ============================================================ */
+  const LOCALE_TAG = {pt:'pt-BR', en:'en', es:'es', jp:'ja'};
+  function setLang(l){
+    if (!T[l]) return;
+    CUR = l;
+    document.documentElement.lang = LOCALE_TAG[l];
+    document.documentElement.classList.toggle('lang-jp', l === 'jp');
+    document.title = T[l]['meta.title'];
+    const md = document.querySelector('meta[name="description"]');
+    if (md) md.setAttribute('content', T[l]['meta.desc']);
+    $$('[data-i18n]').forEach(el => {
+      const v = T[l][el.dataset.i18n];
+      if (v != null) el.innerHTML = v;
+    });
+    $$('.lng button').forEach(b => b.classList.toggle('on', b.dataset.lang === l));
+    try { localStorage.setItem('tell-lang', l); } catch {}
+    buildMarquee(); buildTry(); renderSufChips(); renderOut();
+    $('#year').textContent = new Date().getFullYear();
+    /* reanima os terminais que já rodaram, no novo idioma */
+    if (heroStarted) runHero();
+    if (sboxStarted && !sboxBusy) sboxBoot();
+  }
+  $$('.lng button').forEach(b => b.addEventListener('click', () => setLang(b.dataset.lang)));
+
+  /* detecção: pref salvo > idioma do navegador > en */
+  let saved = null;
+  try { saved = localStorage.getItem('tell-lang'); } catch {}
+  const nl = (navigator.language || '').toLowerCase();
+  const initial = (saved && T[saved]) ? saved
+    : nl.startsWith('pt') ? 'pt'
+    : nl.startsWith('es') ? 'es'
+    : nl.startsWith('ja') ? 'jp'
+    : 'en';
+  setLang(initial);
 })();
 </script>
 </body>
 </html>
+
