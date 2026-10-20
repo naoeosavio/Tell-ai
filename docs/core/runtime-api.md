@@ -145,3 +145,5 @@ cancellation, order, idempotence, adapters, `tell()` compat) and
 `bun run test:core` (contract conformance, config/paths/context/decision and
 the primitive loop). Run examples with
 `bun run test:core-examples` and compile them with `bun run build:core-examples`.
+
+Sources: `packages/core/src/runtime-api.ts`, `test/test-core-api.js`.
