@@ -1,8 +1,9 @@
 # Changelog
 
-## v0.7.0 — 2026-10-13
+## v0.7.0 — 2026-10-119
 
 ### Refactors
+- Catalog refresh: `i` selects `google:gemini-4-argon` and `h` selects `anthropic:claude-haiku-5-5`, which also gains the effort ladder `h-`/`h`/`h+`/`h++`/`H` (`tell -m --help` now lists 152 aliases; `docs/usage.md` is regenerated from it).
 - `src/runtime-limits.ts` deleted: the whole limit contract (including `StdinLimitError`, the `EXIT_*` statuses and the env reader, now with a required env parameter) lives in `@tell-ai/core`. `Tell.ts`/`tellrc.ts` import the owner directly (`runtime_env_from_process(process.env)` at the two call sites, so the `vm` sandboxes keep seeing the fake process env). No flag, env, tellrc key, default, range, message or exit status changed.
 - Core migrations (`task_039_core-migrations.md`): `src/systemPrompt.ts` deleted (`Tell.ts` imports `get_system_prompt` from the SDK with `cwd`/`platform`); log/context feedback lines use the core `format_command_result`/`format_command_skipped`; the transport is the core `create_node_executor` (process-group kill; buffer overflow now reports `output exceeded N bytes` instead of the `exec` maxBuffer error, and silent non-zero exits carry no injected error text); `env.ts` is a thin client of the core SDK-config owner (`token_files: true`) and every vendor now honors its `*_BASE_URL` (previously only 5 did). The 4 `vm` harnesses mock `create_node_executor` with a recording stand-in (no command ever runs for real in the sandbox).
 - The runtime-limits contract moved to `@tell-ai/core` (`packages/core/src/runtime-limits.ts`) — it is the only package the CLI and the Web both import, so it is the only place a shared limit can have a single owner. `packages/cli/src/runtime-limits.ts` becomes a facade that re-exports the contract and keeps only the process-level pieces: `StdinLimitError` (`timeout`→124, `overflow`→125) and `EXIT_SUCCESS`/`EXIT_MODEL_ERROR`/`EXIT_TIMEOUT`/`EXIT_LIMIT`. No flag, env, tellrc key, default, range or message changed; `Tell.ts` and `tellrc.ts` keep importing `./runtime-limits`. New `test/test-core-limits.js` (22 tests, in `test:core`) pins the contract through the core's public API and asserts no host (core, web, CLI facade) restates a limit literal.
@@ -23,6 +24,18 @@
 - New `custom` vendor for any user-supplied OpenAI/Anthropic-shaped endpoint (OpenRouter, vLLM, Ollama, HuggingFace, Fireworks, LiteLLM, a corporate proxy): `tell -m custom:<model> "<prompt>"`. The wire per model id is inferred (`gpt-`/`grok-`/`muse-` → Responses, `claude-` → Messages, else Chat Completions) and can be pinned with `CUSTOM_API`.
 - Five new env vars, mirroring the SDK config slots: `CUSTOM_BASE_URL` (`urls.custom`), `CUSTOM_API_KEY` (`keys.custom`, with `~/.config/custom.token` fallback like every other vendor), `CUSTOM_MODEL` (lets `-m custom` be model-less), `CUSTOM_API` (`chat`/`responses`/`messages`) and `CUSTOM_HEADERS` (JSON object merged into every request). An invalid `CUSTOM_API` or `CUSTOM_HEADERS` fails the run with the accepted values instead of silently degrading; `CUSTOM_API_KEY` is already covered by `SENSITIVE_ENV_SUFFIX`, so it never reaches the environment of executed commands.
 - New `--models` flag: lists the endpoint's catalog grouped by wire with copy-pasteable `custom:<model>` specs, no model call.
+
+### Fixes
+- `--max-buffer` (and `TELL_MAX_BUFFER_BYTES` / `[limits] max_buffer_bytes`) is applied again: the internal exec buffer cap is forwarded to the runtime, which passes it to the executor per call (the runtime used to inject the 32 MiB default and ignore the flag).
+- A model alias is resolved through an own-property lookup, so `tell constructor "hi"` treats the word as prompt text instead of crashing with `TypeError: value.trim is not a function`.
+- The model precedence is `-m` > positional alias > `$TELL_MODEL`/tellrc > default, as documented: `tell o "hi"` used to send `o hi` as the prompt when `TELL_MODEL` was set.
+- The `-y` gate for paths outside the working directory can no longer be bypassed with a redirection (`cat</etc/passwd`, `tee</etc/evil`); it also applies to writes, as the documentation promises.
+- Chain mode prints the final answer even when the last round produced no visible text (the run used to end with an empty stdout).
+- `tell -w` no longer leaks its temporary system file when `tell-web` is not installed (the child emits `close`, not `exit`, when the spawn fails).
+
+### Tests
+- `test/test-fuzz-coverage.js` (`bun run test:fuzz`, in `test`/`ci`) pins the CLI seam differentially against the core: the risk port agrees with the permissive profile on every generated script, the outside-cwd gate flags every operator spelling (`cat</etc/passwd`, writes included), and model aliases resolve without touching the prototype chain.
+- `test/test-live-model.js` (`bun run test:live-model`, opt-in, self-skips without `OPENROUTER_API_KEY`, 7 checks) proves the CLI wiring with a real model (`openrouter:minimax/minimax-m3.1-flash:free`): `-m` resolution, answer, `<RUN>` execution and no key leak.
 
 ### Notes
 - `load_sdk_config` returns `models`/`wires`/`headers` only for the knobs that are set, so a missing value keeps raising the SDK's own error instead of picking a default.
