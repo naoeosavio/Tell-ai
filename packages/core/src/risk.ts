@@ -42,6 +42,11 @@ const PRIVILEGED_PATH = [
  * network-gated interpreter eval, non-recursive privileged chmod). The
  * `strict_only` rules are Web divergences kept verbatim (any interpreter
  * eval, bare `env`, `base64 -d`, shell expansions).
+ *
+ * The two profiles differ on purpose, but the strict one must never be
+ * *laxer* about an interpreter eval: every `-c`/`-e`/`-r`/`eval` form the
+ * permissive profile flags as `interpreter-eval` is flagged by the strict
+ * profile too (the strict rule covers php/lua/deno/bun as well).
  */
 const BASE_RISK_RULES: readonly RiskRule[] = [
   {
@@ -66,7 +71,7 @@ const BASE_RISK_RULES: readonly RiskRule[] = [
     severity: 'high',
     reason: 'network client (curl/wget/nc/ssh/ftp)',
     flags: ['network-client'],
-    pattern: /(?:^|[\s;&|(])(?:[^\s;&|()]*\/)?(?:curl|wget|nc|ncat|netcat|telnet|ssh|scp|sftp|ftp)\b/,
+    pattern: /(?:^|[;&|(){}<>]\s*)(?:[^\s;&|()]*\/)?(?:curl|wget|nc|ncat|netcat|telnet|ssh|scp|sftp|ftp)\b/,
   },
   {
     id: 'process-info-printenv',
@@ -74,7 +79,7 @@ const BASE_RISK_RULES: readonly RiskRule[] = [
     severity: 'medium',
     reason: 'process environment readout (printenv)',
     flags: ['process-info'],
-    pattern: /(?:^|[\s;&|(])(?:[^\s;&|()]*\/)?printenv\b/,
+    pattern: /(?:^|[;&|(){}<>]\s*)(?:[^\s;&|()]*\/)?printenv\b/,
   },
   {
     id: 'proc-access',
@@ -90,7 +95,7 @@ const BASE_RISK_RULES: readonly RiskRule[] = [
     severity: 'high',
     reason: 'recursive/forced remove (rm -rf)',
     flags: ['destructive'],
-    pattern: /\brm\s+(?:-[^\s]*[rRfF][^\s]*)(?:\s|$)/,
+    pattern: /\brm(?:\s|\$\{[^}]*\})*(?:-[^\s]*[rRfF][^\s]*)(?:\s|$)/,
   },
   {
     id: 'destructive-git-clean',
@@ -232,9 +237,9 @@ const BASE_RISK_RULES: readonly RiskRule[] = [
     id: 'strict-interpreter-eval',
     category: 'interpreter-eval',
     severity: 'high',
-    reason: 'interpreter eval flag (-c/-e/--eval)',
+    reason: 'interpreter eval flag (-c/-e/-r/--eval)',
     flags: ['interpreter-eval'],
-    pattern: /\b(?:python3?|node|perl|ruby)\b[^;&|]*\s(?:-c|-e|--eval)\b/,
+    pattern: /\b(?:python3?|node|deno|bun|perl|ruby|php|lua)\b[^;&|]*\s(?:-c|-e|-r|--eval|eval)\b/,
     strict_only: true,
   },
   {
@@ -243,7 +248,7 @@ const BASE_RISK_RULES: readonly RiskRule[] = [
     severity: 'medium',
     reason: 'env used to launch commands',
     flags: ['env-launch'],
-    pattern: /\benv\b/,
+    pattern: /(?:^|[;&|(){}<>]\s*)(?:[^\s;&|()]*\/)?env\b/,
     strict_only: true,
   },
   {

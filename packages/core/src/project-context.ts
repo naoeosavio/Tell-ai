@@ -234,8 +234,12 @@ function read_doc(cwd: string, name: string): string | null {
 export function build_project_context(cwd: string): ProjectContext {
   const tree = render_tree(scan_tree(cwd, 0, { visited: new Set(), file_count: 0 })) || '(empty project)';
   const is_doc = (name: string): boolean => find_doc(cwd, name) !== null;
-  const readme = PROJECT_DOC_FILES.find(is_doc);
-  const agents = PROJECT_DOC_FILES.find((name) => /^(agent|claude)/i.test(name) && is_doc(name));
+  const is_readme = (name: string): boolean => /^readme(\.md)?$/i.test(name);
+  const is_agents = (name: string): boolean => /^(agent|claude)/i.test(name);
+  // The two slots never point at the same file: a project with only AGENTS.md
+  // must not inject the same document twice.
+  const readme = PROJECT_DOC_FILES.find((name) => is_readme(name) && is_doc(name));
+  const agents = PROJECT_DOC_FILES.find((name) => is_agents(name) && is_doc(name));
   return {
     cwd,
     platform: `${os.platform()} ${os.arch()}`,

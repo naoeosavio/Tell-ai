@@ -14,6 +14,19 @@ export const LOOP_MAX_ROUNDS = DEFAULT_MAX_CHAIN_STEPS;
 /** Chain-limit notice recorded when rounds run out (CLI `finish_round` wording). */
 export const CHAIN_LIMIT_NOTICE = `Chain limit reached (${LOOP_MAX_ROUNDS}); ignoring further requested commands.`;
 
+/**
+ * Builds the chain-limit notice for the round cap actually in effect.
+ *
+ * The notice must name the budget the run really had (`--max-chain N`),
+ * never the default.
+ *
+ * @param max_rounds - Round cap of the running loop.
+ * @returns The notice recorded in the timeline.
+ */
+export function chain_limit_notice(max_rounds: number): string {
+  return `Chain limit reached (${max_rounds}); ignoring further requested commands.`;
+}
+
 /** Follow-up instruction for rounds that may still request a command (owned by `./loop-feedback`). */
 export const CONTINUE_INSTRUCTION = COMMAND_FEEDBACK_INSTRUCTION;
 
@@ -121,7 +134,7 @@ export async function run_primitive_loop(message: string, options: CoreLoopOptio
       return { status: 'completed', text, timeline, commands };
     } else if (last.status === 'executed' || last.status === 'failed') {
       if (round === max_rounds) {
-        timeline.push(CHAIN_LIMIT_NOTICE);
+        timeline.push(chain_limit_notice(max_rounds));
         return { status: 'completed', text, timeline, commands };
       } else {
         current_message = build_loop_feedback(last.script, last.output ?? '', last.exit_code ?? 1);

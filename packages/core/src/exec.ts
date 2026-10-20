@@ -76,11 +76,49 @@ export const SENSITIVE_ENV_NAMES: ReadonlySet<string> = new Set([
 /**
  * Environment name suffixes never forwarded (vendor keys, package tokens).
  *
- * Matches `*_API_KEY`, `*_TOKEN`, `*_SECRET`, `*_PASSWORD`, and friends, so
- * per-vendor keys and `CUSTOM_API_KEY` never reach an executed command.
+ * Matches `*_API_KEY`, `*_APIKEY`, `*_TOKEN`, `*_SECRET`, `*_PASSWORD`, and
+ * friends, case-insensitively, so per-vendor keys (`AZURE_OPENAI_APIKEY`)
+ * and `CUSTOM_API_KEY` never reach an executed command.
  */
 export const SENSITIVE_ENV_SUFFIX =
-  /(?:^|_)(?:ACCESS_KEY(?:_ID)?|API_KEY|AUTH_TOKEN|CREDENTIALS?|PASSWORD|PASSWD|PRIVATE_KEY|SECRET(?:_KEY)?|TOKEN)$/;
+  /(?:^|_)(?:ACCESS_KEY(?:_ID)?|API_?KEY|AUTH_TOKEN|CREDENTIALS?|PASSWORD|PASSWD|PRIVATE_KEY|SECRET(?:_KEY)?|TOKEN)$/i;
+
+/**
+ * Shortest secret worth masking in an output.
+ *
+ * A shorter value would match almost every character and shred the output
+ * the model has to read, so such values are dropped instead of masked.
+ */
+export const EXEC_MIN_SECRET_LENGTH = 4;
+
+/**
+ * True when a URL-shaped value carries inline credentials.
+ *
+ * `postgres://user:password@host/db` is a credential, not just an address.
+ *
+ * @param value - Candidate environment value.
+ * @returns Whether the value embeds user/password credentials.
+ */
+function has_inline_credentials(value: string): boolean {
+  return /^[a-z][a-z0-9+.-]*:\/\/[^/@\s]*:[^/@\s]*@/i.test(value);
+}
+
+/**
+ * True when an environment entry must never reach a child process.
+ *
+ * @param name - Environment variable name.
+ * @param value - Environment variable value.
+ * @returns Whether the entry is sensitive.
+ */
+function is_sensitive_env(name: string, value: string): boolean {
+  if (SENSITIVE_ENV_NAMES.has(name) || SENSITIVE_ENV_SUFFIX.test(name)) {
+    return true;
+  } else if (/_URL$/i.test(name) && has_inline_credentials(value)) {
+    return true;
+  } else {
+    return false;
+  }
+}
 
 /** Defaults injected into every `create_node_executor` command. */
 export type NodeExecutorDefaults = {
@@ -110,7 +148,7 @@ export function sanitize_exec_env(env: Record<string, string | undefined>): Reco
   const sanitized: Record<string, string> = {};
   for (const [name, value] of Object.entries(env)) {
     if (value === undefined) {
-    } else if (SENSITIVE_ENV_NAMES.has(name) || SENSITIVE_ENV_SUFFIX.test(name)) {
+    } else if (is_sensitive_env(name, value)) {
     } else {
       sanitized[name] = value;
     }
@@ -148,13 +186,15 @@ export function resolve_exec_cwd(cwd?: string): string {
  * Creates a redactor masking known secret values.
  *
  * Each non-empty secret value found verbatim in a script or output is
- * replaced with `EXEC_REDACTED_MARKER`. Non-secret content is preserved.
+ * replaced with `EXEC_REDACTED_MARKER`. Values shorter than
+ * `EXEC_MIN_SECRET_LENGTH` are ignored: masking them would replace almost
+ * every character and destroy the output. Non-secret content is preserved.
  *
- * @param secrets - Secret values to mask (empty entries are ignored).
+ * @param secrets - Secret values to mask (empty or too short entries are ignored).
  * @returns A `Redactor` for the runtime redaction boundary.
  */
 export function create_secret_redactor(secrets: readonly string[]): Redactor {
-  const values = secrets.filter((secret) => secret !== '');
+  const values = secrets.filter((secret) => secret.length >= EXEC_MIN_SECRET_LENGTH);
   return (value: string): string => {
     let redacted = value;
     for (const secret of values) {
@@ -181,13 +221,41 @@ export function collect_exec_secrets(env: Record<string, string | undefined>): s
   const secrets: string[] = [];
   for (const [name, value] of Object.entries(env)) {
     if (value === undefined || value === '') {
-    } else if (SENSITIVE_ENV_NAMES.has(name) || SENSITIVE_ENV_SUFFIX.test(name)) {
+    } else if (is_sensitive_env(name, value)) {
       secrets.push(value);
     } else {
       // Non-secret variable — never used as a redaction source.
     }
   }
   return secrets;
+}
+
+/**
+ * Cuts a text to a UTF-8 byte budget without splitting a character.
+ *
+ * The exec cap is counted in bytes, so the cut must be too — slicing by
+ * characters would deliver up to four times the budget for multi-byte text.
+ *
+ * @param text - Text to cut.
+ * @param max_bytes - Byte budget.
+ * @returns The cut text.
+ */
+function cut_to_bytes(text: string, max_bytes: number): string {
+  if (max_bytes <= 0) {
+    return '';
+  }
+  const buffer = Buffer.from(text, 'utf8');
+  if (buffer.length <= max_bytes) {
+    return text;
+  }
+  let end = max_bytes;
+  while (end > 0 && ((buffer[end - 1] ?? 0) & 0xc0) === 0x80) {
+    end -= 1;
+  }
+  if (end > 0 && ((buffer[end - 1] ?? 0) & 0xc0) === 0xc0) {
+    end -= 1;
+  }
+  return buffer.subarray(0, end).toString('utf8');
 }
 
 /**
@@ -295,7 +363,7 @@ function run_shell_process(input: ShellRunInput): Promise<ExecutorResult> {
       if (stdout_bytes + stderr_bytes > max_output_bytes) {
         kill_process_group(child.pid);
         setTimeout(kill_late, EXEC_KILL_GRACE_MS);
-        const truncated = `${stdout}\n${stderr}`.slice(0, max_output_bytes);
+        const truncated = cut_to_bytes(`${stdout}\n${stderr}`, max_output_bytes);
         finish({ stdout: truncated, stderr: `output exceeded ${max_output_bytes} bytes`, exit_code: 1 });
       } else {
         // Within budget — keep collecting.
@@ -308,7 +376,7 @@ function run_shell_process(input: ShellRunInput): Promise<ExecutorResult> {
         kill_process_group(child.pid);
         setTimeout(kill_late, EXEC_KILL_GRACE_MS);
         finish({
-          stdout: '',
+          stdout,
           stderr: format_timeout_message(script, timeout_ms),
           exit_code: EXEC_TIMEOUT_EXIT_CODE,
         });

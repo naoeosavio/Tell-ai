@@ -41,7 +41,10 @@ export type ResolvedConfigInput = {
 };
 
 /**
- * Returns the first defined value across layers, or undefined when absent.
+ * Returns the first non-blank value across layers, or undefined when absent.
+ *
+ * A blank string means "absent" (the `ConfigLayer` contract), so an empty
+ * layer never shadows the layers below it.
  *
  * @param layers - Layers in precedence order (highest first).
  * @param pick - Field selector for the wanted option.
@@ -58,6 +61,32 @@ function first_defined<T>(
       if (value !== undefined) {
         return value;
       } else {
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Returns the first non-blank string across layers, or undefined.
+ *
+ * @param layers - Layers in precedence order (highest first).
+ * @param pick - Field selector for the wanted option.
+ * @returns The winning trimmed value, or undefined when no layer has one.
+ */
+function first_non_blank(
+  layers: (ConfigLayer | undefined)[],
+  pick: (layer: ConfigLayer) => string | undefined,
+): string | undefined {
+  for (const layer of layers) {
+    if (layer === undefined) {
+    } else {
+      const value = pick(layer);
+      const trimmed = (value ?? '').trim();
+      if (trimmed !== '') {
+        return trimmed;
+      } else {
+        // Blank means absent — keep looking.
       }
     }
   }
@@ -91,15 +120,30 @@ function clamp_timeout(value: number | undefined): number {
 export function resolve_core_config(input: ResolvedConfigInput): CoreConfig {
   const layers = [input.flag, input.env, input.project, input.user];
   const fallback = HOST_DEFAULT_MODEL[input.host];
-  const raw_model = first_defined(layers, (layer) => layer.model);
-  const trimmed = (raw_model ?? '').trim();
+  const model = first_non_blank(layers, (layer) => layer.model);
   const denied = layers.some((layer) => layer?.exec_enabled === false);
   return {
-    model: trimmed === '' ? fallback : trimmed,
+    model: model ?? fallback,
     exec_enabled: !denied,
     chain: first_defined(layers, (layer) => layer.chain) ?? false,
     exec_timeout_ms: clamp_timeout(first_defined(layers, (layer) => layer.exec_timeout_ms)),
   };
+}
+
+/**
+ * Reads the process environment when the host has one.
+ *
+ * The browser entry has no `process`, so the lookup is guarded instead of
+ * assumed — the browser bundle must never throw a `ReferenceError`.
+ *
+ * @returns The process environment, empty when the host has none.
+ */
+function read_process_env(): Record<string, string | undefined> {
+  if (typeof process === 'undefined') {
+    return {};
+  } else {
+    return process.env;
+  }
 }
 
 /**
@@ -112,7 +156,7 @@ export function resolve_core_config(input: ResolvedConfigInput): CoreConfig {
  * @param env - Environment record (defaults to `process.env` on Node).
  * @returns The env layer, empty when `TELL_MODEL` is absent or blank.
  */
-export function load_env_layer(env: Record<string, string | undefined> = process.env): ConfigLayer {
+export function load_env_layer(env: Record<string, string | undefined> = read_process_env()): ConfigLayer {
   const model = (env['TELL_MODEL'] ?? '').trim();
   if (model === '') {
     return {};

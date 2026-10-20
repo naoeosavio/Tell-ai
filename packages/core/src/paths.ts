@@ -16,6 +16,25 @@ function is_symlink(candidate: string): boolean {
 }
 
 /**
+ * True when a relative path leaves the base directory.
+ *
+ * Only a real `..` segment counts as an escape: a file literally named
+ * `..foo` (or `...`) is a regular name inside the base, not a traversal.
+ *
+ * @param relative - Path relative to the base (`path.relative` output).
+ * @returns Whether the path escapes the base.
+ */
+function escapes_base(relative: string): boolean {
+  if (relative === '..') {
+    return true;
+  } else if (relative.startsWith(`..${path.sep}`)) {
+    return true;
+  } else {
+    return path.isAbsolute(relative);
+  }
+}
+
+/**
  * Canonicalizes an existing path inside a base directory, fail-closed.
  *
  * The lexical path must stay inside `base_dir` (sibling-prefix tricks
@@ -31,7 +50,7 @@ export function canonical_path(base_dir: string, candidate: string): string | nu
   const base = path.resolve(base_dir);
   const resolved = path.resolve(base, candidate);
   const relative = path.relative(base, resolved);
-  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+  if (escapes_base(relative)) {
     return null;
   } else if (is_symlink(base)) {
     return null;
@@ -81,7 +100,7 @@ export function is_path_inside_base(base_dir: string, candidate: string): boolea
   if (relative === '') {
     return true;
   } else {
-    return !relative.startsWith('..') && !path.isAbsolute(relative);
+    return !escapes_base(relative);
   }
 }
 
@@ -140,7 +159,7 @@ export function canonical_write_path(
   const base = path.resolve(base_dir);
   const resolved = path.resolve(base, candidate);
   const relative = path.relative(base, resolved);
-  if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) {
+  if (relative === '' || escapes_base(relative)) {
     return null;
   } else {
     let real_base = '';
