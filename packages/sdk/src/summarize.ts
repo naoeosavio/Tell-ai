@@ -1,4 +1,5 @@
 import type { AskInstance } from './ask';
+import { strip_think_tags } from './tags';
 
 const SUMMARY_SYSTEM_PROMPT = `You are a conversation summarizer for a terminal assistant. Your job is to compress conversation history while preserving all critical context.
 
@@ -24,10 +25,21 @@ FORMAT:
 
 Aim for 20-40 lines of text unless the conversation was extremely complex.`;
 
+/**
+ * Compresses a conversation into a summary the caller can persist.
+ *
+ * The summarizer's own reasoning (`<think>` block) never reaches the summary:
+ * the CLI stores this text on disk and feeds it back as context, so a leaked
+ * reasoning block would be replayed to the model forever.
+ *
+ * @param ai - Ask instance used to summarize.
+ * @param text - Conversation history to compress.
+ * @returns The summary, prefixed with the context marker.
+ */
 export async function summarize_context(ai: AskInstance, text: string): Promise<string> {
   const summary = await ai.ask(`Please summarize this conversation history:\n\n${text}`, {
     system: SUMMARY_SYSTEM_PROMPT,
     stream: false,
   });
-  return `[Context summary — previous conversation condensed to save tokens]\n\n${summary.trim()}`;
+  return `[Context summary — previous conversation condensed to save tokens]\n\n${strip_think_tags(summary)}`;
 }

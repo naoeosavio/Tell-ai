@@ -1,4 +1,4 @@
-export { type AskInstance, type AskStreamEvent, type AskStreamInput, create_ask_ai } from './ask';
+export { type AskInstance, type AskOptions, type AskStreamEvent, type AskStreamInput, create_ask_ai } from './ask';
 export type { SDKConfig, SDKKeys, SDKUrls } from './config';
 export {
   CUSTOM_USER_AGENT,
