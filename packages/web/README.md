@@ -100,10 +100,11 @@ Auto-Run is **opt-in**: unless the server was started with `-y`, a fresh browser
 asks before every command. Precedence: `No-Exec` > per-command risk gate, and
 `--no-exec` is a server invariant (`/api/execute` answers `403`), so the locked
 toggle wins over an older stored Auto-Run preference. Enabling No-Exec switches
-Auto-Run off. With `--chain`, each held command still pauses for approval
-(Require Approval) or is recorded as not-run (No-Exec) while the loop continues
-with the feedback. The risk gate is fail-closed: if classification fails, the
-command goes to manual approval.
+Auto-Run off. With `--chain`, Auto-Run executes the safe commands server-side
+(no confirmation card), Require Approval still pauses for each command, and
+No-Exec records it as not-run while the loop continues with the feedback. The
+risk gate is fail-closed: if classification fails, the command goes to manual
+approval.
 
 ## Sidebar panes
 

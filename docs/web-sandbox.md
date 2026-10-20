@@ -361,6 +361,13 @@ enters the server confirm path: the client cancels the run and executes
 locally instead — and the client No-Exec toggle cancels the run rather than
 approving it.
 
+The confirm gate is the pure core validator `validate_chain_decision_payload`
+(`packages/core/src/chain-decision.ts`) — see [core/chain-decision.md](core/chain-decision.md).
+The loop wording, project scan, path checks and risk base come from the core
+([core/loop-feedback.md](core/loop-feedback.md),
+[core/project-context.md](core/project-context.md),
+[core/paths.md](core/paths.md), [core/risk.md](core/risk.md)).
+
 ---
 
 ## Session persistence (`.tell/`)
@@ -458,10 +465,12 @@ the upgrade query string, so avoid exposing query strings in proxy logs.
   use `--host 0.0.0.0` (plus `TELL_TOKEN`) only when you really need remote
   access, and keep TLS in front (reverse proxy or tunnel). See
   [Authentication](#authentication-tell_token).
-- **High-risk and obfuscated commands are blocked** by the sandbox guard: `sudo`,
+- **High-risk and obfuscated commands are blocked** by the sandbox guard (the
+  core owner `assess_base_risk(script, 'strict')`): `sudo`,
   `rm -rf`, writes to system paths (`/etc`, `/boot`, `/usr`), network clients
   (`curl`, `wget`, `ssh`), `printenv`, shell `-c`, crontab manipulation, `mkfs`,
-  `dd of=`, interpreter eval (`python/node/perl/ruby -c/-e`), `env`-launched
+  `dd of=`, interpreter eval (`python/node/deno/bun/perl/ruby/php/lua
+  -c/-e/-r/--eval`), `env`-launched
   commands, `base64 -d` payloads, and shell expansion (`${…}`, `$(…)`, backticks
   with pipes). This is a heuristic, not a security boundary — treat it as
   best-effort.

@@ -1913,7 +1913,7 @@ describe('web sandbox: api routes', () => {
       const res = await fetch(`${base}/api/models`);
       assert.strictEqual(res.status, 200);
       const body = await res.json();
-      assert.strictEqual(body.models.length, 146);
+      assert.strictEqual(body.models.length, 152);
       const by_alias = new Map(body.models.map((entry) => [entry.alias, entry]));
       for (const [alias, vendor, model] of [
         ['g', 'openai', 'gpt-6.1-sol'],
