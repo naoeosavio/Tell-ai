@@ -170,9 +170,9 @@ const MODEL_TABLE: Record<string, string> = {
 
   k: 'moonshotai:kimi-k2.7-code:none',
 
-  'K-': 'moonshotai:kimi-k3:low',
-  K: 'moonshotai:kimi-k3:high',
-  'K+': 'moonshotai:kimi-k3:max',
+  'K-': 'moonshotai:kimi-k3.1-pro:low',
+  K: 'moonshotai:kimi-k3.1-pro:high',
+  'K+': 'moonshotai:kimi-k3.1-pro:max',
 
   'm--': 'meta:muse-spark-1.3:none',
   'm-': 'meta:muse-spark-1.3:low',
