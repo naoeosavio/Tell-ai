@@ -232,6 +232,33 @@ check('never splits a <RUN> block across the cut', () => {
   assert.equal(rl.has_balanced_tags(out), true);
 });
 
+check('never splits a <DELEGATE> block across the cut', () => {
+  const block = '<DELEGATE>\nlist the txt files\n</DELEGATE>';
+  const text = `User:\nold question\n${block}\nAssistant:\n${block}\nUser:\nnew question here`;
+  const out = rl.truncate_context(text, 120);
+  assert.ok(!/<$/.test(out));
+  assert.equal(rl.has_balanced_tags(out), true);
+});
+
+check('unclosed <SUBTASK> opener is closed, not leaked raw', () => {
+  // Single-turn path (budget < 1024): the tail retains the opener, so the
+  // balancer must close it — same contract as an unclosed <RUN>.
+  const big = `User:\n${'x'.repeat(2000)}\n<SUBTASK>\nshort`;
+  const out = rl.truncate_context(big, 512);
+  assert.ok(out.includes('<SUBTASK>'), 'opener survives the cut');
+  assert.ok(out.includes('</SUBTASK>'), 'balancer closes the opener');
+  assert.equal(rl.has_balanced_tags(out), true);
+});
+
+check('orphan delegation closers are dropped from a cut tail', () => {
+  // Head-cut tail keeps only `</DELEGATE>`: no opener, so it must go.
+  assert.equal(rl.has_balanced_tags('tail text\n</DELEGATE>'), false);
+  const big = `${'z'.repeat(3000)}\n</DELEGATE>\nUser:\nfinal question here?`;
+  const out = rl.truncate_context(big, 512);
+  assert.equal(rl.has_balanced_tags(out), true);
+  assert.ok(out.includes('final question here?'));
+});
+
 check('never splits a <think> block', () => {
   const text = `User:\nq1\nAssistant:\n<think>reasoning one two three</think>\nanswer one\nUser:\nq2 new`;
   const out = rl.truncate_context(text, 60);
