@@ -6,6 +6,9 @@ import * as path from 'path';
 import * as readline from 'readline';
 import {
   build_execution_options,
+  collect_exec_secrets,
+  create_delegation_runner,
+  create_secret_redactor,
   DEFAULT_CONTEXT_MAX_CHARS,
   DEFAULT_EXEC_TIMEOUT_MS,
   DEFAULT_MAX_BUFFER_BYTES,
@@ -21,10 +24,14 @@ import {
   HOST_DEFAULT_MODEL,
   format_command_skipped,
   MAX_CHAIN_STEPS,
+  max_delegations_for_chain,
+  delegation_prompt_section,
   parse_runtime_limits,
+  type Redactor,
   type RuntimeLimits,
   runtime_env_from_process,
   StdinLimitError,
+  strip_delegation_tags,
   truncate_context,
   truncate_output,
 } from '@tell-ai/core';
@@ -711,12 +718,18 @@ function format_missing_prompt_error(program: Command): string {
 }
 
 function remember_assistant(state: ConversationState, log: string, response: string): void {
-  append_log(log, `Assistant:\n${response}`);
-  state.timeline.push(`Assistant:\n${response}`);
+  const cleaned = strip_delegation_tags(response);
+  append_log(log, `Assistant:\n${cleaned}`);
+  state.timeline.push(`Assistant:\n${cleaned}`);
 }
 
 function remember_command_result(state: ConversationState, result: string): void {
   state.timeline.push(result);
+}
+
+function remember_delegation(state: ConversationState, log: string, record: string): void {
+  append_log(log, record);
+  state.timeline.push(record);
 }
 
 // Prints trimmed command output dimmed on TTY, plain otherwise (legacy
@@ -770,19 +783,41 @@ async function run_response_loop(
   log: string,
   contextPath: string,
   previousContext: string,
+  redact?: Redactor,
 ): Promise<void> {
+  // The execution contract is built once from the resolved limits (single
+  // owner in `@tell-ai/core`): timeout/buffer flow to the injected
+  // executor, the output cap to delivered text, rounds to the loop budget.
+  const exec_options = build_execution_options(state.limits);
+  const chain_budget = exec_options.max_rounds;
+  // Delegation budget scales with `--max-chain` (0 with 1 round: the tag
+  // could never be consumed, so the prompt must not teach it — otherwise a
+  // tag-only answer strips to empty text and stdout stays empty). The
+  // counter lives in the core runner.
+  const delegation_budget = state.autoContinue ? max_delegations_for_chain(chain_budget) : 0;
   // The system prompt is fixed for the run (legacy round-one wording for
   // both modes; feedback rounds only exist in chain mode, where it matches).
   // Tellrc custom instructions prepend context only — safety stays last and
   // config can never replace <RUN>, approval, injection or deny rules.
+  // Delegation is a chain-mode capability with budget: the prompt grows only
+  // there. The section is core-owned and appended after the SDK prompt
+  // (safety last).
   const system = compose_system_prompt(
-    get_system_prompt({ chain: state.autoContinue, cwd: process.cwd(), platform: `${os.platform()} ${os.release()}` }),
+    `${get_system_prompt({
+      chain: state.autoContinue,
+      cwd: process.cwd(),
+      platform: `${os.platform()} ${os.release()}`,
+    })}${delegation_budget > 0 ? delegation_prompt_section('both') : ''}`,
     state.customSystemText,
   );
   // The raw response of the in-flight round (captured by the model port for
   // the log/timeline mirror below; the core wiring only forwards stripped
   // text to its callbacks).
   let last_raw = '';
+  // Whether any delegation record climbed this run: a tag-only parent answer
+  // leaves `text` empty, so the legacy commands-only final-answer check
+  // below would miss it and stdout would stay empty.
+  let did_delegate = false;
   const model = create_cli_model(ai, {
     stream: state.stream,
     think: state.think,
@@ -795,18 +830,64 @@ async function run_response_loop(
   // Shared ports across runs: storage accumulates the conversation so resumed
   // runs compose follow-ups continuously; everything else is stateless.
   const storage = create_cli_memory_storage(previousContext);
-  // The execution contract is built once from the resolved limits (single
-  // owner in `@tell-ai/core`): timeout/buffer flow to the injected
-  // executor, the output cap to delivered text, rounds to the loop budget.
-  const exec_options = build_execution_options(state.limits);
   const executor = create_cli_executor({
     timeout_ms: exec_options.timeout_ms,
     max_output_bytes: exec_options.max_buffer_bytes,
   });
-  const chain_budget = exec_options.max_rounds;
+  const child_model = create_cli_model(ai, {
+    stream: false,
+    think: false,
+    silent: true,
+    ...(state.temperature !== undefined ? { temperature: state.temperature } : {}),
+  });
+  const delegation_runner =
+    delegation_budget > 0
+      ? create_delegation_runner({
+          model: child_model,
+          executor,
+          approval,
+          risk: cli_risk_port(),
+          ...(redact !== undefined ? { redact } : {}),
+          cwd: process.cwd(),
+          platform: `${os.platform()} ${os.release()}`,
+          context: previousContext,
+          exec_enabled: state.coreConfig.exec_enabled,
+          timeout_ms: exec_options.timeout_ms,
+          max_delegations: delegation_budget,
+        })
+      : undefined;
+  // UX indicator for the silent child (the child itself never writes): the
+  // wrapper prints before the runner and clears after, so the parent marker
+  // is never erased by the child. Child commands are audited to the run log
+  // (marked, never the parent timeline) so a delegation stays debuggable.
+  const delegation_with_indicator =
+    delegation_runner === undefined
+      ? undefined
+      : async (request: { kind: 'research' | 'build'; objective: string }) => {
+          const label = request.kind === 'research' ? 'Delegando pesquisa…' : 'Delegando sub-tarefa…';
+          process.stderr.write(`\x1b[2m${label}\x1b[0m`);
+          try {
+            const outcome = await delegation_runner(request);
+            if (outcome !== null) {
+              for (const command of outcome.commands) {
+                append_log(log, `Child command (${command.status}):\n${command.script}`);
+              }
+            } else {
+              // Refused (budget spent or empty objective) — nothing to audit.
+            }
+            return outcome;
+          } finally {
+            process.stderr.write('\r\x1b[K');
+          }
+        };
   const runtime_callbacks: RuntimeCallbacks = {
     onText: () => {
       remember_assistant(state, log, last_raw);
+      if (state.saveContext) save_incremental_context(contextPath, previousContext, state);
+    },
+    onDelegation: (event) => {
+      did_delegate = true;
+      remember_delegation(state, log, event.record);
       if (state.saveContext) save_incremental_context(contextPath, previousContext, state);
     },
     onCommandOutput: (event) => {
@@ -856,6 +937,8 @@ async function run_response_loop(
       // forwards it per call, so it must carry the resolved limit (not the
       // core default) or `--max-buffer` would never apply.
       max_output_bytes: exec_options.max_buffer_bytes,
+      ...(redact !== undefined ? { redact } : {}),
+      ...(delegation_with_indicator !== undefined ? { delegation: delegation_with_indicator } : {}),
     });
   }
   let runtime = create_runtime(state.autoContinue ? chain_budget : 1);
@@ -882,11 +965,13 @@ async function run_response_loop(
   }
   // Final answer (legacy `handle_final_answer`): commands ran but the visible
   // answer is empty — ask once more without `<RUN>`. Chain mode asks too, so
-  // a run that ends at the round cap never leaves stdout empty.
-  if (result.commands.length > 0 && !result.text) {
-    const final_prompt = `${strip_think_tags(conversation_text(state))}`;
+  // a run that ends at the round cap never leaves stdout empty. Delegation
+  // counts the same as commands: a tag-only parent answer strips to empty
+  // text with no commands, and without this the run would print nothing.
+  if ((result.commands.length > 0 || did_delegate) && !result.text) {
+    const final_prompt = `${strip_think_tags(conversation_text(state))}\n\nProvide the final visible answer now in plain text, without <RUN>, <DELEGATE> or <SUBTASK> tags.`;
     const final_response = await model.ask(final_prompt, { system, stream: false });
-    const final_text = strip_run_tags(strip_think_tags(final_response));
+    const final_text = strip_delegation_tags(strip_run_tags(strip_think_tags(final_response)));
     if (final_text && !state.stream) console.log(final_text);
   } else if (result.text && !state.stream) {
     console.log(result.text);
@@ -1259,8 +1344,18 @@ async function run_tell(
   try {
     const config = await load_sdk_config();
     ai = await create_ask_ai(effective_model, config);
+    // Collect process secrets before the lock scrubs them; the redactor masks
+    // them in delegation summaries (the child env is already sanitized).
+    const key_values: string[] = [];
+    for (const value of Object.values(config.keys ?? {})) {
+      if (typeof value === 'string' && value.length > 0) {
+        key_values.push(value);
+      }
+    }
+    const secret_values = [...collect_exec_secrets(process.env), ...key_values];
+    const redact = create_secret_redactor(secret_values);
     lock_process_environment();
-    await run_response_loop(ai, state, log, context_path, previous_context);
+    await run_response_loop(ai, state, log, context_path, previous_context, redact);
   } catch (error) {
     console.error('\x1b[31m%s\x1b[0m', format_model_error(error));
     process.exitCode = EXIT_MODEL_ERROR;

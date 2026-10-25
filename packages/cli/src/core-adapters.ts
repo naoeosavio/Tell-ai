@@ -265,6 +265,8 @@ export type CliModelIO = {
   on_raw?: (response: string) => void;
   /** Sampling temperature 0..2, forwarded only when present. */
   temperature?: number;
+  /** Silent port for delegation children (no stdout/stderr writes, no `on_raw`). */
+  silent?: boolean;
 };
 
 /**
@@ -318,7 +320,9 @@ function print_reasoning(reasoning: string): void {
  * @returns The raw model response (sanitized reasoning span).
  */
 async function ask_silently(ai: AskInstance, message: string, system: string, io: CliModelIO): Promise<string> {
-  process.stderr.write('\x1b[2mThinking...\x1b[0m');
+  if (io.silent !== true) {
+    process.stderr.write('\x1b[2mThinking...\x1b[0m');
+  }
   let response: string;
   try {
     response = await ai.ask(
@@ -326,9 +330,14 @@ async function ask_silently(ai: AskInstance, message: string, system: string, io
       io.temperature !== undefined ? { system, stream: false, temperature: io.temperature } : { system, stream: false },
     );
   } finally {
-    process.stderr.write('\r\x1b[K');
+    if (io.silent !== true) {
+      process.stderr.write('\r\x1b[K');
+    }
   }
   response = sanitize_wrapped_reasoning(response);
+  if (io.silent === true) {
+    return response;
+  }
   if (io.think) {
     print_reasoning(extract_think(response));
   } else {
@@ -436,7 +445,9 @@ async function ask_streaming(ai: AskInstance, message: string, system: string, i
 export function create_cli_model(ai: AskInstance, io: CliModelIO): ModelPort {
   return {
     async ask(message: string, options: { system: string; stream: false }): Promise<string> {
-      if (io.stream) {
+      if (io.silent === true) {
+        return ask_silently(ai, message, options.system, io);
+      } else if (io.stream) {
         return ask_streaming(ai, message, options.system, io);
       } else {
         return ask_silently(ai, message, options.system, io);
