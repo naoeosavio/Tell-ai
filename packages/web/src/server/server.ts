@@ -36,7 +36,13 @@ import { config as loadEnv } from 'dotenv';
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import { type ChatStreamEvent, encode_chat_stream_event } from '../shared/chat-stream';
-import { CHAIN_MAX_ROUNDS, type ChainConfirmError, type ChainRunSnapshot, createChainStore } from './chain-store';
+import {
+  CHAIN_MAX_ROUNDS,
+  CHAIN_TTL_MS,
+  type ChainConfirmError,
+  type ChainRunSnapshot,
+  createChainStore,
+} from './chain-store';
 import { parseCliArgs, printHelp } from './cli-args';
 import { buildSystemPrompt } from './context-builder';
 import {
@@ -232,6 +238,11 @@ for (const name of Object.keys(process.env)) {
 }
 
 const EXEC_MAX_CONCURRENCY = 2;
+// Poll fallback for parked delegate waits (notify() wakes immediately on
+// state change; the timeout only re-checks). Local to this server like the
+// concurrency cap above — not a runtime limit, so it stays out of the core
+// owner (which pins the exec/buffer/output literals).
+const DELEGATE_WAIT_POLL_MS = 30_000;
 // Feedback tail fed back to the model after a chain command (mirrors the
 // App `FEEDBACK_OUTPUT_LIMIT`: huge outputs must not explode the context).
 const CHAIN_FEEDBACK_TAIL_CHARS = 4 * 1024;
@@ -242,8 +253,7 @@ const delegateRateLimit = createRateLimiter({ max: 10, windowMs: 60_000 });
 const tellRateLimit = createRateLimiter({ max: 10, windowMs: 60_000 });
 const chainRateLimit = createRateLimiter({ max: 10, windowMs: 60_000 });
 // Server-side chain runs: the pending script lives here, never in the client.
-const chainStore = createChainStore();
-// Model + system per run (kept beside the store so confirms resume context).
+const chainStore = createChainStore(); // Model + system per run (kept beside the store so confirms resume context).
 // Entries die with their run: every terminal snapshot drops its continuation,
 // so idle/expired runs never accumulate beside the TTL-reaped store. The
 // delegation runner is cached here too, so the parent's delegation budget
@@ -253,6 +263,119 @@ const chainContinuations = new Map<
   string,
   { modelSpec: string; system: string; delegationRunner?: DelegationRunner }
 >();
+
+/**
+ * Pending child approvals (v2 nested): decisionId to runId + resolver.
+ *
+ * The chain `advanceChainRun` blocks on the promise while the client answers
+ * via `POST /api/chain/:runId/confirm`. Restart drops the map (fail-closed,
+ * never resumed blindly); TTL/cancel resolve outstanding waits as denied.
+ */
+const childResolvers = new Map<
+  string,
+  { runId: string; resolve: (verdict: 'approved' | 'denied' | 'skipped') => void }
+>();
+
+/**
+ * Resolves outstanding child waits for a run as denied (cancel/TTL/terminal).
+ *
+ * @param runId - Run whose child waits must unblock without execution.
+ */
+function resolveChildResolversDenied(runId: string): void {
+  for (const [decisionId, entry] of [...childResolvers]) {
+    if (entry.runId === runId) {
+      childResolvers.delete(decisionId);
+      entry.resolve('denied');
+    }
+  }
+}
+
+/**
+ * Stateless delegate tasks (v2 nested for the browser local loop).
+ *
+ * One task per `POST /api/delegate` build without `-y`: the background owns
+ * the delegation, the client learns each child script via `awaiting` and
+ * answers via `POST /api/delegate/:decisionId/confirm`. Restart drops the map
+ * (fail-closed); TTL resolves outstanding waits as denied. `shortcut: one
+ * task holds exactly one delegation; confirm blocks until the next pause or
+ * the summary, so the browser needs no GET to poll.`
+ */
+type DelegateDecisionResult = { status: 'awaiting_approval'; decisionId: string; script: string } | { record: string };
+
+type DelegateTask = {
+  delegationId: string;
+  createdAt: number;
+  waiter: { decisionId: string; script: string; resolve: (verdict: 'approved' | 'denied' | 'skipped') => void } | null;
+  decided: Map<string, { verdict: 'approve' | 'skip'; inFlight: boolean; result: DelegateDecisionResult | null }>;
+  done: boolean;
+  record: string | null;
+  error: string | null;
+  cancel: () => void;
+  advancedResolvers: Array<() => void>;
+};
+
+const delegateTasks = new Map<string, DelegateTask>();
+const delegateDecisionToTask = new Map<string, string>();
+
+/**
+ * Wakes confirm waiters parked on a delegate task (next pause or done).
+ *
+ * @param task - Task whose state just changed.
+ */
+function delegate_task_notify(task: DelegateTask): void {
+  const resolvers = task.advancedResolvers;
+  task.advancedResolvers = [];
+  for (const resolve of resolvers) resolve();
+}
+
+/**
+ * Waits for the next task change (pause or done), or times out.
+ *
+ * @param task - Task to watch.
+ * @param timeoutMs - Upper bound (the model path is seconds per round).
+ */
+function delegate_task_wait(task: DelegateTask, timeoutMs = DELEGATE_WAIT_POLL_MS): Promise<void> {
+  return new Promise((resolve) => {
+    let done = false;
+    const timer = setTimeout(() => {
+      if (!done) {
+        done = true;
+        resolve();
+      }
+    }, timeoutMs);
+    if (timer.unref !== undefined) timer.unref();
+    task.advancedResolvers.push(() => {
+      if (!done) {
+        done = true;
+        clearTimeout(timer);
+        resolve();
+      }
+    });
+  });
+}
+
+/**
+ * Drops delegate tasks past the TTL (fail-closed, never resumed blindly).
+ */
+function pruneDelegateTasks(): void {
+  const at = Date.now();
+  for (const [delegationId, task] of [...delegateTasks]) {
+    if (at - task.createdAt > CHAIN_TTL_MS) {
+      if (task.waiter !== null) {
+        const waiter = task.waiter;
+        task.waiter = null;
+        delegateDecisionToTask.delete(waiter.decisionId);
+        waiter.resolve('denied');
+      }
+      task.cancel();
+      delegateTasks.delete(delegationId);
+      for (const [decisionId, owner] of [...delegateDecisionToTask]) {
+        if (owner === delegationId) delegateDecisionToTask.delete(decisionId);
+      }
+      delegate_task_notify(task);
+    }
+  }
+}
 
 /**
  * Drops the per-run continuation once the run can no longer advance.
@@ -268,6 +391,7 @@ function dropContinuationIfTerminal(runId: string, snapshot: ChainRunSnapshot | 
     snapshot.status === 'cancelled';
   if (terminal) {
     chainContinuations.delete(runId);
+    resolveChildResolversDenied(runId);
   } else {
     // Still advancing — the next confirm needs the stored context.
   }
@@ -283,8 +407,16 @@ function pruneContinuations(): void {
   for (const runId of [...chainContinuations.keys()]) {
     if (chainStore.getRun(runId) === null) {
       chainContinuations.delete(runId);
+      resolveChildResolversDenied(runId);
     }
   }
+  for (const [decisionId, entry] of [...childResolvers]) {
+    if (chainStore.getRun(entry.runId) === null) {
+      childResolvers.delete(decisionId);
+      entry.resolve('denied');
+    }
+  }
+  pruneDelegateTasks();
 }
 
 // Periodic sweep: an idle server must not keep expired runs (and their
@@ -757,12 +889,13 @@ app.post('/api/execute', async (req, res) => {
   }
 });
 
-// API: Delegation for the browser local loop (v1: research always, build only with automatic approval).
-// Stateless: one call serves exactly one delegation (the child cannot ask,
-// so without -y a build is 403). The aggregate budget lives with the caller
-// — the chain passes its cached runner, the browser loop counts against
-// max_delegations_for_chain. Same guards as /api/execute: concurrency cap,
-// per-IP rate limit, abort cancels the child.
+// API: Delegation for the browser local loop (v2 nested: research always,
+// build with automatic approval or via awaiting+confirm without -y).
+// Stateless per call except the v2 wait: one POST serves exactly one
+// delegation; without -y a build parks on `awaiting_approval` and the client
+// resumes it via `POST /api/delegate/:decisionId/confirm` (single summary at
+// the end, or the next awaiting when the child asks again). Same guards as
+// /api/execute: concurrency cap, per-IP rate limit, abort cancels the child.
 app.post('/api/delegate', async (req, res) => {
   const { kind, objective, modelAlias } = req.body ?? {};
   if ((kind !== 'research' && kind !== 'build') || typeof objective !== 'string' || objective.trim().length === 0) {
@@ -776,9 +909,6 @@ app.post('/api/delegate', async (req, res) => {
   }
   if (NO_EXEC) {
     return res.status(403).json({ error: 'delegation disabled by --no-exec' });
-  }
-  if (kind === 'build' && !AUTO_EXECUTE) {
-    return res.status(403).json({ error: 'build delegation not enabled on this host' });
   }
   if (!delegateRateLimit.check(clientIp(req))) {
     return res.status(429).json({ error: 'Rate limit exceeded (10/min). Slow down.' });
@@ -799,14 +929,191 @@ app.post('/api/delegate', async (req, res) => {
       token.cancel();
     }
   });
-  try {
-    const outcome = await run_web_delegation(modelSpec, kind, objective, token);
-    if (outcome === null) {
-      return res.status(403).json({ error: `${kind} delegation not enabled on this host` });
+  if (kind === 'research' || AUTO_EXECUTE) {
+    try {
+      const outcome = await run_web_delegation(modelSpec, kind, objective, token);
+      if (outcome === null) {
+        return res.status(403).json({ error: `${kind} delegation not enabled on this host` });
+      }
+      return res.json({ record: outcome.record });
+    } catch (_error) {
+      return res.status(500).json({ error: 'delegation failed' });
     }
-    return res.json({ record: outcome.record });
-  } catch (_error) {
-    return res.status(500).json({ error: 'delegation failed' });
+  } else {
+    // v2 nested build without -y: park on awaiting, resume via confirm.
+    const delegationId = crypto.randomUUID();
+    const task: DelegateTask = {
+      delegationId,
+      createdAt: Date.now(),
+      waiter: null,
+      decided: new Map(),
+      done: false,
+      record: null,
+      error: null,
+      cancel: () => token.cancel(),
+      advancedResolvers: [],
+    };
+    delegateTasks.set(delegationId, task);
+    const runner = create_delegation_runner({
+      model: build_delegation_model(modelSpec),
+      executor: async (exec_options) => {
+        activeExecutions += 1;
+        try {
+          return await core_execute({
+            script: exec_options.script,
+            cwd: CWD,
+            timeout_ms: EXEC_TIMEOUT_MS,
+            max_output_bytes: EXEC_MAX_BUFFER,
+          });
+        } finally {
+          activeExecutions -= 1;
+        }
+      },
+      approval: async (request) => {
+        if (token.cancelled) {
+          return 'denied';
+        } else if (isHighRiskScript(request.script)) {
+          return 'denied';
+        } else {
+          const decisionId = crypto.randomUUID();
+          const verdict = await new Promise<'approved' | 'denied' | 'skipped'>((resolve) => {
+            task.waiter = { decisionId, script: request.script, resolve };
+            delegateDecisionToTask.set(decisionId, delegationId);
+            delegate_task_notify(task);
+          });
+          return verdict;
+        }
+      },
+      redact: SERVER_REDACT,
+      cwd: CWD,
+      exec_enabled: !NO_EXEC,
+      timeout_ms: EXEC_TIMEOUT_MS,
+      cancellation: token,
+      max_delegations: 1,
+    });
+    (async () => {
+      try {
+        const outcome = await runner({ kind, objective });
+        if (outcome === null) {
+          task.error = `${kind} delegation not enabled on this host`;
+        } else {
+          task.record = outcome.record;
+        }
+      } catch (error: unknown) {
+        task.error = error instanceof Error ? error.message : String(error);
+      } finally {
+        task.done = true;
+        delegate_task_notify(task);
+      }
+    })().catch((error: unknown) => {
+      task.error = error instanceof Error ? error.message : String(error);
+      task.done = true;
+      delegate_task_notify(task);
+    });
+    for (;;) {
+      while (task.waiter === null && !task.done) {
+        await delegate_task_wait(task);
+      }
+      if (task.waiter !== null) {
+        const waiter = task.waiter;
+        return res
+          .status(202)
+          .json({ status: 'awaiting_approval', decisionId: waiter.decisionId, script: waiter.script });
+      } else if (task.record !== null) {
+        return res.json({ record: task.record });
+      } else {
+        return res.status(500).json({ error: 'delegation failed' });
+      }
+    }
+  }
+});
+
+// API: Answer a stateless delegate approval (v2 nested).
+// Body: { decision: 'approve'|'skip' }. Same id + same verdict replays without
+// re-executing (409 on conflict/unknown/cancelled, 403 on high-risk/--no-exec,
+// 429 when busy). Restart drops every task (404 afterwards).
+app.post('/api/delegate/:decisionId/confirm', async (req, res) => {
+  const decisionId = String(req.params.decisionId || '');
+  const decision = (req.body as { decision?: unknown } | undefined)?.decision;
+  if (decision !== 'approve' && decision !== 'skip') {
+    return res.status(400).json({ error: "decision must be 'approve' or 'skip'" });
+  }
+  if (!delegateRateLimit.check(clientIp(req))) {
+    return res.status(429).json({ error: 'Rate limit exceeded (10/min). Slow down.' });
+  }
+  pruneDelegateTasks();
+  const delegationId = delegateDecisionToTask.get(decisionId);
+  const task = delegationId === undefined ? undefined : delegateTasks.get(delegationId);
+  if (task === undefined) {
+    return res.status(404).json({ error: 'Unknown or expired delegation' });
+  }
+  const previous = task.decided.get(decisionId);
+  if (previous !== undefined) {
+    if (previous.inFlight || previous.result === null) {
+      return res.status(409).json({ error: 'decision_in_flight' });
+    } else if (previous.verdict !== decision) {
+      return res.status(409).json({ error: 'conflicting_decision' });
+    } else if (previous.result !== null && 'status' in previous.result) {
+      return res.status(202).json(previous.result);
+    } else if (previous.result !== null && 'record' in previous.result) {
+      return res.json({ record: previous.result.record });
+    } else {
+      return res.status(409).json({ error: 'conflicting_decision' });
+    }
+  }
+  const waiter = task.waiter;
+  if (waiter === null || waiter.decisionId !== decisionId) {
+    return res.status(409).json({ error: 'no_pending_approval' });
+  }
+  if (decision === 'approve' && activeExecutions >= EXEC_MAX_CONCURRENCY) {
+    return res.status(429).json({ error: 'Server busy: max concurrent executions reached' });
+  }
+  task.decided.set(decisionId, { verdict: decision, inFlight: true, result: null });
+  let settled = false;
+  res.on('close', () => {
+    if (!res.writableEnded && !settled) {
+      const entry = task.decided.get(decisionId);
+      if (entry !== null && entry !== undefined && entry.result === null) {
+        task.decided.delete(decisionId);
+      }
+    }
+  });
+  if (NO_EXEC) {
+    task.decided.set(decisionId, { verdict: decision, inFlight: false, result: null });
+    task.waiter = null;
+    waiter.resolve('denied');
+    delegate_task_notify(task);
+    return res.status(403).json({ error: 'disabled' });
+  } else if (isHighRiskScript(waiter.script)) {
+    task.decided.set(decisionId, { verdict: decision, inFlight: false, result: null });
+    task.waiter = null;
+    waiter.resolve('denied');
+    delegate_task_notify(task);
+    return res.status(403).json({ error: 'high-risk script blocked without execution' });
+  } else {
+    task.waiter = null;
+    waiter.resolve(decision === 'approve' ? 'approved' : 'skipped');
+    delegate_task_notify(task);
+  }
+  for (;;) {
+    while (task.waiter === null && !task.done) {
+      await delegate_task_wait(task);
+    }
+    if (task.waiter !== null) {
+      const next = task.waiter;
+      const result = { status: 'awaiting_approval' as const, decisionId: next.decisionId, script: next.script };
+      task.decided.set(decisionId, { verdict: decision, inFlight: false, result });
+      settled = true;
+      return res.status(202).json(result);
+    } else if (task.record !== null) {
+      task.decided.set(decisionId, { verdict: decision, inFlight: false, result: { record: task.record } });
+      settled = true;
+      return res.json({ record: task.record });
+    } else {
+      task.decided.set(decisionId, { verdict: decision, inFlight: false, result: null });
+      settled = true;
+      return res.status(500).json({ error: 'delegation failed' });
+    }
   }
 });
 
@@ -941,7 +1248,7 @@ app.get('/api/config', (_req, res) => {
 // API: Auto-generated project context (tree 4 levels + README + AGENTS + protocol)
 app.get('/api/context', (_req, res) => {
   try {
-    const systemPrompt = compose_forwarded_system(buildSystemPrompt(CWD, AUTO_EXECUTE ? 'both' : 'research'));
+    const systemPrompt = compose_forwarded_system(buildSystemPrompt(CWD, 'both'));
     res.json({ systemPrompt, cwd: CWD });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -1097,7 +1404,7 @@ app.post('/api/tell', async (req, res) => {
 
     const effectiveSystem = systemPrompt?.trim()
       ? systemPrompt
-      : compose_forwarded_system(buildSystemPrompt(CWD, AUTO_EXECUTE ? 'both' : 'research'));
+      : compose_forwarded_system(buildSystemPrompt(CWD, 'both'));
 
     // Streaming mode: per-request `stream` override wins over the boot `--stream`.
     // Streaming replies are NDJSON events; the model is resolved before headers are sent.
@@ -1194,14 +1501,26 @@ function build_delegation_model(modelSpec: string): {
  * @param cancellation - Optional token (request abort on `/api/delegate`).
  * @returns A runner with the parent's delegation budget.
  */
-function new_web_runner(modelSpec: string, cancellation?: CancellationToken): DelegationRunner {
+function new_web_runner(modelSpec: string, cancellation?: CancellationToken, runId?: string): DelegationRunner {
   const build_gate = async (request: { script: string }): Promise<'approved' | 'denied' | 'skipped'> => {
     if (NO_EXEC) {
       return 'denied';
     } else if (isHighRiskScript(request.script)) {
       return 'denied';
-    } else {
+    } else if (AUTO_EXECUTE) {
       return 'approved';
+    } else if (runId === undefined) {
+      return 'denied';
+    } else {
+      const pending = chainStore.requestApproval(runId, `[sub-tarefa] ${request.script}`, 'child');
+      if (pending === null) {
+        return 'denied';
+      } else {
+        const verdict = await new Promise<'approved' | 'denied' | 'skipped'>((resolve) => {
+          childResolvers.set(pending.decisionId, { runId, resolve });
+        });
+        return verdict;
+      }
     }
   };
   return create_delegation_runner({
@@ -1252,7 +1571,7 @@ async function run_web_delegation(
   if (NO_EXEC) {
     return null;
   }
-  if (kind === 'build' && !AUTO_EXECUTE) {
+  if (kind === 'build' && !AUTO_EXECUTE && runner === undefined) {
     return null;
   }
   if (activeExecutions >= EXEC_MAX_CONCURRENCY) {
@@ -1281,7 +1600,7 @@ function chain_runner_for(runId: string, modelSpec: string): DelegationRunner {
   if (existing !== undefined) {
     return existing;
   }
-  const runner = new_web_runner(modelSpec);
+  const runner = new_web_runner(modelSpec, undefined, runId);
   const continuation = chainContinuations.get(runId);
   if (continuation !== undefined) {
     continuation.delegationRunner = runner;
@@ -1367,8 +1686,51 @@ async function advanceChainRun(runId: string, modelSpec: string, system: string)
         chainStore.appendEvent(runId, { type: 'skipped', script: skipped_script });
       }
       if (delegation.kind === 'build' && !AUTO_EXECUTE) {
-        chainStore.appendEvent(runId, { type: 'denied', text: 'build delegation not enabled on this host' });
-        return chainStore.completeRun(runId, visible_text);
+        // v2 nested: the child approval needs HTTP, so the POST cannot block
+        // waiting for it (the client learns decisionId from the snapshot).
+        // Run the delegation in background; the client polls GET and answers
+        // via confirm, which wakes the bridge. `shortcut: background owns the
+        // parent loop from here, foreground returns early for polling.`
+        const bgModelSpec = modelSpec;
+        const bgSystem = system;
+        const bgVisible = visible_text;
+        const bgKind = delegation.kind;
+        const bgObjective = delegation.objective;
+        (async () => {
+          try {
+            const delegated = await run_web_delegation(
+              bgModelSpec,
+              bgKind,
+              bgObjective,
+              undefined,
+              chain_runner_for(runId, bgModelSpec),
+            );
+            const live = chainStore.getRun(runId);
+            if (live === null || live.status === 'cancelled') {
+              return;
+            } else if (delegated === null) {
+              chainStore.appendEvent(runId, {
+                type: 'denied',
+                text: `${bgKind} delegation not enabled on this host`,
+              });
+              dropContinuationIfTerminal(runId, chainStore.completeRun(runId, bgVisible));
+              return;
+            } else {
+              chainStore.pushMessage(runId, { role: 'user', content: delegated.record });
+              chainStore.appendEvent(runId, { type: 'message', text: delegated.record });
+              const snap = await advanceChainRun(runId, bgModelSpec, bgSystem);
+              dropContinuationIfTerminal(runId, snap);
+              return;
+            }
+          } catch (error: unknown) {
+            chainStore.failRun(runId, model_error_message(error) || 'AI generation failed');
+            dropContinuationIfTerminal(runId, chainStore.getRun(runId));
+            return;
+          }
+        })().catch((error: unknown) => {
+          console.error('Chain delegation background failed:', error instanceof Error ? error.message : String(error));
+        });
+        return chainStore.getRun(runId);
       }
       const delegated = await run_web_delegation(
         modelSpec,
@@ -1465,7 +1827,7 @@ app.post('/api/chain', async (req, res) => {
 
     const effectiveSystem = systemPrompt?.trim()
       ? systemPrompt
-      : compose_forwarded_system(buildSystemPrompt(CWD, AUTO_EXECUTE ? 'both' : 'research'));
+      : compose_forwarded_system(buildSystemPrompt(CWD, 'both'));
 
     const created = chainStore.createRun(formattedMessages);
     chainContinuations.set(created.runId, { modelSpec, system: effectiveSystem });
@@ -1524,7 +1886,74 @@ app.post('/api/chain/:runId/confirm', async (req, res) => {
   }
   const script = gate.script;
   const decisionId = validation.value.decision_id;
-  if (NO_EXEC) {
+  const isChildApproval = chainStore.getRun(runId)?.childPending?.decisionId === decisionId;
+  if (isChildApproval) {
+    // v2 nested approval: the child waits on a deferred promise in
+    // `childResolvers`. The confirm only records approved/skipped/denied and
+    // wakes the delegation; execution stays inside the delegation runner.
+    const resolver = childResolvers.get(decisionId);
+    if (NO_EXEC) {
+      const snapshot = chainStore.finishConfirm(runId, decisionId, {
+        type: 'denied',
+        script,
+        text: 'disabled (--no-exec)',
+        status: 'running',
+      });
+      if (resolver !== undefined) {
+        childResolvers.delete(decisionId);
+        resolver.resolve('denied');
+      }
+      dropContinuationIfTerminal(runId, snapshot);
+      return res.status(403).json({ error: 'disabled', run: snapshot });
+    } else if (isHighRiskScript(script.replace(/^\[sub-tarefa\] /, ''))) {
+      const snapshot = chainStore.finishConfirm(runId, decisionId, {
+        type: 'denied',
+        script,
+        text: 'high-risk: blocked without execution',
+        status: 'running',
+      });
+      if (resolver !== undefined) {
+        childResolvers.delete(decisionId);
+        resolver.resolve('denied');
+      }
+      dropContinuationIfTerminal(runId, snapshot);
+      return res.status(403).json({ error: 'high-risk script blocked without execution', run: snapshot });
+    } else if (validation.value.decision === 'skip') {
+      const skipped = chainStore.finishConfirm(runId, decisionId, {
+        type: 'skipped',
+        script,
+        status: 'running',
+      });
+      if (skipped === null) {
+        return res.status(404).json({ error: 'Unknown or expired chain run' });
+      } else {
+        if (resolver !== undefined) {
+          childResolvers.delete(decisionId);
+          resolver.resolve('skipped');
+        }
+        const settled = chainStore.settleDecision(runId, decisionId);
+        dropContinuationIfTerminal(runId, settled ?? skipped);
+        return res.json(settled ?? skipped);
+      }
+    } else {
+      const approved = chainStore.finishConfirm(runId, decisionId, {
+        type: 'approved',
+        script,
+        status: 'running',
+      });
+      if (approved === null) {
+        return res.status(404).json({ error: 'Unknown or expired chain run' });
+      } else {
+        if (resolver !== undefined) {
+          childResolvers.delete(decisionId);
+          resolver.resolve('approved');
+        }
+        const settled = chainStore.settleDecision(runId, decisionId);
+        dropContinuationIfTerminal(runId, settled ?? approved);
+        return res.json(settled ?? approved);
+      }
+    }
+  } else if (NO_EXEC) {
     const snapshot = denyChainScript(runId, decisionId, script, 'disabled', '--no-exec');
     dropContinuationIfTerminal(runId, snapshot);
     return res.status(403).json({ error: 'disabled', run: snapshot });
