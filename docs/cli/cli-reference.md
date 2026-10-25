@@ -48,13 +48,15 @@ Full spec format: `vendor:model[:thinking]` with thinking in `none|low|medium|hi
 | `--no-stdin-timeout` | boolean | Disable the stdin deadline (byte cap stays active). Equivalent to `--stdin-timeout 0`. |
 | `--stdin-max-bytes <n>` | string | Max stdin bytes (default `1048576`). Overflow exits `125`. |
 | `--exec-timeout <ms>` | string | Per-command timeout in ms (default `120000`, max `600000`). |
-| `--max-chain <n>` | string | Max chain rounds, `1..128` (default `8`; the core loop enforces no upper clamp). |
+| `--max-chain <n>` | string | Max chain rounds, `1..128` (default `8`; the core loop enforces no upper clamp). Parent delegation budget scales from it: `>= 2 ? min(4, max(1, floor(n/4))) : 0` (`1` → 0, the tag stays inert). |
 | `--max-buffer <n>` | string | Internal exec buffer bytes (default `33554432`). |
 | `--output-max-bytes <n>` | string | Delivered output cap bytes (default `204800`); cut output carries a `[output truncated at N bytes]` marker. |
 
 `exec` in `CliOptions` is `false` only with `--no-exec` (commander negated boolean); `run_tell` resolves the flags once into `execMode: 'no-exec' | 'confirm-all' | 'auto-risk'` — `--no-exec` wins over everything, `-y` (with or without `--require-approval`) selects `auto-risk`, anything else confirms every command.
 
 ## Flag interactions
+
+Delegation is chain-only with no new flag: with `--chain` the prompt gains the core-owned delegation section (`<DELEGATE>` research read-only, `<SUBTASK>` build with normal approval; at most one tag per answer, delegation wins over `<RUN>` which is recorded skipped, never executed). See [chain-mode.md](chain-mode.md) and [execution.md](execution.md).
 
 | Flags | Reads? | Deletes default? | Writes? | Loop? |
 |-------|--------|------------------|---------|-------|

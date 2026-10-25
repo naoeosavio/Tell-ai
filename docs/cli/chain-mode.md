@@ -43,4 +43,13 @@ Chain alone does not persist across invocations (`saveContext = false` without `
 
 Timeouts still apply per command (120s). A hanging command reports exit 124 and the loop continues with that output as context.
 
+## Delegation (`<DELEGATE>` research, `<SUBTASK>` build)
+
+Chain-only (no new flag): with `--chain` the prompt gains the core-owned delegation section (`delegation_prompt_section('both')` on the CLI, appended after the SDK prompt; Web uses `'research'` or `'both'` depending on `-y`). One tag per answer at most; delegation wins over `<RUN>` (any `<RUN>` in the same answer is recorded `Skipped by user:`, never executed).
+
+- `<DELEGATE>` is read-only: the core wraps approval with `create_read_only_approval` (sensitive paths deny first, then metacharacter/write rules, then the host approval). Deny-by-default: `cat`/`ls`/`git log` pass; `sed -i`, `rm`, `>`, `|`, `;`, `find -delete`, `git checkout`, `cat .env` deny with or without `-y`. Precision: fd duplication (`2>&1`) stays allowed and absolute paths inside the host cwd are scoped to the allowlist + host gate (see [execution.md](execution.md)).
+- `<SUBTASK>` inherits the host approval (CLI in-process, Web Auto-Run with `-y`); where the host would have to ask over HTTP the tag is denied with motive (`denied`, never `skipped`).
+- The parent only receives `Research result:` / `Task result:` + one host-assembled stats line (`cap(redact(text))`, 2 KiB); raw child stdout never climbs. The child runs ≤3 rounds with its own bounded storage (16 KiB) and never recurses (no runner inside). Child scripts are audited to the run log as `Child command (<status>):` (log-only, never parent context). A tag-only parent answer with no commands still asks once more for a visible answer instead of printing nothing (the model can still stay silent — the guarantee is the extra ask, not the words).
+- Budget: `max_chain_steps >= 2 ? min(4, max(1, floor(max_chain/4))) : 0` (default 8 → 2; `--max-chain 1` → 0, the tag stays inert).
+
 Sources: `packages/cli/src/Tell.ts` (`run_response_loop`), `packages/cli/src/core-adapters.ts`, `packages/core/src/loop.ts`; chain assertions in `test/test-tell-security.js:278-313`. Core reference: [../core/loop.md](../core/loop.md), [../core/loop-feedback.md](../core/loop-feedback.md).
