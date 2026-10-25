@@ -569,6 +569,22 @@ function assertPromptInjectionPolicy(result) {
   assert.match(result.stderr, /Chain limit reached \(8\); ignoring further requested commands/);
   assert.strictEqual(result.stdout, '');
 
+  // Delegation: a tag-only parent answer strips to empty text with no
+  // commands, so the legacy commands-only final-answer check would leave
+  // stdout empty. The run asks once more and prints the visible answer.
+  result = await runTell(['d', '--chain', 'investigate'], [
+    '<DELEGATE>\nlist files\n</DELEGATE>',
+    'child findings',
+    '',
+    'final summary',
+  ]);
+  assert.deepStrictEqual(result.execCalls, []);
+  assert.strictEqual(result.stdout, 'final summary\n');
+  assert(!result.stdout.includes('<DELEGATE>'));
+  assert.match(result.tellMessages[3], /Research result:/);
+  // No tag *block* is re-emitted (the instruction names the tags inline).
+  assert.doesNotMatch(result.tellMessages[3], /<DELEGATE>\n/);
+
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-security-'));
   try {
     await runTell(['d', '-c', 'first'], 'first answer', { dir });

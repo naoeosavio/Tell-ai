@@ -12,14 +12,41 @@ const path = require('node:path');
 const ts = require('typescript');
 
 function load_module(rel, export_names) {
-  const source = ts.transpileModule(fs.readFileSync(path.join(__dirname, '..', rel), 'utf8'), {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
-  }).outputText;
-  const mod = new module.constructor();
-  mod.paths = module.paths;
-  new Function('module', 'exports', 'require', source)(mod, mod.exports, require);
+  // Recursively compiles from source so relative imports (e.g. the
+  // loop-feedback headers runtime-limits.ts imports) resolve against the
+  // importing file, not this harness. Bare specifiers keep Node resolution.
+  const compiled = new Map();
+  function compile_source(abs_path) {
+    if (compiled.has(abs_path)) {
+      return compiled.get(abs_path);
+    } else {
+      // Not compiled yet — transpile and evaluate below.
+    }
+    const source = ts.transpileModule(fs.readFileSync(abs_path, 'utf8'), {
+      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+    }).outputText;
+    const mod = new module.constructor();
+    mod.paths = module.paths;
+    const local_require = (spec) => {
+      if (spec.startsWith('.')) {
+        let resolved = path.normalize(path.join(path.dirname(abs_path), spec));
+        if (!/\.[a-z]+$/i.test(resolved)) {
+          resolved += '.ts';
+        } else {
+          // Explicit extension — use as resolved.
+        }
+        return compile_source(resolved);
+      } else {
+        return require(spec);
+      }
+    };
+    new Function('module', 'exports', 'require', source)(mod, mod.exports, local_require);
+    compiled.set(abs_path, mod.exports);
+    return mod.exports;
+  }
+  const exports = compile_source(path.join(__dirname, '..', rel));
   const out = {};
-  for (const name of export_names) out[name] = mod.exports[name];
+  for (const name of export_names) out[name] = exports[name];
   return out;
 }
 
