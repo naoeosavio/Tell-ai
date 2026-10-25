@@ -2632,11 +2632,13 @@ describe('web sandbox: delegation (sub-tell)', () => {
       }
     });
 
-    it('denies build without -y (stateless: the child cannot ask)', async () => {
+    it('parks build without -y on awaiting (v2 nested, child asks via confirm)', async () => {
       const res = await postJson(base, '/api/delegate', { kind: 'build', objective: 'list files' });
-      assert.strictEqual(res.status, 403);
-      const body = await res.json();
-      assert.match(body.error, /build delegation not enabled/);
+      // No model keys here: the background fails before any approval, so the
+      // call fails closed instead of parking. The parked shape is covered
+      // live with a stub below; here the point is only that v1's 403 is gone.
+      assert.ok([202, 500].includes(res.status), `expected 202 or 500, got ${res.status}`);
+      await res.json().catch(() => ({}));
     });
 
     it('enforces the concurrency cap like /api/execute', async () => {
@@ -2750,7 +2752,7 @@ describe('web sandbox: delegation (sub-tell)', () => {
     });
   });
 
-  describe('chain build denied without -y (stub model)', () => {
+  describe('chain build nested approval without -y (stub model, v2)', () => {
     let stub;
     let handle;
     let base;
@@ -2758,6 +2760,8 @@ describe('web sandbox: delegation (sub-tell)', () => {
     before(async () => {
       stub = await startDelegateStub((content) => {
         if (content === 'please build') return 'On it.\n<SUBTASK>create out.txt with hi</SUBTASK>';
+        if (content === 'create out.txt with hi') return '<RUN>echo hi > out.txt</RUN>';
+        if (content.includes('Task result:')) return 'Build done, no more commands.';
         return 'Final answer.';
       });
       handle = bootDelegate(['-m', 'q'], { LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stub.port}/v1` });
@@ -2770,18 +2774,97 @@ describe('web sandbox: delegation (sub-tell)', () => {
       stub.server.close();
     });
 
-    it('denies with motive, never skipped, and creates no pending', async () => {
+    it('pauses on childPending, approves nested, executes and records only the summary', async () => {
       const res = await postJson(base, '/api/chain', { messages: [{ role: 'user', content: 'please build' }] });
       assert.strictEqual(res.status, 200);
-      const run = await res.json();
-      assert.strictEqual(run.status, 'completed');
-      assert.strictEqual(run.pending, null);
-      const denied = run.events.filter((e) => e.type === 'denied');
-      assert.strictEqual(denied.length, 1);
-      assert.match(denied[0].text, /build delegation not enabled/);
-      assert.ok(!fs.existsSync(path.join(handle.dir, 'out.txt')), 'nothing executed');
-      const assistantTexts = run.events.filter((e) => e.type === 'message').map((e) => e.text || '');
+      const started = await res.json();
+      assert.ok(started.runId);
+      let snap = started;
+      for (let i = 0; i < 50 && snap.childPending === null; i++) {
+        await new Promise((r) => setTimeout(r, 200));
+        const got = await fetch(`${base}/api/chain/${started.runId}`);
+        assert.strictEqual(got.status, 200);
+        snap = await got.json();
+      }
+      assert.ok(snap.childPending, 'child approval appears for polling client');
+      assert.strictEqual(snap.pending, null);
+      assert.match(snap.childPending.script, /\[sub-tarefa\]/);
+      const confirm = await postJson(base, `/api/chain/${started.runId}/confirm`, {
+        decisionId: snap.childPending.decisionId,
+        expectedVersion: snap.childPending.expectedVersion,
+        decision: 'approve',
+      });
+      assert.strictEqual(confirm.status, 200);
+      for (let i = 0; i < 50; i++) {
+        await new Promise((r) => setTimeout(r, 200));
+        const got = await fetch(`${base}/api/chain/${started.runId}`);
+        snap = await got.json();
+        if (snap.status === 'completed') break;
+      }
+      assert.strictEqual(snap.status, 'completed');
+      assert.strictEqual(snap.childPending, null);
+      assert.ok(fs.existsSync(path.join(handle.dir, 'out.txt')), 'nested child executed after approve');
+      const records = snap.events.filter((e) => typeof e.text === 'string' && e.text.startsWith('Task result:'));
+      assert.strictEqual(records.length, 1);
+      const assistantTexts = snap.events.filter((e) => e.type === 'message').map((e) => e.text || '');
       assert.ok(!assistantTexts.some((t) => t.includes('<SUBTASK>')));
+    });
+  });
+
+  describe('delegate build nested without -y (stub model, v2)', () => {
+    let stub;
+    let handle;
+    let base;
+
+    before(async () => {
+      stub = await startDelegateStub((content) => {
+        if (content === 'please build') return '<RUN>echo hi > out.txt</RUN>';
+        return 'Built it.';
+      });
+      handle = bootDelegate(['-m', 'q'], { LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stub.port}/v1` });
+      base = await handle.basePromise;
+    });
+
+    after(async () => {
+      await shutdown(handle);
+      stub.server.closeAllConnections?.();
+      stub.server.close();
+    });
+
+    it('parks on awaiting, approves via confirm, executes and returns only the summary', async () => {
+      const res = await postJson(base, '/api/delegate', { kind: 'build', objective: 'please build' });
+      assert.strictEqual(res.status, 202);
+      const parked = await res.json();
+      assert.strictEqual(parked.status, 'awaiting_approval');
+      assert.ok(parked.decisionId);
+      assert.ok(parked.script);
+      const confirm = await postJson(base, `/api/delegate/${encodeURIComponent(parked.decisionId)}/confirm`, {
+        decision: 'approve',
+      });
+      assert.strictEqual(confirm.status, 200);
+      const done = await confirm.json();
+      assert.ok(typeof done.record === 'string' && done.record.includes('Task result:'));
+      assert.ok(!done.record.includes('echo hi > out.txt'));
+      assert.ok(fs.existsSync(path.join(handle.dir, 'out.txt')), 'nested child executed after approve');
+    });
+
+    it('replays the same decision id without re-executing and conflicts on rival verdict', async () => {
+      const res = await postJson(base, '/api/delegate', { kind: 'build', objective: 'please build' });
+      assert.strictEqual(res.status, 202);
+      const parked = await res.json();
+      const first = await postJson(base, `/api/delegate/${encodeURIComponent(parked.decisionId)}/confirm`, {
+        decision: 'skip',
+      });
+      assert.strictEqual(first.status, 200);
+      const replay = await postJson(base, `/api/delegate/${encodeURIComponent(parked.decisionId)}/confirm`, {
+        decision: 'skip',
+      });
+      assert.strictEqual(replay.status, 200);
+      assert.deepStrictEqual(await replay.json(), await first.json().catch(() => ({})));
+      const rival = await postJson(base, `/api/delegate/${encodeURIComponent(parked.decisionId)}/confirm`, {
+        decision: 'approve',
+      });
+      assert.strictEqual(rival.status, 409);
     });
   });
 

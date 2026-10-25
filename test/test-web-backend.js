@@ -788,6 +788,19 @@ test('context: delegation sections follow what the host can approve', () => {
   assert.ok(buildSystemPrompt(dir).includes('<DELEGATE>'), 'default stays research');
 });
 
+test('context: server always advertises both tags (v2 nested, no -y gate)', () => {
+  const source = fs.readFileSync(path.join(WEB_SRC, 'src', 'server', 'server.ts'), 'utf8');
+  assert.ok(source.includes("buildSystemPrompt(CWD, 'both')"), 'server passes both always');
+  assert.ok(!source.includes("AUTO_EXECUTE ? 'both'"), 'no -y gate left on the prompt');
+});
+
+test('chain: browser prefers the child card (v2 nested)', () => {
+  const source = fs.readFileSync(path.join(WEB_SRC, 'src', 'App.tsx'), 'utf8');
+  const childAt = source.indexOf('snapshot.childPending');
+  const parentAt = source.indexOf('else if (snapshot.pending)');
+  assert.ok(childAt !== -1 && parentAt !== -1 && childAt < parentAt, 'child wins the single card slot');
+});
+
 // ---------------------------------------------------------------------------
 // Build config: the AI stack must stay external to the server bundle
 // ---------------------------------------------------------------------------
@@ -1222,6 +1235,10 @@ test('chain: server keeps the script, validates the helper, and denies closed', 
     source.includes('chainContinuations.delete'),
     'per-run continuations are released on terminal snapshots (no unbounded growth)',
   );
+  for (const route of ['/api/delegate', '/api/delegate/:decisionId/confirm']) {
+    assert.ok(source.includes(route), `server must define the delegate ${route} route`);
+  }
+  assert.ok(source.includes('delegateDecisionToTask'), 'delegate waits are keyed by decision id (replayable)');
 });
 
 if (failures > 0) {

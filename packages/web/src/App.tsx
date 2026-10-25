@@ -161,6 +161,7 @@ interface ChainSnapshot {
   text: string;
   events: ChainSnapshotEvent[];
   pending: { decisionId: string; script: string; expectedVersion: number } | null;
+  childPending?: { decisionId: string; script: string; expectedVersion: number } | null;
 }
 
 // Server-kept approval the confirm card answers (decision id + version, no script).
@@ -272,6 +273,10 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
   // criteria in the core task are met). Ref-only: every update site also
   // touches `pendingCommand`/messages, which already re-render.
   const serverChainRef = useRef<ServerChainPending | null>(null);
+  // Stateless delegate wait (v2 nested for the local loop): set while the
+  // delegate callback parks on `awaiting_approval`. Ref-only like above.
+  const delegateWaitRef = useRef<{ resolve: (decision: 'approve' | 'skip') => void } | null>(null);
+  const delegateDecisionRef = useRef<{ decisionId: string } | null>(null);
   // Last rendered event seq per run (incremental feed/message rendering).
   const chainSeqRef = useRef<{ runId: string; seq: number } | null>(null);
   const lastAgentErrorCountRef = useRef<number>(0);
@@ -683,6 +688,11 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
     const pending = serverChainRef.current;
     serverChainRef.current = null;
     chainSeqRef.current = null;
+    if (delegateWaitRef.current !== null) {
+      delegateWaitRef.current.resolve('skip');
+      delegateWaitRef.current = null;
+    }
+    delegateDecisionRef.current = null;
     if (cancelRemote && pending) {
       apiFetch(`/api/chain/${encodeURIComponent(pending.runId)}/cancel`, { method: 'POST' }).catch(() => {});
     }
@@ -722,7 +732,15 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
       if (freshMessages.length > 0) {
         setMessagesAndSync((prev) => [...prev, ...freshMessages]);
       }
-      if (snapshot.pending) {
+      if (snapshot.childPending) {
+        serverChainRef.current = {
+          runId: snapshot.runId,
+          decisionId: snapshot.childPending.decisionId,
+          expectedVersion: snapshot.childPending.expectedVersion,
+          script: snapshot.childPending.script,
+        };
+        setPendingCommand(snapshot.childPending.script);
+      } else if (snapshot.pending) {
         serverChainRef.current = {
           runId: snapshot.runId,
           decisionId: snapshot.pending.decisionId,
@@ -1178,14 +1196,61 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
             signal: controller.signal,
             body: JSON.stringify({ kind, objective, modelAlias }),
           });
-          if (!delegate_res.ok) {
+          if (!delegate_res.ok && delegate_res.status !== 202) {
             const err = await delegate_res.json().catch(() => ({}));
             throw new Error(err.error || 'delegation failed');
           }
-          const delegate_data = await delegate_res.json();
-          const record = delegate_data.record || '';
-          appendAgentLine('output', record);
-          return record;
+          let delegate_data = await delegate_res.json();
+          for (;;) {
+            if (typeof delegate_data.record === 'string') {
+              appendAgentLine('output', delegate_data.record);
+              setPendingCommand(null);
+              delegateDecisionRef.current = null;
+              return delegate_data.record;
+            } else if (
+              delegate_data.status === 'awaiting_approval' &&
+              typeof delegate_data.decisionId === 'string' &&
+              typeof delegate_data.script === 'string'
+            ) {
+              delegateDecisionRef.current = { decisionId: delegate_data.decisionId };
+              setPendingCommand(delegate_data.script);
+              const userDecision = await new Promise<'approve' | 'skip'>((resolve, reject) => {
+                delegateWaitRef.current = { resolve };
+                if (controller.signal.aborted) {
+                  delegateWaitRef.current = null;
+                  reject(new DOMException('Aborted', 'AbortError'));
+                  return;
+                }
+                const onAbort = (): void => {
+                  delegateWaitRef.current = null;
+                  reject(new DOMException('Aborted', 'AbortError'));
+                };
+                controller.signal.addEventListener('abort', onAbort, { once: true });
+              }).finally(() => {
+                delegateWaitRef.current = null;
+              });
+              const confirm_res = await apiFetch(
+                `/api/delegate/${encodeURIComponent(delegate_data.decisionId)}/confirm`,
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  signal: controller.signal,
+                  body: JSON.stringify({ decision: userDecision }),
+                },
+              );
+              if (!confirm_res.ok && confirm_res.status !== 202) {
+                const err = await confirm_res.json().catch(() => ({}));
+                setPendingCommand(null);
+                delegateDecisionRef.current = null;
+                throw new Error(err.error || 'delegation failed');
+              }
+              delegate_data = await confirm_res.json();
+            } else {
+              setPendingCommand(null);
+              delegateDecisionRef.current = null;
+              throw new Error(delegate_data.error || 'delegation failed');
+            }
+          }
         },
       });
 
@@ -1300,6 +1365,20 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
 
   const handleConfirmPending = async (editedCommand: string) => {
     const command = editedCommand.trim() || pendingCommand || '';
+    // Stateless delegate wait (v2 nested local loop): approve/skip wakes the
+    // delegate callback above, which confirms by decision id. Edited text is
+    // rejected here — approve or skip first, then type a new command.
+    // `shortcut: single pendingCommand slot is shared; delegate wins while it waits.`
+    if (delegateWaitRef.current !== null) {
+      if (command !== pendingCommand) {
+        toast('error', 'Sub-task approval cannot be edited — approve or skip first.');
+        return;
+      } else {
+        delegateWaitRef.current.resolve('approve');
+        delegateWaitRef.current = null;
+        return;
+      }
+    }
     // Server-kept approval: an unedited confirm answers by decision id (the
     // server runs its kept script exactly once). An edited command never goes
     // through the server confirm — it runs on the local path and the server
@@ -1404,6 +1483,11 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
   };
 
   const handleSkipPending = async () => {
+    if (delegateWaitRef.current !== null) {
+      delegateWaitRef.current.resolve('skip');
+      delegateWaitRef.current = null;
+      return;
+    }
     const serverPending = serverChainRef.current;
     if (serverPending) {
       // Server-kept approval: skip continues the server loop without the script.
