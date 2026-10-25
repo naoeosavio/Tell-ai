@@ -13,7 +13,7 @@ import {
 import { DEFAULT_EXEC_TIMEOUT_MS, DEFAULT_MAX_BUFFER_BYTES } from './runtime-limits';
 
 // Default key for the single conversation slot kept through StoragePort.
-const DEFAULT_STORAGE_KEY = 'tell-runtime';
+export const DEFAULT_STORAGE_KEY = 'tell-runtime';
 
 // The SDK only forwards timeout/buffer inside ExecutorOptions — enforcement
 // belongs to the injected executor (core owns exec). Both values come from the
@@ -251,10 +251,45 @@ export type TellRuntime = {
 
 /**
  * In-memory `StoragePort`. Safe default when no storage is injected: no disk,
- * no localStorage, no globals. Each instance is independent.
+ * no localStorage, no globals. Each instance is independent. Uncapped unless
+ * the host opts in with `max_chars` (the delegation child does — the parent
+ * relies on the caller-side `truncate_context` instead, so the default stays
+ * unbounded by design).
  */
 export class MemoryStorageAdapter implements StoragePort {
   private store = new Map<string, string>();
+  private max_chars: number | undefined;
+
+  /**
+   * Creates an in-memory store, optionally tail-capped and pre-seeded.
+   *
+   * @param max_chars - When set, every stored value keeps only its tail.
+   * @param initial - Seed entries (capped like any other write).
+   */
+  constructor(max_chars?: number, initial?: Record<string, string>) {
+    this.max_chars = max_chars;
+    if (initial !== undefined) {
+      for (const [key, value] of Object.entries(initial)) {
+        this.store.set(key, this.cap(value));
+      }
+    } else {
+      // No seed — starts empty.
+    }
+  }
+
+  /**
+   * Keeps only the tail of a value when this store is capped.
+   *
+   * @param value - Value to cap.
+   * @returns The tail (the value itself when uncapped or short enough).
+   */
+  private cap(value: string): string {
+    if (this.max_chars === undefined || value.length <= this.max_chars) {
+      return value;
+    } else {
+      return value.slice(-this.max_chars);
+    }
+  }
 
   /**
    * Loads the value stored under a key.
@@ -278,7 +313,7 @@ export class MemoryStorageAdapter implements StoragePort {
    * @param value - Value to store.
    */
   async save(key: string, value: string): Promise<void> {
-    this.store.set(key, value);
+    this.store.set(key, this.cap(value));
   }
 
   /**

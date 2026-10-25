@@ -546,7 +546,8 @@ function count_tag_pair(text: string, open: string, close: string): { open: numb
 }
 
 /**
- * Returns true when `<think>` and `<RUN>` blocks are balanced.
+ * Returns true when `<think>`, `<RUN>`, `<DELEGATE>` and `<SUBTASK>` blocks
+ * are balanced.
  *
  * @param text - Candidate output text.
  * @returns True when every opener has a closer.
@@ -554,9 +555,15 @@ function count_tag_pair(text: string, open: string, close: string): { open: numb
 export function has_balanced_tags(text: string): boolean {
   const think = count_tag_pair(text, '<think>', '</think>');
   const run = count_tag_pair(text, '<run>', '</run>');
+  const delegate = count_tag_pair(text, '<delegate>', '</delegate>');
+  const subtask = count_tag_pair(text, '<subtask>', '</subtask>');
   if (think.open !== think.close) {
     return false;
   } else if (run.open !== run.close) {
+    return false;
+  } else if (delegate.open !== delegate.close) {
+    return false;
+  } else if (subtask.open !== subtask.close) {
     return false;
   } else {
     return true;
@@ -620,9 +627,13 @@ function slice_utf8_bytes(text: string, max_bytes: number): string {
 function balancing_suffix(text: string): string {
   const think = count_tag_pair(text, '<think>', '</think>');
   const run = count_tag_pair(text, '<run>', '</run>');
+  const delegate = count_tag_pair(text, '<delegate>', '</delegate>');
+  const subtask = count_tag_pair(text, '<subtask>', '</subtask>');
   let suffix = '';
   for (let index = 0; index < think.open - think.close; index += 1) suffix += '\n</think>';
   for (let index = 0; index < run.open - run.close; index += 1) suffix += '\n</RUN>';
+  for (let index = 0; index < delegate.open - delegate.close; index += 1) suffix += '\n</DELEGATE>';
+  for (let index = 0; index < subtask.open - subtask.close; index += 1) suffix += '\n</SUBTASK>';
   return suffix;
 }
 
@@ -636,14 +647,24 @@ function drop_orphan_closers(text: string): string {
   let tail = text;
   let think = count_tag_pair(tail, '<think>', '</think>');
   let run = count_tag_pair(tail, '<run>', '</run>');
+  let delegate = count_tag_pair(tail, '<delegate>', '</delegate>');
+  let subtask = count_tag_pair(tail, '<subtask>', '</subtask>');
   for (let index = 0; index < think.close - think.open; index += 1) {
     tail = tail.replace(/<\/think>/i, '');
   }
   for (let index = 0; index < run.close - run.open; index += 1) {
     tail = tail.replace(/<\/RUN>/i, '');
   }
+  for (let index = 0; index < delegate.close - delegate.open; index += 1) {
+    tail = tail.replace(/<\/DELEGATE>/i, '');
+  }
+  for (let index = 0; index < subtask.close - subtask.open; index += 1) {
+    tail = tail.replace(/<\/SUBTASK>/i, '');
+  }
   think = count_tag_pair(tail, '<think>', '</think>');
   run = count_tag_pair(tail, '<run>', '</run>');
+  delegate = count_tag_pair(tail, '<delegate>', '</delegate>');
+  subtask = count_tag_pair(tail, '<subtask>', '</subtask>');
   return tail;
 }
 
@@ -690,10 +711,10 @@ function truncate_single_turn(turn: string, max_chars: number): string {
  * Truncates conversation context to whole turns with balanced tags.
  *
  * Keeps the newest turns that fit, drops whole old turns with an explicit
- * marker, and never splits a turn, a `<think>` block, a `<RUN>` block or a
- * message. A single turn larger than the budget is tail-cut at a safe
- * boundary (never leaving a dangling `<` fragment or unclosed tag). The
- * result never exceeds `max_chars` characters — the marker and the closing
+ * marker, and never splits a turn, a `<think>` block, a `<RUN>` block, a
+ * `<DELEGATE>`/`<SUBTASK>` block or a message. A single turn larger than the
+ * budget is tail-cut at a safe boundary (never leaving a dangling `<`
+ * fragment or unclosed tag). The result never exceeds `max_chars` characters — the marker and the closing
  * tags are part of the budget.
  *
  * @param text - Full conversation text.

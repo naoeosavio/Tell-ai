@@ -173,12 +173,6 @@ function is_token_inside_cwd(token: string, cwd: string): boolean {
  */
 export function script_touches_sensitive_path(script: string, cwd?: string): boolean {
   const lowered = script.toLowerCase();
-  // Fast path: the literal names appear anywhere (covers `HEAD:.env`,
-  // `--output=.env`, quoted variants) except the committed template.
-  const without_template = lowered.replace(/\.env\.example/g, '');
-  if (without_template.includes('.env')) {
-    return true;
-  }
   if (lowered.includes('.tell') || lowered.includes('.git')) {
     // Bare words like `tell`/`git` alone are not paths — require a separator.
     for (const token of script_path_tokens(script)) {
@@ -213,12 +207,33 @@ export function script_touches_sensitive_path(script: string, cwd?: string): boo
     // `mktemp` dir), which is the common case since models are told the cwd.
     const bare = token.replace(/^["']|["']$/g, '');
     if (bare.startsWith('/') && cwd !== undefined && is_token_inside_cwd(bare, cwd)) {
-      // Lexically inside the host cwd: the deny-list names above still
-      // applied; scope is now the allowlist + the host realpath gate.
+      // Lexically inside the host cwd: the deny-list names above (extensions,
+      // key basenames) already applied, but `.env*`/`.tell`/`.git` live in
+      // the check below — re-run it on the cwd-relative remainder so
+      // `/cwd/.env` still denies while `/cwd/notes.envelope.txt` allows.
+      const base_norm = normalize_posix_path(cwd);
+      const target_norm = normalize_posix_path(bare);
+      const rel = target_norm.slice(base_norm.length).replace(/^\//, '');
+      if (rel.length > 0 && is_sensitive_rel_path(rel)) {
+        return true;
+      }
       continue;
     }
     if (is_sensitive_rel_path(low)) {
       return true;
+    }
+    // Colon-joined references (`git show HEAD:.env`) never resolve a path,
+    // so the whole token misses the deny-list: check the part after the
+    // last colon too. Leading slashes are stripped so URL remainders
+    // (`http://example.com`) stay allowed.
+    // shortcut: colon-suffix only; `my.env.backup`-style substrings without a
+    // colon stay allowed (documented gap, same family as the grep gaps).
+    const colon_at = low.lastIndexOf(':');
+    if (colon_at !== -1) {
+      const suffix = low.slice(colon_at + 1).replace(/^\/+/, '');
+      if (suffix.length > 0 && is_sensitive_rel_path(suffix)) {
+        return true;
+      }
     }
   }
   return false;
