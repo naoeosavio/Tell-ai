@@ -148,7 +148,19 @@ export async function run_primitive_loop(message: string, options: CoreLoopOptio
       // Completed or failed-with-command — inspect the command below.
     }
     const last = round_result.commands[round_result.commands.length - 1];
-    if (last === undefined) {
+    if (round_result.delegation !== undefined) {
+      // Delegation consumed one parent round: the record becomes the next
+      // message (same shape as command feedback), unless the budget ran out
+      // or cancellation fired.
+      if (token?.cancelled) {
+        return { status: 'cancelled', text, timeline, commands };
+      } else if (round === max_rounds) {
+        timeline.push(chain_limit_notice(max_rounds));
+        return { status: 'completed', text, timeline, commands };
+      } else {
+        current_message = round_result.delegation.record;
+      }
+    } else if (last === undefined) {
       return { status: 'completed', text, timeline, commands };
     } else if (last.status === 'executed' || last.status === 'failed') {
       if (round === max_rounds) {

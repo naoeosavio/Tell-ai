@@ -1,4 +1,7 @@
 import { extract_runs, get_system_prompt, strip_run_tags, strip_think_tags } from '@tell-ai/sdk/pure';
+import type { DelegationRunner } from './delegation';
+import type { DelegationKind } from './delegation-tags';
+import { extract_delegation, strip_delegation_tags } from './delegation-tags';
 
 import {
   format_cancelled_command,
@@ -46,6 +49,16 @@ export type RuntimeCommand = {
   finished_at?: string;
 };
 
+/** One delegation record produced by a child run (parent timeline only). */
+export type DelegationRecord = {
+  /** Whether the child researched or built. */
+  kind: DelegationKind;
+  /** Host-assembled record (`Research result:` / `Task result:` + stats). */
+  record: string;
+  /** Redacted, capped summary. */
+  summary: string;
+};
+
 /**
  * Final value of a runtime turn: the answer, the preserved turns and every
  * command event (deny, skip and pending approval are never hidden).
@@ -55,6 +68,7 @@ export type TellResult = {
   text: string;
   timeline: string[];
   commands: RuntimeCommand[];
+  delegation?: DelegationRecord;
 };
 
 /**
@@ -198,6 +212,7 @@ export type RuntimeCallbacks = {
   onCommandStart?: (event: { script: string }) => void | Promise<void>;
   onCommandOutput?: (event: { script: string; output: string; exit_code: number }) => void | Promise<void>;
   onCommandSkip?: (event: { script: string; status: CommandStatus; reason?: string }) => void | Promise<void>;
+  onDelegation?: (event: { kind: DelegationKind; record: string }) => void | Promise<void>;
   onStorageLoad?: (event: { key: string }) => void | Promise<void>;
   onStorageSave?: (event: { key: string }) => void | Promise<void>;
   onExecutorError?: (event: { script: string; error: string }) => void | Promise<void>;
@@ -226,6 +241,7 @@ export type TellRuntimeOptions = {
   env?: Record<string, string>;
   timeout_ms?: number;
   max_output_bytes?: number;
+  delegation?: DelegationRunner;
 };
 
 /** Single-turn runtime handle produced by `createTellRuntime`. */
@@ -452,12 +468,63 @@ export function createTellRuntime(options: TellRuntimeOptions): TellRuntime {
     } else {
       // No reasoning to report, or nobody observes it.
     }
-    const text = strip_run_tags(strip_think_tags(raw)).trim();
+    const text = strip_delegation_tags(strip_run_tags(strip_think_tags(raw))).trim();
     timeline.push(`Assistant:\n${text}`);
     if (callbacks.onText !== undefined) {
       await callbacks.onText(text);
     } else {
       // No text observer.
+    }
+
+    // Delegation: with no runner the tag is inert (plain text). The check
+    // runs after `onText` so the CLI timeline keeps `Assistant:` before the
+    // delegation record. A delegation wins over `<RUN>` — any scripts in the
+    // same answer are recorded as skipped, never executed.
+    if (options.delegation !== undefined) {
+      const delegation_request = extract_delegation(raw);
+      if (delegation_request.kind !== null) {
+        const scripts_in_delegation = extract_runs(raw)
+          .scripts.map((entry) => entry.trim())
+          .filter((entry) => entry.length > 0);
+        for (const skipped_script of scripts_in_delegation) {
+          timeline.push(format_command_skipped(skipped_script));
+          if (callbacks.onCommandSkip !== undefined) {
+            await callbacks.onCommandSkip({ script: skipped_script, status: 'skipped' });
+          } else {
+            // No skip observer — the skipped script stays in the timeline.
+          }
+        }
+        if (token.cancelled) {
+          timeline.push(format_cancelled_command('(delegation)'));
+          await save_turn(message, text);
+          return { status: 'cancelled', text, timeline, commands: [] };
+        }
+        const outcome = await options.delegation({
+          kind: delegation_request.kind,
+          objective: delegation_request.objective,
+        });
+        if (outcome === null) {
+          // Budget or host refused — the tag stays stripped, no record.
+          await save_turn(message, text);
+          return { status: 'completed', text, timeline, commands: [] };
+        }
+        timeline.push(outcome.record);
+        if (callbacks.onDelegation !== undefined) {
+          await callbacks.onDelegation({ kind: outcome.kind, record: outcome.record });
+        } else {
+          // No delegation observer — the record is still in the timeline.
+        }
+        await save_turn(message, text);
+        return {
+          status: 'completed',
+          text,
+          timeline,
+          commands: [],
+          delegation: { kind: outcome.kind, record: outcome.record, summary: outcome.summary },
+        };
+      }
+    } else {
+      // No delegation runner (child or single-turn) — tags stay inert text.
     }
 
     const scripts = extract_runs(raw).scripts;
@@ -477,6 +544,11 @@ export function createTellRuntime(options: TellRuntimeOptions): TellRuntime {
       .filter((entry) => entry.length > 0);
     for (const extra of extra_scripts) {
       timeline.push(format_command_skipped(extra));
+      if (callbacks.onCommandSkip !== undefined) {
+        await callbacks.onCommandSkip({ script: extra, status: 'skipped' });
+      } else {
+        // No skip observer — the skipped script stays in the timeline.
+      }
     }
 
     let risk: RiskAssessment | undefined;

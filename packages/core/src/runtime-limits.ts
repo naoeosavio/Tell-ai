@@ -1,6 +1,7 @@
+import { RESEARCH_HEADER, SUBTASK_HEADER } from './loop-feedback';
+
 /** Chars of accumulated conversation context (mirrors the CLI baseline). */
-export const DEFAULT_CONTEXT_MAX_CHARS = 64 * 1024;
-/** Stdin deadline in milliseconds (zero disables the deadline). */
+export const DEFAULT_CONTEXT_MAX_CHARS = 64 * 1024; /** Stdin deadline in milliseconds (zero disables the deadline). */
 export const DEFAULT_STDIN_TIMEOUT_MS = 30_000;
 /** Stdin byte cap (active even when the timeout is disabled). */
 export const DEFAULT_STDIN_MAX_BYTES = 1_048_576;
@@ -20,6 +21,16 @@ export const PAYLOAD_MAX_MESSAGES = 200;
 export const PAYLOAD_MAX_CONTENT_CHARS = 50 * 1024;
 /** Max characters for a chat-payload system prompt. */
 export const PAYLOAD_MAX_SYSTEM_CHARS = 30 * 1024;
+/** Max chars of a delegation summary that climbs to the parent (`cap(redact())`). */
+export const DELEGATION_SUMMARY_MAX_CHARS = 2 * 1024;
+/** Max chars of a delegation objective before it becomes a child prompt. */
+export const DELEGATION_OBJECTIVE_MAX_CHARS = 4 * 1024;
+/** Max model→command rounds inside one delegated child. */
+export const DELEGATION_MAX_ROUNDS = 3;
+/** Max output bytes delivered per child command. */
+export const DELEGATION_OUTPUT_MAX_BYTES = 8 * 1024;
+/** Max context chars seeded into a delegated child. */
+export const DELEGATION_CONTEXT_MAX_CHARS = 16 * 1024;
 
 /** Invalid flag/env/tellrc limit value (the host maps this to its exit status). */
 export const EXIT_CONFIG_ERROR = 2;
@@ -469,6 +480,10 @@ export function split_context_turns(text: string): string[] {
   const is_turn_start = (line: string): boolean => {
     if (/^(User|Assistant):\s*$/.test(line)) {
       return true;
+    } else if (line === RESEARCH_HEADER || line.startsWith(`${RESEARCH_HEADER}\n`)) {
+      return true;
+    } else if (line === SUBTASK_HEADER || line.startsWith(`${SUBTASK_HEADER}\n`)) {
+      return true;
     } else if (/^Executed command:\s*$/.test(line)) {
       return true;
     } else if (/^Command failed/.test(line)) {
@@ -761,5 +776,23 @@ export function truncate_output(output: string, max_bytes: number = DEFAULT_OUTP
       const budget = max_bytes - marker_bytes;
       return `${slice_utf8_bytes(output, budget)}${marker}`;
     }
+  }
+}
+
+/**
+ * Computes how many delegations a run may spend from its chain budget.
+ *
+ * Scales with `--max-chain`: default 8 gives 2, 128 gives 4, and 1 gives 0
+ * (one round can never consume a delegation summary — the consuming round is
+ * always the next one).
+ *
+ * @param max_chain_steps - Round cap of the parent run.
+ * @returns The delegation budget for the run.
+ */
+export function max_delegations_for_chain(max_chain_steps: number): number {
+  if (!Number.isFinite(max_chain_steps) || max_chain_steps < 2) {
+    return 0;
+  } else {
+    return Math.min(4, Math.max(1, Math.floor(max_chain_steps / 4)));
   }
 }

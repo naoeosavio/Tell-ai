@@ -22,6 +22,25 @@ export { validate_chain_decision_payload } from './chain-decision';
 export type { ConfigLayer, CoreConfig, CoreHost, ResolvedConfigInput } from './config';
 export { HOST_DEFAULT_MODEL, load_env_layer, resolve_core_config } from './config';
 export { CUSTOM_SYSTEM_PREFIX, compose_custom_system } from './custom-system';
+export type {
+  DelegationOutcome,
+  DelegationRequest,
+  DelegationRunner,
+  DelegationRunnerOptions,
+  DelegationStats,
+} from './delegation';
+export type { DelegationPromptMode } from './delegation-prompt';
+export { delegation_prompt_section } from './delegation-prompt';
+export type {
+  DelegationBlock,
+  DelegationKind,
+} from './delegation-tags';
+export {
+  delegation_kind,
+  extract_delegation,
+  find_blocks,
+  strip_delegation_tags,
+} from './delegation-tags';
 export type { CoreLoopOptions } from './loop';
 export {
   CHAIN_LIMIT_NOTICE,
@@ -46,10 +65,21 @@ export {
   format_command_skipped,
   format_executed_command,
   format_failed_command,
+  format_research_result,
+  format_subtask_result,
   OUTPUT_SEPARATOR,
   parse_command_feedback,
+  RESEARCH_HEADER,
   SKIPPED_HEADER,
+  SUBTASK_HEADER,
 } from './loop-feedback';
+export {
+  create_read_only_approval,
+  is_read_only_script,
+  is_sensitive_rel_path,
+  script_path_tokens,
+  script_touches_sensitive_path,
+} from './read-only';
 export type { RiskProfile, RiskRule } from './risk';
 export { assess_base_risk, create_base_risk_port, DEFAULT_RISK_PROFILE } from './risk';
 export type { CoreRuntime, CoreRuntimeInput } from './runtime';
@@ -58,6 +88,7 @@ export type {
   ApprovalPort,
   CancellationToken,
   CommandExecutor,
+  DelegationRecord,
   ModelPort,
   Redactor,
   RiskAssessment,
@@ -100,6 +131,11 @@ export {
   DEFAULT_OUTPUT_MAX_BYTES,
   DEFAULT_STDIN_MAX_BYTES,
   DEFAULT_STDIN_TIMEOUT_MS,
+  DELEGATION_CONTEXT_MAX_CHARS,
+  DELEGATION_MAX_ROUNDS,
+  DELEGATION_OBJECTIVE_MAX_CHARS,
+  DELEGATION_OUTPUT_MAX_BYTES,
+  DELEGATION_SUMMARY_MAX_CHARS,
   EXIT_CONFIG_ERROR,
   EXIT_LIMIT,
   EXIT_MODEL_ERROR,
@@ -109,6 +145,7 @@ export {
   MAX_CHAIN_STEPS,
   MAX_EXEC_TIMEOUT_MS,
   MIN_EXEC_TIMEOUT_MS,
+  max_delegations_for_chain,
   OUTPUT_TRUNCATE_MARKER_PREFIX,
   PAYLOAD_MAX_CONTENT_CHARS,
   PAYLOAD_MAX_MESSAGES,

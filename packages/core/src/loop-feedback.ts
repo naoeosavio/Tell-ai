@@ -40,6 +40,10 @@ export type CommandFeedbackOptions = {
 export const EXECUTED_HEADER = 'Executed command:';
 /** Header of the cancelled-command record. */
 export const CANCELLED_HEADER = 'Command cancelled:';
+/** Header of the research delegation record. */
+export const RESEARCH_HEADER = 'Research result:';
+/** Header of the build delegation record. */
+export const SUBTASK_HEADER = 'Task result:';
 /** Header of the skipped-command record. */
 export const SKIPPED_HEADER = 'Skipped by user:';
 /** Separator between the script and the output inside a record. */
@@ -119,6 +123,39 @@ export function format_command_skipped(script: string): string {
  */
 export function format_cancelled_command(script: string): string {
   return `${CANCELLED_HEADER}\n${script}`;
+}
+
+/**
+ * Formats the record of one research delegation.
+ *
+ * The summary is host-assembled (never model-assembled stats beyond one line);
+ * callers must pass an already redacted and capped summary.
+ *
+ * @param summary - Redacted, capped research summary.
+ * @param stats - Optional single stats line (e.g. `3 commands, exit 0`).
+ * @returns The research record text.
+ */
+export function format_research_result(summary: string, stats?: string): string {
+  if (stats === undefined || stats.trim() === '') {
+    return `${RESEARCH_HEADER}\n${summary}`;
+  } else {
+    return `${RESEARCH_HEADER}\n${summary}\n(${stats.trim()})`;
+  }
+}
+
+/**
+ * Formats the record of one build delegation.
+ *
+ * @param summary - Redacted, capped task summary.
+ * @param stats - Optional single stats line.
+ * @returns The task record text.
+ */
+export function format_subtask_result(summary: string, stats?: string): string {
+  if (stats === undefined || stats.trim() === '') {
+    return `${SUBTASK_HEADER}\n${summary}`;
+  } else {
+    return `${SUBTASK_HEADER}\n${summary}\n(${stats.trim()})`;
+  }
 }
 
 /**

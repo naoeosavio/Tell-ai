@@ -52,6 +52,8 @@ export type CoreRuntimeInput = {
   max_rounds?: number;
   /** Internal per-command output cap in bytes (defaults to `CORE_MAX_OUTPUT_BYTES`). */
   max_output_bytes?: number;
+  /** Delegation runner (absent means tags stay inert text; child passes none). */
+  delegation?: TellRuntimeOptions['delegation'];
 };
 
 /** Executable core runtime handle (loop owned by core, contract by the SDK). */
@@ -88,6 +90,7 @@ export function create_core_runtime(input: CoreRuntimeInput): CoreRuntime {
     ...(input.cancellation !== undefined ? { cancellation: input.cancellation } : {}),
     ...(input.redact !== undefined ? { redact: input.redact } : {}),
     ...(input.callbacks !== undefined ? { callbacks: input.callbacks } : {}),
+    ...(input.delegation !== undefined ? { delegation: input.delegation } : {}),
     timeout_ms: input.config.exec_timeout_ms,
     max_output_bytes: input.max_output_bytes ?? CORE_MAX_OUTPUT_BYTES,
   };
