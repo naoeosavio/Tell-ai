@@ -23,6 +23,8 @@ export type LocalLoopRound = {
   text: string;
   /** The script the model asked to run, or null when it answered directly. */
   script: string | null;
+  /** Delegation request (`<DELEGATE>`/`<SUBTASK>`), or null when absent. */
+  delegation?: { kind: 'research' | 'build'; objective: string } | null;
 };
 
 /** What one executed command produced. */
@@ -47,6 +49,8 @@ export type LocalLoopOptions = {
    * resumes the chain after the decision.
    */
   may_execute: (script: string) => Promise<boolean>;
+  /** Runs a delegation (`<DELEGATE>`/`<SUBTASK>`) and returns the record. */
+  delegate?: (kind: 'research' | 'build', objective: string) => Promise<string>;
   /** Round cap for this run (the core clamps it to at least 1). */
   max_rounds: number;
   /** Cancellation token — the App maps its abort signal onto it. */
@@ -93,6 +97,22 @@ export async function run_local_loop(options: LocalLoopOptions): Promise<LocalLo
       rounds += 1;
       const round = await options.ask(message);
       const timeline = [`User:\n${message}`, `Assistant:\n${round.text}`];
+      if (round.delegation !== undefined && round.delegation !== null) {
+        // Delegation wins over `<RUN>`: the tag is consumed here, the record
+        // becomes the next message via the core loop branch.
+        if (options.delegate === undefined) {
+          return { status: 'completed', text: round.text, timeline, commands: [] };
+        }
+        const record = await options.delegate(round.delegation.kind, round.delegation.objective);
+        timeline.push(record);
+        return {
+          status: 'completed',
+          text: round.text,
+          timeline,
+          commands: [],
+          delegation: { kind: round.delegation.kind, record, summary: record },
+        };
+      }
       if (round.script === null) {
         return { status: 'completed', text: round.text, timeline, commands: [] };
       }

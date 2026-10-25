@@ -68,6 +68,9 @@ export type ChainPending = {
   createdAt: number;
 };
 
+/** Approval level for nested delegation (v2): parent or child. */
+export type ChainApprovalLevel = 'parent' | 'child';
+
 /** Stored verdict for one decided approval (idempotency + conflict source). */
 export type ChainVerdict = 'approve' | 'skip';
 
@@ -86,6 +89,8 @@ export type ChainRunSnapshot = {
   text: string;
   events: ChainEvent[];
   pending: { decisionId: string; script: string; expectedVersion: number } | null;
+  /** Second slot for nested delegation (v2): child approval while parent waits. */
+  childPending: { decisionId: string; script: string; expectedVersion: number } | null;
 };
 
 /** Machine-readable reason for a rejected confirm transition. */
@@ -129,6 +134,7 @@ type ChainRun = {
   messages: ChainMessage[];
   events: ChainEvent[];
   pending: ChainPending | null;
+  childPending: ChainPending | null;
   decided: Record<string, DecidedEntry>;
   createdAt: number;
   updatedAt: number;
@@ -160,7 +166,7 @@ export function createChainStore(options: ChainStoreOptions = {}): {
   pushMessage(runId: string, message: ChainMessage): boolean;
   setText(runId: string, text: string): boolean;
   countRound(runId: string): boolean;
-  requestApproval(runId: string, script: string): ChainPending | null;
+  requestApproval(runId: string, script: string, level?: ChainApprovalLevel): ChainPending | null;
   tryBeginConfirm(
     runId: string,
     validated: { decision_id: string; expected_version: number; decision: ChainVerdict },
@@ -225,6 +231,13 @@ export function createChainStore(options: ChainStoreOptions = {}): {
             expectedVersion: run.pending.expectedVersion,
           }
         : null,
+      childPending: run.childPending
+        ? {
+            decisionId: run.childPending.decisionId,
+            script: run.childPending.script,
+            expectedVersion: run.childPending.expectedVersion,
+          }
+        : null,
     };
   }
 
@@ -269,6 +282,7 @@ export function createChainStore(options: ChainStoreOptions = {}): {
         messages: messages.map((message) => ({ ...message })),
         events: [],
         pending: null,
+        childPending: null,
         decided: {},
         createdAt: at,
         updatedAt: at,
@@ -337,23 +351,49 @@ export function createChainStore(options: ChainStoreOptions = {}): {
       }
     },
 
-    requestApproval(runId: string, script: string): ChainPending | null {
+    requestApproval(runId: string, script: string, level: ChainApprovalLevel = 'parent'): ChainPending | null {
       const run = live(runId);
-      if (run === null || run.status !== 'running' || run.pending !== null) {
+      if (run === null) {
         return null;
+      } else if (level === 'child') {
+        if ((run.status !== 'running' && run.status !== 'awaiting_approval') || run.childPending !== null) {
+          return null;
+        } else {
+          stamp(run, { type: 'approval_requested', script });
+          const pending: ChainPending = {
+            decisionId: crypto.randomUUID(),
+            script,
+            scriptHash: hashChainScript(script),
+            expectedVersion: run.version,
+            createdAt: now(),
+          };
+          run.childPending = pending;
+          // Child activity moves the version: refresh the outstanding
+          // parent so a fresh snapshot stays confirmable (no silent brick).
+          if (run.pending !== null) {
+            run.pending.expectedVersion = run.version;
+          }
+          run.status = 'awaiting_approval';
+          run.updatedAt = now();
+          return { ...pending };
+        }
       } else {
-        stamp(run, { type: 'approval_requested', script });
-        const pending: ChainPending = {
-          decisionId: crypto.randomUUID(),
-          script,
-          scriptHash: hashChainScript(script),
-          expectedVersion: run.version,
-          createdAt: now(),
-        };
-        run.pending = pending;
-        run.status = 'awaiting_approval';
-        run.updatedAt = now();
-        return { ...pending };
+        if (run.status !== 'running' || run.pending !== null) {
+          return null;
+        } else {
+          stamp(run, { type: 'approval_requested', script });
+          const pending: ChainPending = {
+            decisionId: crypto.randomUUID(),
+            script,
+            scriptHash: hashChainScript(script),
+            expectedVersion: run.version,
+            createdAt: now(),
+          };
+          run.pending = pending;
+          run.status = 'awaiting_approval';
+          run.updatedAt = now();
+          return { ...pending };
+        }
       }
     },
 
@@ -379,10 +419,12 @@ export function createChainStore(options: ChainStoreOptions = {}): {
             return { ok: true, idempotent: true, snapshot: previous.snapshot };
           }
         } else {
-          const pending = run.pending;
-          if (pending === null || run.status !== 'awaiting_approval') {
+          const parentMatch = run.pending?.decisionId === validated.decision_id ? run.pending : null;
+          const childMatch = run.childPending?.decisionId === validated.decision_id ? run.childPending : null;
+          const pending = parentMatch ?? childMatch;
+          if (run.status !== 'awaiting_approval' || (run.pending === null && run.childPending === null)) {
             return { ok: false, error: 'no_pending_approval' };
-          } else if (pending.decisionId !== validated.decision_id) {
+          } else if (pending === null) {
             return { ok: false, error: 'unknown_decision' };
           } else if (
             pending.expectedVersion !== validated.expected_version ||
@@ -418,13 +460,47 @@ export function createChainStore(options: ChainStoreOptions = {}): {
         // A cancel that landed mid-flight wins: the outcome is recorded for
         // the audit trail, but a cancelled run never flips back to running.
         const wasCancelled = run.status === 'cancelled';
+        const isChild = run.childPending?.decisionId === decisionId;
+        const isParent = run.pending?.decisionId === decisionId;
         stamp(run, { ...outcome, decisionId });
-        if (run.pending?.decisionId === decisionId) {
+        if (isParent) {
           run.pending = null;
+        } else if (isChild) {
+          run.childPending = null;
         } else {
           // Pending already moved on — keep the stored outcome only.
         }
-        run.status = wasCancelled ? 'cancelled' : outcome.status;
+        // Finishing one level moves the version: refresh the outstanding
+        // level so a fresh snapshot stays confirmable (no silent brick).
+        if (isChild && run.pending !== null) {
+          run.pending.expectedVersion = run.version;
+        } else if (isParent && run.childPending !== null) {
+          run.childPending.expectedVersion = run.version;
+        } else {
+          // No outstanding level to refresh.
+        }
+        if (wasCancelled) {
+          run.status = 'cancelled';
+        } else if (isChild) {
+          // Child confirm never completes the parent: restore the
+          // parent-driven state (still awaiting when the parent waits,
+          // running otherwise) unless the outcome already failed it.
+          if (outcome.status === 'failed' || outcome.status === 'cancelled') {
+            run.status = outcome.status;
+          } else if (run.pending !== null) {
+            run.status = 'awaiting_approval';
+          } else {
+            run.status = 'running';
+          }
+        } else {
+          if (outcome.status === 'completed' || outcome.status === 'failed' || outcome.status === 'cancelled') {
+            run.status = outcome.status;
+          } else if (run.childPending !== null) {
+            run.status = 'awaiting_approval';
+          } else {
+            run.status = outcome.status;
+          }
+        }
         run.updatedAt = now();
         const snapshot = takeSnapshot(run);
         entry.inFlight = false;
@@ -458,6 +534,7 @@ export function createChainStore(options: ChainStoreOptions = {}): {
         stamp(run, { type: 'completed' });
         run.status = 'completed';
         run.pending = null;
+        run.childPending = null;
         run.updatedAt = now();
         return takeSnapshot(run);
       }
@@ -472,6 +549,7 @@ export function createChainStore(options: ChainStoreOptions = {}): {
         stamp(run, { type: 'error', text });
         run.status = 'failed';
         run.pending = null;
+        run.childPending = null;
         run.updatedAt = now();
         return takeSnapshot(run);
       }
@@ -487,6 +565,7 @@ export function createChainStore(options: ChainStoreOptions = {}): {
         stamp(run, { type: 'cancelled' });
         run.status = 'cancelled';
         run.pending = null;
+        run.childPending = null;
         run.updatedAt = now();
         return takeSnapshot(run);
       }

@@ -1104,6 +1104,104 @@ test('chain: script hash is stable and distinguishes scripts', () => {
   assert.notStrictEqual(hashChainScript('echo hi'), hashChainScript('echo bye'));
 });
 
+test('chain: nested child approval coexists with parent (v2 second slot)', () => {
+  const store = createChainStore();
+  const created = store.createRun([{ role: 'user', content: 'hi' }]);
+  assert.strictEqual(created.childPending, null);
+  const parent = store.requestApproval(created.runId, 'echo parent');
+  assert.ok(parent);
+  // Single-flight per level: second parent is rejected, child still fits.
+  assert.strictEqual(store.requestApproval(created.runId, 'echo parent-again'), null);
+  const child = store.requestApproval(created.runId, 'echo child', 'child');
+  assert.ok(child);
+  assert.notStrictEqual(child.decisionId, parent.decisionId);
+  const replay = store.getRun(created.runId);
+  assert.strictEqual(replay.status, 'awaiting_approval');
+  assert.strictEqual(replay.pending.script, 'echo parent');
+  assert.strictEqual(replay.childPending.script, 'echo child');
+  // Unknown id with pendings present is unknown_decision, not no_pending.
+  assert.deepStrictEqual(
+    store.tryBeginConfirm(created.runId, {
+      decision_id: '00000000-0000-0000-0000-000000000000',
+      expected_version: child.expectedVersion,
+      decision: 'approve',
+    }),
+    { ok: false, error: 'unknown_decision' },
+  );
+});
+
+test('chain: child confirm restores parent awaiting, parent confirm completes', () => {
+  const store = createChainStore();
+  const created = store.createRun([{ role: 'user', content: 'hi' }]);
+  const parent = store.requestApproval(created.runId, 'echo parent');
+  const child = store.requestApproval(created.runId, 'echo child', 'child');
+  assert.strictEqual(
+    store.tryBeginConfirm(created.runId, {
+      decision_id: child.decisionId,
+      expected_version: child.expectedVersion,
+      decision: 'approve',
+    }).ok,
+    true,
+  );
+  const afterChild = store.finishConfirm(created.runId, child.decisionId, {
+    type: 'executed',
+    script: 'echo child',
+    output: 'child',
+    exitCode: 0,
+    status: 'running',
+  });
+  assert.strictEqual(afterChild.childPending, null);
+  assert.strictEqual(afterChild.pending.script, 'echo parent');
+  assert.strictEqual(afterChild.status, 'awaiting_approval');
+  // Child stamps moved the version: the original parent version is stale.
+  assert.deepStrictEqual(
+    store.tryBeginConfirm(created.runId, {
+      decision_id: parent.decisionId,
+      expected_version: parent.expectedVersion,
+      decision: 'approve',
+    }),
+    { ok: false, error: 'stale_version' },
+  );
+  // Parent version moved after the child stamp: stale must fail, fresh passes.
+  const fresh = store.getRun(created.runId);
+  assert.strictEqual(
+    store.tryBeginConfirm(created.runId, {
+      decision_id: parent.decisionId,
+      expected_version: fresh.version,
+      decision: 'approve',
+    }).ok,
+    true,
+  );
+  const done = store.finishConfirm(created.runId, parent.decisionId, {
+    type: 'executed',
+    script: 'echo parent',
+    output: 'parent',
+    exitCode: 0,
+    status: 'completed',
+  });
+  assert.strictEqual(done.pending, null);
+  assert.strictEqual(done.childPending, null);
+  assert.strictEqual(done.status, 'completed');
+});
+
+test('chain: cancel and complete clear both slots', () => {
+  const store = createChainStore();
+  const created = store.createRun([{ role: 'user', content: 'hi' }]);
+  store.requestApproval(created.runId, 'echo parent');
+  store.requestApproval(created.runId, 'echo child', 'child');
+  const cancelled = store.cancelRun(created.runId);
+  assert.strictEqual(cancelled.pending, null);
+  assert.strictEqual(cancelled.childPending, null);
+  assert.strictEqual(cancelled.status, 'cancelled');
+  const second = createChainStore();
+  const run = second.createRun([{ role: 'user', content: 'hi' }]);
+  second.requestApproval(run.runId, 'echo parent');
+  second.requestApproval(run.runId, 'echo child', 'child');
+  const completed = second.completeRun(run.runId, 'done');
+  assert.strictEqual(completed.pending, null);
+  assert.strictEqual(completed.childPending, null);
+});
+
 test('chain: server keeps the script, validates the helper, and denies closed', () => {
   const source = fs.readFileSync(path.join(WEB_SRC, 'src', 'server', 'server.ts'), 'utf8');
   assert.ok(
