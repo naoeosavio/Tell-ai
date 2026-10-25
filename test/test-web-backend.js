@@ -144,10 +144,11 @@ const { createChainStore, hashChainScript, CHAIN_TTL_MS, CHAIN_MAX_ROUNDS } = lo
 const { validate_chain_decision_payload } = loadAbsoluteModule(
   path.join(__dirname, '..', 'packages', 'core', 'src', 'chain-decision.ts'),
 );
-// The limits owner has no imports, so it loads straight from source (no core
-// build needed) — used to pin the sandbox's chain cap against the real owner.
-const { DEFAULT_MAX_CHAIN_STEPS } = loadAbsoluteModule(
-  path.join(__dirname, '..', 'packages', 'core', 'src', 'runtime-limits.ts'),
+// The limits owner is loaded through the source compiler (it imports the
+// loop-feedback headers, so the bare `loadAbsoluteModule` would miss the
+// relative require). Pinned against the real owner.
+const { DEFAULT_MAX_CHAIN_STEPS } = require(
+  compileSourceModule(path.join(__dirname, '..', 'packages', 'core', 'src', 'runtime-limits.ts')),
 );
 
 let failures = 0;
@@ -419,6 +420,12 @@ test('guards: sensitive paths are blocked', () => {
 test('guards: .env.example template is not sensitive', () => {
   assert.strictEqual(isSensitiveRelPath('.env.example'), false);
   assert.strictEqual(isSensitiveRelPath('config/.env.example'), false);
+});
+
+test('guards: private-key filenames are sensitive (core-owned predicate)', () => {
+  assert.strictEqual(isSensitiveRelPath('id_rsa'), true);
+  assert.strictEqual(isSensitiveRelPath('keys/id_ed25519'), true);
+  assert.strictEqual(isSensitiveRelPath('cert.p12'), true);
 });
 
 test('guards: ordinary paths pass the sensitive guard', () => {
@@ -769,6 +776,16 @@ test('context: buildSystemPrompt composes the core owner context', () => {
   assert.ok(prompt.includes(owner.tree));
   assert.ok(prompt.includes('# demo'));
   assert.ok(prompt.includes('be kind'));
+});
+
+test('context: delegation sections follow what the host can approve', () => {
+  const dir = tmpProject();
+  const research = buildSystemPrompt(dir, 'research');
+  assert.ok(research.includes('<DELEGATE>'), 'research describes DELEGATE');
+  assert.ok(!research.includes('<SUBTASK>'), 'research never describes SUBTASK');
+  const both = buildSystemPrompt(dir, 'both');
+  assert.ok(both.includes('<SUBTASK>'), 'both describes SUBTASK');
+  assert.ok(buildSystemPrompt(dir).includes('<DELEGATE>'), 'default stays research');
 });
 
 // ---------------------------------------------------------------------------

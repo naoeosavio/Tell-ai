@@ -7,10 +7,15 @@ import {
   build_sdk_config_from_env,
   canonical_path,
   canonical_write_path,
+  collect_exec_secrets,
+  create_cancellation_token,
+  create_delegation_runner,
   create_node_executor,
   compose_custom_system,
+  create_secret_redactor,
   DEFAULT_EXEC_TIMEOUT_MS,
   EXEC_CANCELLED_EXIT_CODE,
+  extract_delegation,
   HOST_DEFAULT_MODEL,
   DEFAULT_MAX_BUFFER_BYTES,
   DEFAULT_OUTPUT_MAX_BYTES,
@@ -18,7 +23,11 @@ import {
   format_executed_command,
   has_lexical_target,
   is_path_inside_base,
+  max_delegations_for_chain,
+  strip_delegation_tags,
   truncate_output,
+  type CancellationToken,
+  type DelegationRunner,
   validate_chain_decision_payload,
 } from '@tell-ai/core';
 import { create_ask_ai, extract_runs, get_model, MODELS, resolve_model_spec } from '@tell-ai/sdk';
@@ -185,6 +194,14 @@ configureScrollbackMax(Number(process.env['TELL_SCROLLBACK_MAX']) || undefined);
 // boot stays a plain module evaluation. Invalid `CUSTOM_API`/`CUSTOM_HEADERS`
 // throw here, failing the boot.
 const SDK_CONFIG = build_sdk_config_from_env(process.env);
+// Redactor for delegation summaries: masks provider keys the process knew at
+// boot (before the scrub below removes them from the child environment).
+const SERVER_REDACT = create_secret_redactor([
+  ...collect_exec_secrets(process.env),
+  ...Object.values(SDK_CONFIG.keys ?? {}).filter(
+    (value): value is string => typeof value === 'string' && value.length > 0,
+  ),
+]);
 const RETAINED_SERVER_ENV = new Set([
   'COLORTERM',
   'FORCE_COLOR',
@@ -221,14 +238,21 @@ const CHAIN_FEEDBACK_TAIL_CHARS = 4 * 1024;
 // (Chain-limit notice lives in `chain_limit_notice()` so it reflects the
 // effective `CHAIN_ROUND_CAP`, not just the default.)
 const executeRateLimit = createRateLimiter({ max: 10, windowMs: 60_000 });
+const delegateRateLimit = createRateLimiter({ max: 10, windowMs: 60_000 });
 const tellRateLimit = createRateLimiter({ max: 10, windowMs: 60_000 });
 const chainRateLimit = createRateLimiter({ max: 10, windowMs: 60_000 });
 // Server-side chain runs: the pending script lives here, never in the client.
 const chainStore = createChainStore();
 // Model + system per run (kept beside the store so confirms resume context).
 // Entries die with their run: every terminal snapshot drops its continuation,
-// so idle/expired runs never accumulate beside the TTL-reaped store.
-const chainContinuations = new Map<string, { modelSpec: string; system: string }>();
+// so idle/expired runs never accumulate beside the TTL-reaped store. The
+// delegation runner is cached here too, so the parent's delegation budget
+// (`max_delegations_for_chain`) spans the whole run instead of resetting on
+// every delegation.
+const chainContinuations = new Map<
+  string,
+  { modelSpec: string; system: string; delegationRunner?: DelegationRunner }
+>();
 
 /**
  * Drops the per-run continuation once the run can no longer advance.
@@ -733,6 +757,59 @@ app.post('/api/execute', async (req, res) => {
   }
 });
 
+// API: Delegation for the browser local loop (v1: research always, build only with automatic approval).
+// Stateless: one call serves exactly one delegation (the child cannot ask,
+// so without -y a build is 403). The aggregate budget lives with the caller
+// — the chain passes its cached runner, the browser loop counts against
+// max_delegations_for_chain. Same guards as /api/execute: concurrency cap,
+// per-IP rate limit, abort cancels the child.
+app.post('/api/delegate', async (req, res) => {
+  const { kind, objective, modelAlias } = req.body ?? {};
+  if ((kind !== 'research' && kind !== 'build') || typeof objective !== 'string' || objective.trim().length === 0) {
+    return res.status(400).json({ error: 'kind (research|build) and non-empty objective are required' });
+  }
+  if (typeof objective === 'string' && objective.length > 4 * 1024) {
+    return res.status(400).json({ error: 'objective limited to 4096 chars' });
+  }
+  if (modelAlias !== undefined && (typeof modelAlias !== 'string' || modelAlias.length > 256)) {
+    return res.status(400).json({ error: 'modelAlias must be a string limited to 256 chars' });
+  }
+  if (NO_EXEC) {
+    return res.status(403).json({ error: 'delegation disabled by --no-exec' });
+  }
+  if (kind === 'build' && !AUTO_EXECUTE) {
+    return res.status(403).json({ error: 'build delegation not enabled on this host' });
+  }
+  if (!delegateRateLimit.check(clientIp(req))) {
+    return res.status(429).json({ error: 'Rate limit exceeded (10/min). Slow down.' });
+  }
+  if (activeExecutions >= EXEC_MAX_CONCURRENCY) {
+    return res.status(429).json({ error: 'Server busy: max concurrent executions reached' });
+  }
+  const modelSpec = typeof modelAlias === 'string' && modelAlias.trim() ? modelAlias : DEFAULT_MODEL;
+  // Abort → cancel: if the client goes away before the response is
+  // finished, cancel the child at round boundaries. This must listen on
+  // the response, not the request: `req` closes as soon as its body is
+  // consumed (before the handler runs), which would cancel every call
+  // immediately. The model call itself carries no abort signal, same as
+  // a chain cancel landing mid-flight.
+  const token = create_cancellation_token();
+  res.on('close', () => {
+    if (!res.writableEnded) {
+      token.cancel();
+    }
+  });
+  try {
+    const outcome = await run_web_delegation(modelSpec, kind, objective, token);
+    if (outcome === null) {
+      return res.status(403).json({ error: `${kind} delegation not enabled on this host` });
+    }
+    return res.json({ record: outcome.record });
+  } catch (_error) {
+    return res.status(500).json({ error: 'delegation failed' });
+  }
+});
+
 // API: List of supported models and aliases
 app.get('/api/models', (_req, res) => {
   const formattedModels = Object.entries(MODELS).map(([alias, spec]) => {
@@ -864,7 +941,7 @@ app.get('/api/config', (_req, res) => {
 // API: Auto-generated project context (tree 4 levels + README + AGENTS + protocol)
 app.get('/api/context', (_req, res) => {
   try {
-    const systemPrompt = compose_forwarded_system(buildSystemPrompt(CWD));
+    const systemPrompt = compose_forwarded_system(buildSystemPrompt(CWD, AUTO_EXECUTE ? 'both' : 'research'));
     res.json({ systemPrompt, cwd: CWD });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -1018,7 +1095,9 @@ app.post('/api/tell', async (req, res) => {
       content: m.content,
     }));
 
-    const effectiveSystem = systemPrompt?.trim() ? systemPrompt : compose_forwarded_system(buildSystemPrompt(CWD));
+    const effectiveSystem = systemPrompt?.trim()
+      ? systemPrompt
+      : compose_forwarded_system(buildSystemPrompt(CWD, AUTO_EXECUTE ? 'both' : 'research'));
 
     // Streaming mode: per-request `stream` override wins over the boot `--stream`.
     // Streaming replies are NDJSON events; the model is resolved before headers are sent.
@@ -1086,6 +1165,133 @@ function denyChainScript(
  * @param script - Approved command script.
  * @returns True when the command ran (even with a non-zero exit code).
  */
+/**
+ * Builds a silent child model port over generateOnce for delegation.
+ *
+ * @param modelSpec - Model alias or spec for the child.
+ * @returns A model port that never writes to any stream.
+ */
+function build_delegation_model(modelSpec: string): {
+  ask(message: string, options: { system: string; stream: false }): Promise<string>;
+} {
+  return {
+    async ask(message: string, options: { system: string; stream: false }): Promise<string> {
+      const generated = await generateOnce(modelSpec, [{ role: 'user', content: message }], options.system);
+      return generated.text;
+    },
+  };
+}
+
+/**
+ * Builds a Web delegation runner over the server ports.
+ *
+ * One host approval serves both kinds: the core wraps it with the read-only
+ * gate for research and uses it raw for build. Cancellation aborts the child
+ * at round boundaries (the model call itself carries no abort signal, same
+ * as a chain cancel landing mid-flight).
+ *
+ * @param modelSpec - Model alias or spec for the child.
+ * @param cancellation - Optional token (request abort on `/api/delegate`).
+ * @returns A runner with the parent's delegation budget.
+ */
+function new_web_runner(modelSpec: string, cancellation?: CancellationToken): DelegationRunner {
+  const build_gate = async (request: { script: string }): Promise<'approved' | 'denied' | 'skipped'> => {
+    if (NO_EXEC) {
+      return 'denied';
+    } else if (isHighRiskScript(request.script)) {
+      return 'denied';
+    } else {
+      return 'approved';
+    }
+  };
+  return create_delegation_runner({
+    model: build_delegation_model(modelSpec),
+    executor: async (exec_options) => {
+      activeExecutions += 1;
+      try {
+        return await core_execute({
+          script: exec_options.script,
+          cwd: CWD,
+          timeout_ms: EXEC_TIMEOUT_MS,
+          max_output_bytes: EXEC_MAX_BUFFER,
+        });
+      } finally {
+        activeExecutions -= 1;
+      }
+    },
+    approval: build_gate,
+    redact: SERVER_REDACT,
+    cwd: CWD,
+    exec_enabled: !NO_EXEC,
+    timeout_ms: EXEC_TIMEOUT_MS,
+    ...(cancellation !== undefined ? { cancellation } : {}),
+    max_delegations: max_delegations_for_chain(CHAIN_ROUND_CAP),
+  });
+}
+
+/**
+ * Runs one Web delegation (research always, build only with automatic approval).
+ *
+ * v1 never creates a pending: research is read-only; build runs only when
+ * approval is automatic (server -y). Otherwise the tag is denied with motive.
+ *
+ * @param modelSpec - Model alias or spec for the child (used only when the runner is built here).
+ * @param kind - research or build.
+ * @param objective - Sanitized child goal.
+ * @param cancellation - Optional token (request abort on `/api/delegate`).
+ * @param runner - Optional prebuilt runner (the chain passes its cached one so the budget spans the run).
+ * @returns The ready record, or null when denied.
+ */
+async function run_web_delegation(
+  modelSpec: string,
+  kind: 'research' | 'build',
+  objective: string,
+  cancellation?: CancellationToken,
+  runner?: DelegationRunner,
+): Promise<{ record: string } | null> {
+  if (NO_EXEC) {
+    return null;
+  }
+  if (kind === 'build' && !AUTO_EXECUTE) {
+    return null;
+  }
+  if (activeExecutions >= EXEC_MAX_CONCURRENCY) {
+    return null;
+  }
+  const active = runner ?? new_web_runner(modelSpec, cancellation);
+  const outcome = await active({ kind, objective });
+  if (outcome === null) {
+    return null;
+  } else {
+    return { record: outcome.record };
+  }
+}
+
+/**
+ * Returns the cached delegation runner for a chain run, creating it on first
+ * use. Sharing one runner per run is what makes the delegation budget real:
+ * a fresh runner per delegation would reset the counter every time.
+ *
+ * @param runId - Server-side run owning the budget.
+ * @param modelSpec - Model alias or spec for the child.
+ * @returns The run's delegation runner.
+ */
+function chain_runner_for(runId: string, modelSpec: string): DelegationRunner {
+  const existing = chainContinuations.get(runId)?.delegationRunner;
+  if (existing !== undefined) {
+    return existing;
+  }
+  const runner = new_web_runner(modelSpec);
+  const continuation = chainContinuations.get(runId);
+  if (continuation !== undefined) {
+    continuation.delegationRunner = runner;
+  } else {
+    // No continuation (defensive: callers create it before advancing).
+    chainContinuations.set(runId, { modelSpec, system: '', delegationRunner: runner });
+  }
+  return runner;
+}
+
 async function runChainScript(runId: string, script: string): Promise<boolean> {
   serverState.commandsRun += 1;
   activeExecutions += 1;
@@ -1146,13 +1352,45 @@ async function advanceChainRun(runId: string, modelSpec: string, system: string)
     } else {
       // Still running — record the turn below.
     }
-    chainStore.pushMessage(runId, { role: 'assistant', content: generated.text });
-    chainStore.setText(runId, generated.text);
-    chainStore.appendEvent(runId, { type: 'message', text: generated.text });
+    const delegation = extract_delegation(generated.text);
+    const visible_text = strip_delegation_tags(generated.text);
+    chainStore.pushMessage(runId, { role: 'assistant', content: visible_text });
+    chainStore.setText(runId, visible_text);
+    chainStore.appendEvent(runId, { type: 'message', text: visible_text });
     chainStore.countRound(runId);
+    if (delegation.kind !== null) {
+      const scripts_in_delegation = extract_runs(generated.text)
+        .scripts.map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0);
+      for (const skipped_script of scripts_in_delegation) {
+        chainStore.pushMessage(runId, { role: 'user', content: format_command_skipped(skipped_script) });
+        chainStore.appendEvent(runId, { type: 'skipped', script: skipped_script });
+      }
+      if (delegation.kind === 'build' && !AUTO_EXECUTE) {
+        chainStore.appendEvent(runId, { type: 'denied', text: 'build delegation not enabled on this host' });
+        return chainStore.completeRun(runId, visible_text);
+      }
+      const delegated = await run_web_delegation(
+        modelSpec,
+        delegation.kind,
+        delegation.objective,
+        undefined,
+        chain_runner_for(runId, modelSpec),
+      );
+      if (delegated === null) {
+        chainStore.appendEvent(runId, {
+          type: 'denied',
+          text: `${delegation.kind} delegation not enabled on this host`,
+        });
+        return chainStore.completeRun(runId, visible_text);
+      }
+      chainStore.pushMessage(runId, { role: 'user', content: delegated.record });
+      chainStore.appendEvent(runId, { type: 'message', text: delegated.record });
+      continue;
+    }
     const script = extractFirstScript(generated.text);
     if (script === null) {
-      return chainStore.completeRun(runId, generated.text);
+      return chainStore.completeRun(runId, visible_text);
     } else if (NO_EXEC) {
       // Contract wording: denied/disabled with --no-exec source, never
       // reason 'no-exec', and nothing is executed.
@@ -1225,7 +1463,9 @@ app.post('/api/chain', async (req, res) => {
       content: m.content,
     }));
 
-    const effectiveSystem = systemPrompt?.trim() ? systemPrompt : compose_forwarded_system(buildSystemPrompt(CWD));
+    const effectiveSystem = systemPrompt?.trim()
+      ? systemPrompt
+      : compose_forwarded_system(buildSystemPrompt(CWD, AUTO_EXECUTE ? 'both' : 'research'));
 
     const created = chainStore.createRun(formattedMessages);
     chainContinuations.set(created.runId, { modelSpec, system: effectiveSystem });

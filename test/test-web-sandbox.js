@@ -2542,6 +2542,295 @@ describe('web sandbox: chain routes', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Delegation (sub-tell): `/api/delegate` guards live, plus chain research,
+// build and budget end-to-end against a stub model. No provider keys needed:
+// the stub speaks OpenAI chat-completions and the `q` alias is pointed at it
+// via LOCAL_OPENAI_BASE_URL (same trick as the chain routes above).
+// ---------------------------------------------------------------------------
+describe('web sandbox: delegation (sub-tell)', () => {
+  const postJson = (base, urlPath, body) =>
+    fetch(`${base}${urlPath}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+  function startDelegateStub(handler) {
+    const server = http.createServer((req, res) => {
+      let body = '';
+      req.on('data', (chunk) => {
+        body += chunk;
+      });
+      req.on('end', () => {
+        let payload = {};
+        try {
+          payload = JSON.parse(body || '{}');
+        } catch {
+          /* ignore */
+        }
+        const messages = Array.isArray(payload.messages) ? payload.messages : [];
+        const last = messages[messages.length - 1];
+        const content = typeof last?.content === 'string' ? last.content : '';
+        const reply = handler(content);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            id: 'stub',
+            object: 'chat.completion',
+            created: 1,
+            model: payload.model,
+            choices: [{ index: 0, message: { role: 'assistant', content: reply }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 },
+          }),
+        );
+      });
+    });
+    return new Promise((resolve) => {
+      server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port }));
+    });
+  }
+
+  function bootDelegate(extraArgs = [], extraEnv = {}) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-web-delegate-'));
+    fs.writeFileSync(path.join(dir, 'hello.txt'), 'hi\n');
+    const env = { ...process.env, PORT: '0', NODE_ENV: 'production', ...extraEnv };
+    delete env.TELL_TOKEN;
+    const child = spawn(process.execPath, [DIST_SERVER, '--cwd', dir, ...extraArgs], {
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return { dir, child, basePromise: waitForServer(child) };
+  }
+
+  async function shutdown(handle) {
+    if (handle.child && !handle.child.killed) handle.child.kill('SIGTERM');
+    if (handle.dir) fs.rmSync(handle.dir, { recursive: true, force: true });
+  }
+
+  describe('/api/delegate guards (no model needed)', () => {
+    let handle;
+    let base;
+
+    before(async () => {
+      handle = bootDelegate();
+      base = await handle.basePromise;
+    });
+
+    after(() => shutdown(handle));
+
+    it('rejects unknown kind, empty objective, oversized objective and bad modelAlias', async () => {
+      for (const body of [
+        { kind: 'nope', objective: 'x' },
+        { kind: 'research', objective: '   ' },
+        { objective: 'x' },
+        { kind: 'research', objective: 'x'.repeat(4 * 1024 + 1) },
+        { kind: 'research', objective: 'x', modelAlias: 123 },
+      ]) {
+        const res = await postJson(base, '/api/delegate', body);
+        assert.strictEqual(res.status, 400, JSON.stringify(body));
+        await res.json().catch(() => ({}));
+      }
+    });
+
+    it('denies build without -y (stateless: the child cannot ask)', async () => {
+      const res = await postJson(base, '/api/delegate', { kind: 'build', objective: 'list files' });
+      assert.strictEqual(res.status, 403);
+      const body = await res.json();
+      assert.match(body.error, /build delegation not enabled/);
+    });
+
+    it('enforces the concurrency cap like /api/execute', async () => {
+      const sleepBody = { command: 'sleep 25' };
+      const first = postJson(base, '/api/execute', sleepBody);
+      const second = postJson(base, '/api/execute', sleepBody);
+      await sleep(1500);
+      const res = await postJson(base, '/api/delegate', { kind: 'research', objective: 'list files' });
+      assert.strictEqual(res.status, 429);
+      await res.json().catch(() => ({}));
+      await Promise.all([first, second].map((p) => p.then((r) => r.json().catch(() => ({})))));
+    });
+  });
+
+  describe('/api/delegate under --no-exec', () => {
+    let handle;
+    let base;
+
+    before(async () => {
+      handle = bootDelegate(['--no-exec']);
+      base = await handle.basePromise;
+    });
+
+    after(() => shutdown(handle));
+
+    it('denies with --no-exec before touching the model', async () => {
+      const res = await postJson(base, '/api/delegate', { kind: 'research', objective: 'list files' });
+      assert.strictEqual(res.status, 403);
+      const body = await res.json();
+      assert.match(body.error, /--no-exec/);
+    });
+  });
+
+  describe('chain research end-to-end (stub model)', () => {
+    let stub;
+    let handle;
+    let base;
+
+    before(async () => {
+      stub = await startDelegateStub((content) => {
+        // NOTE: child follow-up turns arrive wrapped (`Previous context: ...
+        // Executed command: ...`), so match markers with includes() and test
+        // exact objectives first.
+        if (content === 'please research') return 'Looking into it.\n<DELEGATE>list the txt files</DELEGATE>';
+        if (content.includes('Research result:')) return 'Research done, no more commands.';
+        if (content.includes('Executed command:')) return `Noted: ${content}`;
+        if (content === 'list the txt files') return '<RUN>ls</RUN>';
+        return 'Final answer.';
+      });
+      handle = bootDelegate(['-m', 'q'], { LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stub.port}/v1` });
+      base = await handle.basePromise;
+    });
+
+    after(async () => {
+      await shutdown(handle);
+      stub.server.closeAllConnections?.();
+      stub.server.close();
+    });
+
+    it('runs the child, strips the tag and completes with one record', async () => {
+      const res = await postJson(base, '/api/chain', { messages: [{ role: 'user', content: 'please research' }] });
+      assert.strictEqual(res.status, 200);
+      const run = await res.json();
+      assert.strictEqual(run.status, 'completed');
+      assert.strictEqual(run.pending, null);
+      const records = run.events.filter((e) => typeof e.text === 'string' && e.text.startsWith('Research result:'));
+      assert.strictEqual(records.length, 1);
+      assert.ok(records[0].text.includes('hello.txt'), 'child stdout reaches the parent only as summary');
+      const assistantTexts = run.events.filter((e) => e.type === 'message').map((e) => e.text || '');
+      assert.ok(!assistantTexts.some((t) => t.includes('<DELEGATE>')), 'tag leaves the stored turno');
+      assert.ok(
+        !assistantTexts.some((t) => t.startsWith('Executed command:')),
+        'no child command record enters the parent timeline (only the summary does)',
+      );
+    });
+  });
+
+  describe('chain build end-to-end with -y (stub model)', () => {
+    let stub;
+    let handle;
+    let base;
+
+    before(async () => {
+      stub = await startDelegateStub((content) => {
+        if (content === 'please build') return 'On it.\n<SUBTASK>create out.txt with hi</SUBTASK>';
+        if (content.includes('Task result:')) return 'Build done, no more commands.';
+        if (content.includes('Executed command:')) return 'Wrote it.';
+        if (content === 'create out.txt with hi') return '<RUN>echo hi > out.txt</RUN>';
+        return 'Final answer.';
+      });
+      handle = bootDelegate(['-m', 'q', '-y'], { LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stub.port}/v1` });
+      base = await handle.basePromise;
+    });
+
+    after(async () => {
+      await shutdown(handle);
+      stub.server.closeAllConnections?.();
+      stub.server.close();
+    });
+
+    it('executes the build child and records only the summary', async () => {
+      const res = await postJson(base, '/api/chain', { messages: [{ role: 'user', content: 'please build' }] });
+      assert.strictEqual(res.status, 200);
+      const run = await res.json();
+      assert.strictEqual(run.status, 'completed');
+      assert.strictEqual(fs.readFileSync(path.join(handle.dir, 'out.txt'), 'utf8'), 'hi\n');
+      const records = run.events.filter((e) => typeof e.text === 'string' && e.text.startsWith('Task result:'));
+      assert.strictEqual(records.length, 1);
+      const assistantTexts = run.events.filter((e) => e.type === 'message').map((e) => e.text || '');
+      assert.ok(!assistantTexts.some((t) => t.includes('<SUBTASK>')), 'tag leaves the stored turno');
+    });
+  });
+
+  describe('chain build denied without -y (stub model)', () => {
+    let stub;
+    let handle;
+    let base;
+
+    before(async () => {
+      stub = await startDelegateStub((content) => {
+        if (content === 'please build') return 'On it.\n<SUBTASK>create out.txt with hi</SUBTASK>';
+        return 'Final answer.';
+      });
+      handle = bootDelegate(['-m', 'q'], { LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stub.port}/v1` });
+      base = await handle.basePromise;
+    });
+
+    after(async () => {
+      await shutdown(handle);
+      stub.server.closeAllConnections?.();
+      stub.server.close();
+    });
+
+    it('denies with motive, never skipped, and creates no pending', async () => {
+      const res = await postJson(base, '/api/chain', { messages: [{ role: 'user', content: 'please build' }] });
+      assert.strictEqual(res.status, 200);
+      const run = await res.json();
+      assert.strictEqual(run.status, 'completed');
+      assert.strictEqual(run.pending, null);
+      const denied = run.events.filter((e) => e.type === 'denied');
+      assert.strictEqual(denied.length, 1);
+      assert.match(denied[0].text, /build delegation not enabled/);
+      assert.ok(!fs.existsSync(path.join(handle.dir, 'out.txt')), 'nothing executed');
+      const assistantTexts = run.events.filter((e) => e.type === 'message').map((e) => e.text || '');
+      assert.ok(!assistantTexts.some((t) => t.includes('<SUBTASK>')));
+    });
+  });
+
+  describe('chain delegation budget (stub model)', () => {
+    let stub;
+    let handle;
+    let base;
+    let delegateTurns;
+
+    before(async () => {
+      delegateTurns = 0;
+      stub = await startDelegateStub((content) => {
+        if (content === 'please delegate') return '<DELEGATE>objective 1</DELEGATE>';
+        if (content.includes('Research result:')) {
+          delegateTurns += 1;
+          if (delegateTurns < 3) return `<DELEGATE>objective ${delegateTurns + 1}</DELEGATE>`;
+          return 'Enough research, final answer.';
+        }
+        if (content.includes('Executed command:')) return 'Listed.';
+        if (content.startsWith('objective')) return '<RUN>ls</RUN>';
+        return 'Final answer.';
+      });
+      handle = bootDelegate(['-m', 'q', '-y'], { LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stub.port}/v1` });
+      base = await handle.basePromise;
+    });
+
+    after(async () => {
+      await shutdown(handle);
+      stub.server.closeAllConnections?.();
+      stub.server.close();
+    });
+
+    it('serves at most two delegations per run, then the tag goes inert', async () => {
+      const res = await postJson(base, '/api/chain', { messages: [{ role: 'user', content: 'please delegate' }] });
+      assert.strictEqual(res.status, 200);
+      const run = await res.json();
+      assert.strictEqual(run.status, 'completed');
+      const records = run.events.filter((e) => typeof e.text === 'string' && e.text.startsWith('Research result:'));
+      assert.strictEqual(records.length, 2, 'default cap 8 → budget 2');
+      const denied = run.events.filter((e) => e.type === 'denied');
+      assert.strictEqual(denied.length, 1, 'spent tag is denied with motive, never silent');
+      assert.match(denied[0].text, /research delegation not enabled/);
+      const assistantTexts = run.events.filter((e) => e.type === 'message').map((e) => e.text || '');
+      assert.ok(!assistantTexts.some((t) => t.includes('<DELEGATE>')), 'spent tag stays stripped inert text');
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Runtime limits: forwarded CLI options reach the executor (timeout/output
 // cap) and are visible on /api/config; absent layers keep server defaults.
 // No model calls here, so no stub is needed.

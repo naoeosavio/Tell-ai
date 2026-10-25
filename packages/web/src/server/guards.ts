@@ -7,6 +7,7 @@
 
 import {
   assess_base_risk,
+  is_sensitive_rel_path,
   PAYLOAD_MAX_CONTENT_CHARS,
   PAYLOAD_MAX_MESSAGES,
   PAYLOAD_MAX_SYSTEM_CHARS,
@@ -19,20 +20,12 @@ import {
 /**
  * True when a workspace-relative path points at secrets we never expose:
  * `.env*`, `.tell/**` (session persistence), `*.key`, `*.pem`, `.git/**`.
+ *
+ * Owned by `@tell-ai/core` (`is_sensitive_rel_path`); re-exported here under
+ * the pinned public name so both hosts share one predicate.
  */
 export function isSensitiveRelPath(relPath: string): boolean {
-  const normalized = relPath.replace(/\\/g, '/').toLowerCase();
-  if (normalized.startsWith('/') || normalized.includes('\0')) return true;
-  const segments = normalized.split('/');
-  for (const segment of segments) {
-    // `.env.example` is a committed template, not a secret — never block it.
-    if (segment === '.env.example') continue;
-    if (segment === '.env' || segment.startsWith('.env.')) return true;
-    if (segment === '.tell' || segment === '.git') return true;
-  }
-  const base = segments[segments.length - 1] ?? '';
-  if (base.endsWith('.key') || base.endsWith('.pem')) return true;
-  return false;
+  return is_sensitive_rel_path(relPath);
 }
 
 // ---------------------------------------------------------------------------
