@@ -94,7 +94,7 @@ Multi-step chain mode — the assistant can run a command, see its output, and c
 tell --chain "find out why the build is failing and fix it"
 ```
 
-With `--chain` the model can also delegate: `<DELEGATE>` (read-only research, never writes) and `<SUBTASK>` (build with normal approval). One tag per answer at most; the parent only receives the `Research result:` / `Task result:` summary (2 KiB, redacted), never raw child output. Budget scales with `--max-chain` (`1` → none). Details: `docs/cli/chain-mode.md`, `docs/cli/execution.md`.
+With `--task`/`-t` (task mode) the model can also delegate: `<DELEGATE>` (read-only research, never writes) and `<SUBTASK>` (build with normal approval). One tag per answer at most; the parent only receives the `Research result:` / `Task result:` summary (2 KiB, redacted), never raw child output. Budget scales with `--max-chain` (`1` → none). Without `-t` the chain keeps the baseline prompt (no tag, no child). Details: `docs/cli/chain-mode.md`, `docs/cli/execution.md`.
 
 Stream the answer as it is generated (each chain round also streams):
 
