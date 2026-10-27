@@ -174,6 +174,7 @@ export type RiskCategory =
   | 'shell-expansion'
   | 'environment-escape'
   | 'process-info'
+  | 'data-exfiltration'
   | 'general';
 
 /**
@@ -212,7 +213,7 @@ export type RuntimeCallbacks = {
   onCommandStart?: (event: { script: string }) => void | Promise<void>;
   onCommandOutput?: (event: { script: string; output: string; exit_code: number }) => void | Promise<void>;
   onCommandSkip?: (event: { script: string; status: CommandStatus; reason?: string }) => void | Promise<void>;
-  onDelegation?: (event: { kind: DelegationKind; record: string }) => void | Promise<void>;
+  onDelegation?: (event: { kind: DelegationKind; record: string; extras: number }) => void | Promise<void>;
   onStorageLoad?: (event: { key: string }) => void | Promise<void>;
   onStorageSave?: (event: { key: string }) => void | Promise<void>;
   onExecutorError?: (event: { script: string; error: string }) => void | Promise<void>;
@@ -511,14 +512,19 @@ export function createTellRuntime(options: TellRuntimeOptions): TellRuntime {
       // No text observer.
     }
 
+    // Tag scanning never looks inside a literal `<think>` block: reasoning is
+    // not an instruction. The CLI port already neutralizes its reasoning
+    // channel; this also covers a provider that emits the block in the text.
+    const scan = strip_think_tags(raw);
+
     // Delegation: with no runner the tag is inert (plain text). The check
     // runs after `onText` so the CLI timeline keeps `Assistant:` before the
     // delegation record. A delegation wins over `<RUN>` — any scripts in the
     // same answer are recorded as skipped, never executed.
     if (options.delegation !== undefined) {
-      const delegation_request = extract_delegation(raw);
+      const delegation_request = extract_delegation(scan);
       if (delegation_request.kind !== null) {
-        const scripts_in_delegation = extract_runs(raw)
+        const scripts_in_delegation = extract_runs(scan)
           .scripts.map((entry) => entry.trim())
           .filter((entry) => entry.length > 0);
         for (const skipped_script of scripts_in_delegation) {
@@ -545,7 +551,11 @@ export function createTellRuntime(options: TellRuntimeOptions): TellRuntime {
         }
         timeline.push(outcome.record);
         if (callbacks.onDelegation !== undefined) {
-          await callbacks.onDelegation({ kind: outcome.kind, record: outcome.record });
+          await callbacks.onDelegation({
+            kind: outcome.kind,
+            record: outcome.record,
+            extras: delegation_request.extras,
+          });
         } else {
           // No delegation observer — the record is still in the timeline.
         }
@@ -562,7 +572,7 @@ export function createTellRuntime(options: TellRuntimeOptions): TellRuntime {
       // No delegation runner (child or single-turn) — tags stay inert text.
     }
 
-    const scripts = extract_runs(raw).scripts;
+    const scripts = extract_runs(scan).scripts;
     const first_script = scripts[0];
     if (first_script === undefined) {
       await save_turn(message, text);

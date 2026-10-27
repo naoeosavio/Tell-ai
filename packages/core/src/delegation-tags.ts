@@ -152,23 +152,30 @@ function find_delegation_blocks(text: string): DelegationBlock[] {
  * kept verbatim here — the delegation runner sanitizes it before it becomes
  * a child prompt.
  *
+ * At most one request is honored (the first in document order). `extras`
+ * counts the further non-empty tags so the host can warn instead of dropping
+ * them in silence.
+ *
  * @param text - Model answer.
- * @returns The kind, the trimmed objective and the answer without the tags.
+ * @returns The kind, the trimmed objective, the answer without the tags and
+ *   how many further tags were ignored.
  */
 export function extract_delegation(text: string): {
   kind: DelegationKind | null;
   objective: string;
   visible: string;
+  extras: number;
 } {
   const sanitized = strip_markdown_code_blocks(text);
-  const first = find_delegation_blocks(sanitized)
+  const blocks = find_delegation_blocks(sanitized)
     .map((block) => ({ kind: block.kind, objective: block.body.trim(), start: block.start }))
-    .filter((entry) => entry.objective.length > 0)[0];
+    .filter((entry) => entry.objective.length > 0);
+  const first = blocks[0];
   const visible = strip_delegation_tags(text);
   if (first === undefined) {
-    return { kind: null, objective: '', visible };
+    return { kind: null, objective: '', visible, extras: 0 };
   } else {
-    return { kind: first.kind, objective: first.objective, visible };
+    return { kind: first.kind, objective: first.objective, visible, extras: blocks.length - 1 };
   }
 }
 

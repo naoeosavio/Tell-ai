@@ -193,3 +193,14 @@ export {
 } from './runtime-limits';
 export type { SdkConfigEnv, SdkConfigSource } from './sdk-config';
 export { build_sdk_config_from_env, load_sdk_config_from_env } from './sdk-config';
+export type { TaskResolution } from './task-naming';
+export {
+  find_task_id,
+  format_task_id,
+  is_task_id,
+  next_task_number,
+  resolve_task_id,
+  split_task_value,
+  task_name_from_ref,
+  to_task_name,
+} from './task-naming';

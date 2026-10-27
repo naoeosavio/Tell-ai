@@ -279,6 +279,19 @@ const BASE_RISK_RULES: readonly RiskRule[] = [
     strict_only: true,
   },
   {
+    id: 'strict-sensitive-file',
+    category: 'data-exfiltration',
+    severity: 'high',
+    reason: 'credential or secret file named (env/keys/tokens/.git/.tell)',
+    flags: ['sensitive-file'],
+    // A command that names a credential file can send it to the model
+    // provider: the file API and delegated research already deny these.
+    // `.env.example` is a committed template and stays allowed.
+    pattern:
+      /(?:^|[\s"'=:;|&<>()/])(?:\.env(?!\.example)(?:\.[\w.-]+)?|id_(?:rsa|dsa|ecdsa|ed25519)|[\w.-]+\.(?:key|pem|p12)|\.git\/[\w./-]+|\.tell\/[\w./-]+|\.aws\/credentials|\.config\/[\w.-]*\.token)(?=$|[\s"'=:;|&<>()/])/i,
+    strict_only: true,
+  },
+  {
     id: 'strict-shell-backtick-pipe',
     category: 'shell-expansion',
     severity: 'medium',
