@@ -14,6 +14,7 @@
     "test:security": "bun run --filter @tell-ai/sdk build && bun run --filter @tell-ai/core build && node test/test-tell-security.js",
     "test:context": "bun run --filter @tell-ai/sdk build && bun run --filter @tell-ai/core build && node test/test-tell-context.js",
     "test:stream": "bun run --filter @tell-ai/sdk build && bun run --filter @tell-ai/core build && node test/test-tell-stream.js",
+    "test:task": "bun run --filter @tell-ai/sdk build && bun run --filter @tell-ai/core build && bun run --filter tell-ai build && node test/test-tell-task.js",
     "test:mentions": "bun run --filter @tell-ai/sdk build && bun run --filter @tell-ai/core build && node test/test-tell-mentions.js",
     "test:cli-adapters": "bun run --filter @tell-ai/sdk build && bun run --filter @tell-ai/core build && node --test test/test-cli-core-adapters.js",
     "test:fuzz": "bun run --filter @tell-ai/sdk build && bun run --filter @tell-ai/core build && node --test test/test-fuzz-coverage.js",
@@ -27,7 +28,7 @@
     "test:env": "bun run --filter @tell-ai/sdk build && bun run --filter @tell-ai/core build && node test/test-tell-env.js",
     "test:runtime": "bun run --filter @tell-ai/sdk build && bun run --filter @tell-ai/core build && node test/test-tell-runtime-limits.js",
     "test:web": "node test/test-web-backend.js && bun run --filter @tell-ai/web build && node test/test-web-sandbox.js",
-    "test": "bun run test:sdk && bun run test:core-api && bun run test:env && bun run test:runtime && bun run test:tellrc && bun run test:security && bun run test:context && bun run test:stream && bun run test:mentions && bun run test:cli-adapters && bun run test:fuzz && bun run test:core && bun run test:web",
+    "test": "bun run test:sdk && bun run test:core-api && bun run test:env && bun run test:runtime && bun run test:tellrc && bun run test:security && bun run test:context && bun run test:stream && bun run test:mentions && bun run test:task && bun run test:cli-adapters && bun run test:fuzz && bun run test:core && bun run test:web",
     "ci": "bun run build && bun run lint && bun run check && bun run test"
   },
   "repository": {

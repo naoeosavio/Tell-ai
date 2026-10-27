@@ -35,7 +35,8 @@ Full spec format: `vendor:model[:thinking]` with thinking in `none|low|medium|hi
 | `-m, --model <model>` | string | Model alias or full spec. `-m --help` lists aliases. |
 | `-c, --context` | boolean | Use default per-directory+model context. |
 | `--ctx [ref]` | optional string | Context ref + prompt: `@N` recency, `%id` use-or-create; text after the ref is the prompt. No ref = prompt text for the default context. A single bare token with a positional prompt is an error (naming requires `%`). Cannot combine with `-c`. |
-| `-n, --name` | boolean | Reset modifier: `--ctx %id -n` always starts empty. Requires `%id`. |
+| `-n, --name` | boolean | Reset modifier: `--ctx %id -n` (or `--task %id -n`) always starts empty. Requires `%id`. |
+| `-t, --task [ref]` | optional string | Task mode: `%id` resumes or creates `task-NNN-name`; without a ref the prompt creates `task-NNN-<hash8>`. Forces `-y --chain --stream --require-approval` and uses `~/.ai/tell_context/task-NNN-name/main.txt`. A new task needs a prompt; a resume can continue without one. Cannot combine with `--ctx`, `-c` or `--no-exec`. See Task mode below. |
 | `-l, --history [ref]` | optional string | List contexts + conversations; `@N`/`%N` reprints an entry; any other value searches both. No model call. See [history.md](history.md). |
 | `-y, --yes` | boolean | Auto-approve commands. High-risk **and** any reference to paths outside the working directory still require confirmation. No-op without TTY for those (auto-reject). |
 | `--require-approval` | boolean | Explicit Require Approval mode: with `-y`, safe commands run directly and high-risk ones still ask; without `-y`, every command asks (same as default). Never weakens the high-risk gate. Forwarded by `-w`/`--web` to seed the web sandbox toggle. |
@@ -54,9 +55,24 @@ Full spec format: `vendor:model[:thinking]` with thinking in `none|low|medium|hi
 
 `exec` in `CliOptions` is `false` only with `--no-exec` (commander negated boolean); `run_tell` resolves the flags once into `execMode: 'no-exec' | 'confirm-all' | 'auto-risk'` — `--no-exec` wins over everything, `-y` (with or without `--require-approval`) selects `auto-risk`, anything else confirms every command.
 
-## Flag interactions
+## Task mode (`-t`, `--task`)
 
-Delegation is chain-only with no new flag: with `--chain` the prompt gains the core-owned delegation section (`<DELEGATE>` research read-only, `<SUBTASK>` build with normal approval; at most one tag per answer, delegation wins over `<RUN>` which is recorded skipped, never executed). See [chain-mode.md](chain-mode.md) and [execution.md](execution.md).
+Task mode is sugar over chain mode. It opens a saved task, forces `-y --chain --stream --require-approval`, and refuses `--no-exec` (exit `2`).
+
+- Id: `task-NNN-name`. `--task %name` resumes the saved task or creates it with the next free number. `--task "objective"` creates `task-NNN-<hash8>` from `sha256(cwd + prompt)`. Numbers never reset, repeat or renumber; a resume never allocates one. Repeating the exact objective reuses the same hash id (resume) — pass a distinct `%ref` to force a second task. When several saved tasks share the normalized name, the most recently used one wins; pass the full id to pick another.
+- The task line (`Created task:`/`Using task:`) is printed only after the run succeeds, so a model failure never reports a task that was never saved.
+- Storage: `~/.ai/tell_context/task-NNN-name/main.txt` is the context file (it appears in `-l` as `@N`). Each delegation writes `delegate-NNN.txt` or `subtask-NNN.txt` beside it with `Objective:`, `Context-at-delegation:` and `Result:` (redacted, 16 Ki chars cap).
+- Reset: `--task %id -n` truncates `main.txt` only. The child records stay.
+- A new task needs an objective. A resume without a prompt continues from the saved context.
+- Only `%ref` guarantees a resume. The automatic name is `sha256(cwd + "\n" + prompt)`: a different case or internal spacing is a different task.
+- Numbering is `max + 1` over the saved ids. Deleting the highest task frees its number (a shortcut: a task should be resumed, not deleted).
+- Two runs on the same task at the same time keep the last writer's turns: each write is atomic, but there is no run lock.
+- `tell --web --task …` forwards the same value. The CLI does not claim the task; the sandbox resolves and creates the same id, so `--cwd` never leaves a phantom task.
+- At most one delegation tag runs per answer; extra tags print a warning. A tag inside a literal `<think>` block is inert.
+
+Delegation is task-only: `-t/--task` adds the core-owned sections (`<DELEGATE>` research read-only, `<SUBTASK>` build with normal approval; at most one tag per answer, delegation wins over `<RUN>` which is recorded skipped, never executed). Without `-t`, `--chain` keeps the baseline prompt of commit `09269bb`: no delegation section, no child, and an emitted tag is inert text. See [chain-mode.md](chain-mode.md) and [execution.md](execution.md).
+
+## Flag interactions
 
 | Flags | Reads? | Deletes default? | Writes? | Loop? |
 |-------|--------|------------------|---------|-------|
