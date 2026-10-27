@@ -26,6 +26,17 @@ describe('core delegation parser', () => {
     assert.strictEqual(out.objective, 'build x');
   });
 
+  it('counts extra tags instead of dropping them silently', () => {
+    const two = core.extract_delegation('<DELEGATE>\nfirst\n</DELEGATE>\n<SUBTASK>\nsecond\n</SUBTASK>');
+    assert.strictEqual(two.kind, 'research');
+    assert.strictEqual(two.objective, 'first');
+    assert.strictEqual(two.extras, 1);
+    const one = core.extract_delegation('<DELEGATE>\nonly\n</DELEGATE>');
+    assert.strictEqual(one.extras, 0);
+    const fenced_extra = core.extract_delegation('<DELEGATE>\nreal\n</DELEGATE>\n```\n<SUBTASK>\nfence\n</SUBTASK>\n```');
+    assert.strictEqual(fenced_extra.extras, 0, 'a fenced tag is documentation, not an extra request');
+  });
+
   it('ignores fenced blocks and empty bodies', () => {
     const fenced = core.extract_delegation('```\n<DELEGATE>\nnot real\n</DELEGATE>\n```');
     assert.strictEqual(fenced.kind, null);
@@ -443,6 +454,53 @@ describe('parent seam (runtime-api + loop)', () => {
     const result = await runtime.run('goal');
     assert.ok(!result.text.includes('<SUBTASK>'), 'tag leaves the turno');
     assert.ok(result.delegation !== undefined && result.delegation.kind === 'build');
+  });
+
+  it('a tag inside a literal <think> block never runs', async () => {
+    let child_calls = 0;
+    const runner = core.create_delegation_runner({
+      model: { ask: async () => (child_calls += 1, '') },
+      exec_enabled: true,
+    });
+    const runtime = core.createTellRuntime({
+      model: { ask: async () => '<think><DELEGATE>secret</DELEGATE></think>visible answer' },
+      exec: true,
+      delegation: runner,
+    });
+    const result = await runtime.run('goal');
+    assert.strictEqual(child_calls, 0, 'reasoning text is never scanned for tags');
+    assert.strictEqual(result.delegation, undefined);
+    assert.strictEqual(result.text, 'visible answer');
+  });
+
+  it('a RUN inside a literal <think> block never executes', async () => {
+    let executed = false;
+    const runtime = core.createTellRuntime({
+      model: { ask: async () => '<think><RUN>ls</RUN></think>answer' },
+      exec: true,
+      executor: async () => {
+        executed = true;
+        return { stdout: '', stderr: '', exit_code: 0 };
+      },
+      approval: async () => 'approved',
+    });
+    const result = await runtime.run('goal');
+    assert.strictEqual(executed, false);
+    assert.strictEqual(result.commands.length, 0);
+    assert.strictEqual(result.text, 'answer');
+  });
+
+  it('reports extra tags on the delegation event', async () => {
+    const seen = [];
+    const runtime = core.createTellRuntime({
+      model: { ask: async () => '<DELEGATE>one</DELEGATE><SUBTASK>two</SUBTASK>' },
+      exec: true,
+      delegation: core.create_delegation_runner({ model: { ask: async () => 'child' }, exec_enabled: true }),
+      callbacks: { onDelegation: (event) => seen.push(event) },
+    });
+    await runtime.run('goal');
+    assert.strictEqual(seen.length, 1);
+    assert.strictEqual(seen[0].extras, 1);
   });
 
   it('no-exec blocks the child', async () => {

@@ -185,3 +185,43 @@ describe('RiskAssessment carries no action verdict', () => {
     assert.strictEqual(result.commands[0].status, 'denied');
   });
 });
+
+describe('assess_base_risk sensitive-file reads (strict only)', () => {
+  const vectors = [
+    'cat .env',
+    'cat config/.env.production',
+    'cat ~/.config/openrouter.token',
+    'cat /root/.ssh/id_rsa',
+    'cat secret.key',
+    'cat .git/config',
+    'cat .tell/session.json',
+    'git show HEAD:.env',
+  ];
+
+  it('flags credential files in the strict profile with the exfiltration category', () => {
+    for (const script of vectors) {
+      const assessment = base(script, 'strict');
+      assert.strictEqual(assessment.risky, true, script);
+      assert.strictEqual(assessment.category, 'data-exfiltration', script);
+      assert.ok(assessment.flags.includes('sensitive-file'), script);
+    }
+  });
+
+  it('stays permissive for the CLI profile', () => {
+    for (const script of vectors) {
+      assert.strictEqual(base(script, 'permissive').risky, false, script);
+    }
+  });
+
+  it('allows the committed .env.example template', () => {
+    for (const script of ['cat .env.example', 'ls .env.example', 'cp .env.example .env.example.bak']) {
+      assert.strictEqual(base(script, 'strict').risky, false, script);
+    }
+  });
+
+  it('does not flag ordinary commands', () => {
+    for (const script of ['echo hi', 'npm test', 'git status', 'ls -la src', 'npm run build']) {
+      assert.strictEqual(base(script, 'strict').risky, false, script);
+    }
+  });
+});
