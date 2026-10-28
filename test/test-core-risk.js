@@ -186,7 +186,7 @@ describe('RiskAssessment carries no action verdict', () => {
   });
 });
 
-describe('assess_base_risk sensitive-file reads (strict only)', () => {
+describe('assess_base_risk sensitive-file reads (both profiles)', () => {
   const vectors = [
     'cat .env',
     'cat config/.env.production',
@@ -198,18 +198,14 @@ describe('assess_base_risk sensitive-file reads (strict only)', () => {
     'git show HEAD:.env',
   ];
 
-  it('flags credential files in the strict profile with the exfiltration category', () => {
+  it('flags credential files in both profiles with the exfiltration category', () => {
     for (const script of vectors) {
-      const assessment = base(script, 'strict');
-      assert.strictEqual(assessment.risky, true, script);
-      assert.strictEqual(assessment.category, 'data-exfiltration', script);
-      assert.ok(assessment.flags.includes('sensitive-file'), script);
-    }
-  });
-
-  it('stays permissive for the CLI profile', () => {
-    for (const script of vectors) {
-      assert.strictEqual(base(script, 'permissive').risky, false, script);
+      for (const profile of ['strict', 'permissive']) {
+        const assessment = base(script, profile);
+        assert.strictEqual(assessment.risky, true, `${profile}: ${script}`);
+        assert.strictEqual(assessment.category, 'data-exfiltration', `${profile}: ${script}`);
+        assert.ok(assessment.flags.includes('sensitive-file'), `${profile}: ${script}`);
+      }
     }
   });
 

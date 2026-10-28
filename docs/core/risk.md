@@ -13,18 +13,18 @@ assess_base_risk('sudo rm -rf /', 'permissive');
 
 | Profile | Host | Behavior |
 |---------|------|----------|
-| `permissive` (default) | CLI | Local-only interpreter one-liners pass; only network/decode-coupled eval is risky |
-| `strict` | Web | Any interpreter `-c`/`-e`, `env` launches, `base64 -d`, shell expansions and credential-file access are risky |
+| `permissive` (default) | CLI | Local-only interpreter one-liners pass; only network/decode-coupled eval is risky; credential-file reads are high-risk (explicit confirm) |
+| `strict` | Web | Any interpreter `-c`/`-e`, `env` launches, `base64 -d`, shell expansions and credential-file access are risky (blocked outright) |
 
-Common rules run in both profiles. `permissive_only` rules keep the CLI divergences verbatim (broad download pipes, process substitution, network-gated interpreter eval, direct privileged `chmod`); `strict_only` rules keep the Web divergences verbatim (any interpreter eval, `env`, `base64 -d`, shell expansions). The divergence is test-pinned — do not "dedupe". `create_base_risk_port(profile)` wraps the classifier as a `RiskPort` for runtime injection.
+Common rules run in both profiles, including credential-file reads. `permissive_only` rules keep the CLI divergences verbatim (broad download pipes, process substitution, network-gated interpreter eval, direct privileged `chmod`); `strict_only` rules keep the Web divergences verbatim (any interpreter eval, `env`, `base64 -d`, shell expansions). The remaining divergence is test-pinned — do not "dedupe". `create_base_risk_port(profile)` wraps the classifier as a `RiskPort` for runtime injection.
 
 ## Rules
 
 Scripts are compacted first (backslash-newlines → spaces, whitespace collapsed), then matched:
 
-* Common (both): `sudo/doas/pkexec`, `sh -c` strings, `curl/wget/nc/ssh/ftp` clients, `printenv`, `/proc` access, `rm -rf` (any `-rf` flag combo), `git clean -f`, `mkfs/shutdown/reboot`, `dd … of=`, recursive `chmod/chown -R /`, `crontab` / `systemctl --user enable`, `cp/mv/ln` + `sed -i` + `tee` + redirects into privileged paths (`/etc /boot /dev /proc /sys /usr /bin /sbin /lib* /var/spool/cron /etc/cron* ~/.config/autostart ~/.local/share/systemd/user`).
+* Common (both): `sudo/doas/pkexec`, `sh -c` strings, `curl/wget/nc/ssh/ftp` clients, `printenv`, `/proc` access, `rm -rf` (any `-rf` flag combo), `git clean -f`, `mkfs/shutdown/reboot`, `dd … of=`, recursive `chmod/chown -R /`, `crontab` / `systemctl --user enable`, `cp/mv/ln` + `sed -i` + `tee` + redirects into privileged paths (`/etc /boot /dev /proc /sys /usr /bin /sbin /lib* /var/spool/cron /etc/cron* ~/.config/autostart ~/.local/share/systemd/user`), and credential-file access (`.env*` except `.env.example`, `*.key`/`*.pem`/`*.p12`, `id_rsa`/`id_dsa`/`id_ecdsa`/`id_ed25519`, `.git/**`, `.tell/**`, `.aws/credentials`, `~/.config/*.token`). The last rule keeps command execution at parity with the file API: a model cannot read a secret through a command without explicit approval (CLI) or at all (Web), so it cannot silently send it to the provider.
 * Permissive-only: download piped into a shell/interpreter, `<(curl|wget|base64…)` process substitution, `sh … <(…)` readers, network/decode-coupled interpreter one-liners (`-e/-c/-r … http…|urllib|requests|socket|base64|eval|exec|system|popen`), download chained into an interpreter.
-* Strict-only: any interpreter eval flag (`python3|node|deno|bun|perl|ruby|php|lua` with `-c`/`-e`/`-r`/`--eval`/`eval`), bare `env`, `base64 -d/--decode`, `${…}` brace expansion, `$(…)` substitution, backtick pipelines, and credential-file access (`.env*` except `.env.example`, `*.key`/`*.pem`/`*.p12`, `id_rsa`/`id_dsa`/`id_ecdsa`/`id_ed25519`, `.git/**`, `.tell/**`, `.aws/credentials`, `~/.config/*.token`). The last rule keeps command execution at parity with the file API: a model cannot read a secret through a command, so it cannot send it to the provider.
+* Strict-only: any interpreter eval flag (`python3|node|deno|bun|perl|ruby|php|lua` with `-c`/`-e`/`-r`/`--eval`/`eval`), bare `env`, `base64 -d/--decode`, `${…}` brace expansion, `$(…)` substitution, backtick pipelines.
 
 Highest severity wins (`high` beats `medium`); the winning rule's category is reported; every match contributes its reasons and flags (deduplicated). No match → `{ risky: false, severity: 'low', category: 'general', reasons: [], flags: [] }`.
 
