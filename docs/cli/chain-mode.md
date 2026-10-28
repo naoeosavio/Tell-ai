@@ -52,4 +52,6 @@ Task-only (`-t`, `--task`): the core-owned delegation section (`delegation_promp
 - The parent only receives `Research result:` / `Task result:` + one host-assembled stats line (`cap(redact(text))`, 2 KiB); raw child stdout never climbs. The child runs ≤3 rounds with its own bounded storage (16 KiB) and never recurses (no runner inside). Child scripts are audited to the run log as `Child command (<status>):` (log-only, never parent context). A tag-only parent answer with no commands still asks once more for a visible answer instead of printing nothing (the model can still stay silent — the guarantee is the extra ask, not the words).
 - Budget: `max_chain_steps >= 2 ? min(4, max(1, floor(max_chain/4))) : 0` (default 8 → 2; `--max-chain 1` → 0, the tag stays inert).
 
+Full flow: [../core/delegation.md](../core/delegation.md).
+
 Sources: `packages/cli/src/Tell.ts` (`run_response_loop`), `packages/cli/src/core-adapters.ts`, `packages/core/src/loop.ts`; chain assertions in `test/test-tell-security.js`, delegation assertions in `test/test-tell-task.js` and `test/test-web-sandbox.js`. Core reference: [../core/loop.md](../core/loop.md), [../core/loop-feedback.md](../core/loop-feedback.md).
