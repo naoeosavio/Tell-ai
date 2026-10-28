@@ -1,5 +1,6 @@
 import { extract_runs, get_system_prompt, strip_run_tags, strip_think_tags } from '@tell-ai/sdk/pure';
 import type { DelegationRunner } from './delegation';
+import { delegation_budget_notice } from './delegation-status';
 import type { DelegationKind } from './delegation-tags';
 import { extract_delegation, strip_delegation_tags } from './delegation-tags';
 
@@ -215,7 +216,12 @@ export type RuntimeCallbacks = {
   onCommandStart?: (event: { script: string }) => void | Promise<void>;
   onCommandOutput?: (event: { script: string; output: string; exit_code: number }) => void | Promise<void>;
   onCommandSkip?: (event: { script: string; status: CommandStatus; reason?: string }) => void | Promise<void>;
-  onDelegation?: (event: { kind: DelegationKind; record: string; extras: number }) => void | Promise<void>;
+  onDelegation?: (event: {
+    kind: DelegationKind;
+    record: string;
+    extras: number;
+    status?: string | undefined;
+  }) => void | Promise<void>;
   onStorageLoad?: (event: { key: string }) => void | Promise<void>;
   onStorageSave?: (event: { key: string }) => void | Promise<void>;
   onExecutorError?: (event: { script: string; error: string }) => void | Promise<void>;
@@ -245,6 +251,8 @@ export type TellRuntimeOptions = {
   timeout_ms?: number;
   max_output_bytes?: number;
   delegation?: DelegationRunner;
+  /** Fixed delegation budget for this runtime (undefined means the runner decides). */
+  max_delegations?: number | undefined;
 };
 
 /** Single-turn runtime handle produced by `createTellRuntime`. */
@@ -446,6 +454,7 @@ export function createTellRuntime(options: TellRuntimeOptions): TellRuntime {
   const redact = options.redact ?? ((value: string): string => value);
   const exec_enabled = options.exec ?? false;
   const callbacks = options.callbacks ?? {};
+  let delegation_used = 0;
 
   async function load_context(): Promise<string> {
     if (callbacks.onStorageLoad !== undefined) {
@@ -542,6 +551,12 @@ export function createTellRuntime(options: TellRuntimeOptions): TellRuntime {
           await save_turn(message, text);
           return { status: 'cancelled', text, timeline, commands: [] };
         }
+        const runtime_budget = options.max_delegations;
+        if (runtime_budget !== undefined && delegation_used >= runtime_budget) {
+          timeline.push(delegation_budget_notice(runtime_budget));
+          await save_turn(message, text);
+          return { status: 'completed', text, timeline, commands: [] };
+        }
         const delegation_result = (await options.delegation({
           kind: delegation_request.kind,
           objective: delegation_request.objective,
@@ -550,20 +565,34 @@ export function createTellRuntime(options: TellRuntimeOptions): TellRuntime {
           | { outcome: { kind: DelegationKind; record: string; summary: string; status?: string } }
           | { refused: string }
           | null;
-        if (delegation_result === null || (typeof delegation_result === 'object' && 'refused' in delegation_result)) {
-          // Budget or host refused — the tag stays stripped, no record.
+        if (delegation_result === null) {
+          // Legacy runner without a reason — the tag stays stripped, no record.
+          await save_turn(message, text);
+          return { status: 'completed', text, timeline, commands: [] };
+        } else if (typeof delegation_result === 'object' && 'refused' in delegation_result) {
+          if (delegation_result.refused === 'budget') {
+            timeline.push(
+              runtime_budget !== undefined
+                ? delegation_budget_notice(runtime_budget)
+                : 'Delegation budget exceeded; ignoring delegation tag.',
+            );
+          } else {
+            // Empty objective — silent, the tag stays stripped.
+          }
           await save_turn(message, text);
           return { status: 'completed', text, timeline, commands: [] };
         }
         const outcome = (
           delegation_result as { outcome: { kind: DelegationKind; record: string; summary: string; status?: string } }
         ).outcome;
+        delegation_used += 1;
         timeline.push(outcome.record);
         if (callbacks.onDelegation !== undefined) {
           await callbacks.onDelegation({
             kind: outcome.kind,
             record: outcome.record,
             extras: delegation_request.extras,
+            ...(outcome.status !== undefined ? { status: outcome.status } : {}),
           });
         } else {
           // No delegation observer — the record is still in the timeline.

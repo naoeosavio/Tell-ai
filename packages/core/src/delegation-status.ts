@@ -26,6 +26,20 @@ export type DelegationFacts = {
 };
 
 /**
+ * Builds the deterministic warning when the delegation budget is spent.
+ *
+ * The third tag is inert by design: the tag stays stripped, no child runs,
+ * and this line enters the timeline so the host log never drops it in
+ * silence.
+ *
+ * @param max - Budget in effect for the run.
+ * @returns The warning line.
+ */
+export function delegation_budget_notice(max: number): string {
+  return `Delegation budget exceeded (${max}); ignoring delegation tag.`;
+}
+
+/**
  * Derives the host status from the child facts.
  *
  * `BLOCKED` when commands were requested but none ran, or when the answer is

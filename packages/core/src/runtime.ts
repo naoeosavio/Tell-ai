@@ -54,6 +54,8 @@ export type CoreRuntimeInput = {
   max_output_bytes?: number;
   /** Delegation runner (absent means tags stay inert text; child passes none). */
   delegation?: TellRuntimeOptions['delegation'];
+  /** Fixed delegation budget for the run (undefined means the runner decides). */
+  max_delegations?: number | undefined;
 };
 
 /** Executable core runtime handle (loop owned by core, contract by the SDK). */
@@ -91,6 +93,7 @@ export function create_core_runtime(input: CoreRuntimeInput): CoreRuntime {
     ...(input.redact !== undefined ? { redact: input.redact } : {}),
     ...(input.callbacks !== undefined ? { callbacks: input.callbacks } : {}),
     ...(input.delegation !== undefined ? { delegation: input.delegation } : {}),
+    ...(input.max_delegations !== undefined ? { max_delegations: input.max_delegations } : {}),
     timeout_ms: input.config.exec_timeout_ms,
     max_output_bytes: input.max_output_bytes ?? CORE_MAX_OUTPUT_BYTES,
   };

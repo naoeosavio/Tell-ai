@@ -35,7 +35,7 @@ export type {
 export type { DelegationPromptMode } from './delegation-prompt';
 export { delegation_prompt_section } from './delegation-prompt';
 export type { DelegationFacts, DelegationStatus } from './delegation-status';
-export { derive_delegation_status } from './delegation-status';
+export { delegation_budget_notice, derive_delegation_status } from './delegation-status';
 export type {
   DelegationBlock,
   DelegationKind,

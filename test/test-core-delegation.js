@@ -676,6 +676,42 @@ describe('parent seam (runtime-api + loop)', () => {
     await runtime.run('goal');
     assert.strictEqual(seen.length, 1);
     assert.strictEqual(seen[0].extras, 1);
+    assert.ok(typeof seen[0].status === 'string', 'status rides the event');
+  });
+
+  it('runtime owns the budget: third tag inert with a deterministic warning', async () => {
+    const answers = [
+      '<DELEGATE>\nfirst\n</DELEGATE>',
+      '<DELEGATE>\nsecond\n</DELEGATE>',
+      '<DELEGATE>\nthird\n</DELEGATE>',
+      'final answer',
+    ];
+    let calls = 0;
+    const seen = [];
+    const parent = core.createTellRuntime({
+      model: {
+        ask: async () => answers[Math.min(calls++, answers.length - 1)],
+      },
+      exec: true,
+      delegation: core.create_delegation_runner({
+        model: { ask: async () => 'child findings' },
+        exec_enabled: true,
+      }),
+      max_delegations: 2,
+      callbacks: { onDelegation: (event) => seen.push(event) },
+    });
+    const result = await core.run_primitive_loop('goal', {
+      runtime_options: {},
+      single_turn: parent,
+      max_rounds: 8,
+    });
+    const records = result.timeline.filter((line) => line.includes('Research result'));
+    assert.strictEqual(records.length, 2, 'only two runs climb');
+    assert.strictEqual(seen.length, 2, 'two delegation events');
+    assert.ok(seen.every((event) => typeof event.status === 'string'), 'status on every event');
+    const warning = result.timeline.find((line) => line.includes('Delegation budget exceeded (2)'));
+    assert.ok(warning !== undefined, 'third tag warns deterministically in the timeline');
+    assert.strictEqual(core.delegation_budget_notice(2), 'Delegation budget exceeded (2); ignoring delegation tag.');
   });
 
   it('no-exec blocks the child', async () => {
