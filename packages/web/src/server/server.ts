@@ -1143,11 +1143,11 @@ app.post('/api/delegate', async (req, res) => {
     });
     (async () => {
       try {
-        const outcome = await runner({ kind, objective });
-        if (outcome === null) {
+        const delegation_result = await runner({ kind, objective });
+        if (delegation_result === null || !('outcome' in delegation_result)) {
           task.error = `${kind} delegation not enabled on this host`;
         } else {
-          task.record = outcome.record;
+          task.record = delegation_result.outcome.record;
         }
       } catch (error: unknown) {
         task.error = error instanceof Error ? error.message : String(error);
@@ -1727,11 +1727,11 @@ async function run_web_delegation(
     return null;
   }
   const active = runner ?? new_web_runner(modelSpec, cancellation);
-  const outcome = await active({ kind, objective });
-  if (outcome === null) {
+  const delegation_result = await active({ kind, objective });
+  if (delegation_result === null || !('outcome' in delegation_result)) {
     return null;
   } else {
-    return { record: outcome.record };
+    return { record: delegation_result.outcome.record };
   }
 }
 
