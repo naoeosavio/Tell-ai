@@ -420,7 +420,7 @@ async function test_task_delegation_record_file() {
     const record = fs.readFileSync(path.join(task_directory, 'delegate-001.txt'), 'utf8');
     assert_includes(record, 'Objective:\nlist the files');
     assert_includes(record, 'Context-at-delegation:');
-    assert_includes(record, 'Result:\nResearch result:');
+    assert_includes(record, 'Result:\nResearch result (DONE):');
     // The child command is audited in the run log, never in the parent timeline.
     const logs = fs.readdirSync(path.join(result.home, '.ai', 'tell_history')).sort();
     const log_text = fs.readFileSync(path.join(result.home, '.ai', 'tell_history', logs[logs.length - 1]), 'utf8');
@@ -428,7 +428,7 @@ async function test_task_delegation_record_file() {
     assert_not_includes(log_text, '<DELEGATE>');
     assert_not_includes(result.stdout, 'Executed command:');
     const main_text = fs.readFileSync(path.join(task_directory, 'main.txt'), 'utf8');
-    assert_includes(main_text, 'Research result:');
+    assert_includes(main_text, 'Research result (DONE):');
     assert_not_includes(main_text, '<DELEGATE>');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -541,7 +541,7 @@ async function test_task_child_record_numbering_past_999() {
     );
     const record = fs.readFileSync(path.join(task_directory, 'delegate-1000.txt'), 'utf8');
     assert_includes(record, 'Objective:\nlist the files');
-    assert_includes(record, 'Result:\nResearch result:');
+    assert_includes(record, 'Result:\nResearch result (DONE):');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

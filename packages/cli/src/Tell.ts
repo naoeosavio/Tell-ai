@@ -19,6 +19,7 @@ import {
   DELEGATION_CONTEXT_MAX_CHARS,
   type DelegationOutcome,
   type DelegationRequest,
+  type DelegationResult,
   EXIT_CONFIG_ERROR,
   EXIT_LIMIT,
   EXIT_MODEL_ERROR,
@@ -1106,12 +1107,16 @@ async function run_response_loop(
   const delegation_with_indicator =
     delegation_runner === undefined
       ? undefined
-      : async (request: { kind: 'research' | 'build'; objective: string }) => {
+      : async (request: { kind: 'research' | 'build'; objective: string }): Promise<DelegationResult> => {
           const label = request.kind === 'research' ? 'Delegando pesquisa…' : 'Delegando sub-tarefa…';
           process.stderr.write(`\x1b[2m${label}\x1b[0m`);
           try {
-            const outcome = await delegation_runner(request);
-            if (outcome !== null) {
+            const delegation_result: DelegationResult = await delegation_runner({
+              ...request,
+              ...(last_raw.trim() !== '' ? { context: last_raw } : {}),
+            });
+            if ('outcome' in delegation_result) {
+              const outcome: DelegationOutcome = delegation_result.outcome;
               for (const command of outcome.commands) {
                 append_log(log, `Child command (${command.status}):\n${command.script}`);
               }
@@ -1123,7 +1128,7 @@ async function run_response_loop(
             } else {
               // Refused (budget spent or empty objective) — nothing to audit.
             }
-            return outcome;
+            return delegation_result;
           } finally {
             process.stderr.write('\r\x1b[K');
           }
