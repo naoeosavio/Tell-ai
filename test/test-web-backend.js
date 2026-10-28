@@ -216,8 +216,41 @@ test('cli: --stream/--think default off and are detected independently', () => {
   assert.strictEqual(both.chain, true);
 });
 
-test('cli: printHelp runs without throwing', () => {
-  printHelp();
+test('cli: printHelp documents the task flags', () => {
+  const lines = [];
+  const original = console.log;
+  console.log = (...args) => lines.push(args.join(' '));
+  try {
+    printHelp();
+  } finally {
+    console.log = original;
+  }
+  const help = lines.join('\n');
+  assert.ok(help.includes('-t, --task'), 'the help lists the task flag');
+  assert.ok(help.includes('--task-reset'), 'the help lists the reset flag');
+});
+
+test('cli: --task forces the chain contract and rejects --no-exec', () => {
+  const task = parseCliArgs(['--task', '%Feature'], '/tmp');
+  assert.strictEqual(task.task, '%Feature');
+  assert.strictEqual(task.taskReset, false);
+  assert.strictEqual(task.chain, true);
+  assert.strictEqual(task.yes, true);
+  assert.strictEqual(task.requireApproval, true);
+  assert.strictEqual(task.stream, true);
+  assert.strictEqual(task.autoExecute, true);
+  assert.strictEqual(task.error, undefined);
+  const bare = parseCliArgs(['-t', '--prompt', 'goal'], '/tmp');
+  assert.strictEqual(bare.task, '');
+  assert.strictEqual(bare.initialPrompt, 'goal');
+  const reset = parseCliArgs(['--task', '%x', '--task-reset'], '/tmp');
+  assert.strictEqual(reset.taskReset, true);
+  const conflict = parseCliArgs(['-t', '%x', '--no-exec'], '/tmp');
+  assert.strictEqual(conflict.noExec, true);
+  assert.match(conflict.error, /--task cannot be combined with --no-exec/);
+  const off = parseCliArgs([], '/tmp');
+  assert.strictEqual(off.task, undefined);
+  assert.strictEqual(off.taskReset, false);
 });
 
 test('cli: --require-approval is detected, default off, never a value', () => {
@@ -785,13 +818,12 @@ test('context: delegation sections follow what the host can approve', () => {
   assert.ok(!research.includes('<SUBTASK>'), 'research never describes SUBTASK');
   const both = buildSystemPrompt(dir, 'both');
   assert.ok(both.includes('<SUBTASK>'), 'both describes SUBTASK');
-  assert.ok(buildSystemPrompt(dir).includes('<DELEGATE>'), 'default stays research');
+  assert.ok(!buildSystemPrompt(dir).includes('<DELEGATE>'), 'no delegation without a host request');
 });
 
-test('context: server always advertises both tags (v2 nested, no -y gate)', () => {
+test('context: server advertises both tags only in task mode', () => {
   const source = fs.readFileSync(path.join(WEB_SRC, 'src', 'server', 'server.ts'), 'utf8');
-  assert.ok(source.includes("buildSystemPrompt(CWD, 'both')"), 'server passes both always');
-  assert.ok(!source.includes("AUTO_EXECUTE ? 'both'"), 'no -y gate left on the prompt');
+  assert.ok(source.includes("TASK === undefined ? undefined : 'both'"), 'delegation follows task mode');
 });
 
 test('chain: browser prefers the child card (v2 nested)', () => {
