@@ -25,6 +25,7 @@ import {
   DELEGATION_OUTPUT_MAX_BYTES,
   DELEGATION_SUMMARY_MAX_CHARS,
 } from './runtime-limits';
+import { summarize_result } from './summarize-result';
 
 /** One delegation request from a parent turn. */
 export type DelegationRequest = {
@@ -328,9 +329,10 @@ export function create_delegation_runner(options: DelegationRunnerOptions): Dele
       child_message,
       options.cancellation !== undefined ? { cancellation: options.cancellation } : undefined,
     );
-    const redacted = redact(result.text);
-    const summary =
-      redacted.length <= DELEGATION_SUMMARY_MAX_CHARS ? redacted : redacted.slice(0, DELEGATION_SUMMARY_MAX_CHARS);
+    // One summarize attempt when the redacted result misses the target; the
+    // target is a goal (summary < target wins, else the original climbs).
+    const summarized = await summarize_result(options.model, result.text, DELEGATION_SUMMARY_MAX_CHARS, redact);
+    const summary = summarized.text;
     const ran = result.commands.filter((command) => command.status === 'executed' || command.status === 'failed');
     const denied_count = result.commands.filter(
       (command) =>

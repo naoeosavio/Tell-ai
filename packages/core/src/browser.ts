@@ -170,6 +170,8 @@ export {
   truncate_output,
   validate_tellrc_limit_value,
 } from './runtime-limits';
+export type { SummarizeResult, SummarizeUsed } from './summarize-result';
+export { build_summarize_message, SUMMARIZE_SYSTEM, summarize_result } from './summarize-result';
 export type { TaskResolution } from './task-naming';
 export {
   find_task_id,

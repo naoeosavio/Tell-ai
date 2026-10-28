@@ -204,6 +204,8 @@ export {
 } from './runtime-limits';
 export type { SdkConfigEnv, SdkConfigSource } from './sdk-config';
 export { build_sdk_config_from_env, load_sdk_config_from_env } from './sdk-config';
+export type { SummarizeResult, SummarizeUsed } from './summarize-result';
+export { build_summarize_message, SUMMARIZE_SYSTEM, summarize_result } from './summarize-result';
 export type { TaskResolution } from './task-naming';
 export {
   find_task_id,

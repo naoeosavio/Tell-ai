@@ -293,19 +293,64 @@ describe('delegation runner', () => {
     return result.outcome;
   }
 
-  it('caps the summary after redacting (secret cut mid-cap never leaks)', async () => {
+  it('redacts before the target and accepts a short summary', async () => {
     const secret = 'sk-super-secret-value-123';
     const redact = core.create_secret_redactor([secret]);
     const long_text = `leak ${secret} ` + 'x'.repeat(10 * 1024);
     const runner = core.create_delegation_runner({
-      model: scripted_model([long_text]),
+      model: scripted_model([long_text, 'short findings']),
       redact,
       exec_enabled: true,
     });
     const outcome = await run_outcome(runner, { kind: 'research', objective: 'list files' });
-    assert.ok(!outcome.summary.includes(secret), 'redact runs before the cap');
+    assert.ok(!outcome.summary.includes(secret), 'redact runs before the target check');
     assert.ok(!outcome.record.includes(secret), 'record carries only the redacted summary');
-    assert.ok(outcome.summary.length <= core.DELEGATION_SUMMARY_MAX_CHARS);
+    assert.strictEqual(outcome.summary, 'short findings');
+  });
+
+  it('summarize rule: short summary wins, long/empty/failure keep the original', async () => {
+    const target = 2048;
+    const redact = (value) => value;
+    const long_original = 'o'.repeat(5000);
+    const short_model = { ask: async () => 'short' };
+    assert.deepStrictEqual(await core.summarize_result(short_model, long_original, target, redact), {
+      text: 'short',
+      used: 'summary',
+    });
+    const long_model = { ask: async () => 'l'.repeat(5000) };
+    const long_won = await core.summarize_result(long_model, long_original, target, redact);
+    assert.strictEqual(long_won.used, 'original');
+    assert.strictEqual(long_won.text, long_original);
+    const empty_model = { ask: async () => '   \n  ' };
+    assert.strictEqual((await core.summarize_result(empty_model, long_original, target, redact)).used, 'original');
+    const failing_model = {
+      ask: async () => {
+        throw new Error('boom');
+      },
+    };
+    assert.strictEqual((await core.summarize_result(failing_model, long_original, target, redact)).used, 'original');
+    const small = 'tiny result';
+    let called = false;
+    const counting = {
+      ask: async () => {
+        called = true;
+        return 'unused';
+      },
+    };
+    assert.deepStrictEqual(await core.summarize_result(counting, small, target, redact), {
+      text: small,
+      used: 'original',
+    });
+    assert.strictEqual(called, false, 'under-target result never calls the model');
+  });
+
+  it('summarize redacts the output before the target check', async () => {
+    const secret = 'sk-live-secret-9';
+    const redact = core.create_secret_redactor([secret]);
+    const long_original = 'clean '.repeat(1000);
+    const leaky_model = { ask: async () => `summary with ${secret} inside` };
+    const won = await core.summarize_result(leaky_model, long_original, 2048, redact);
+    assert.ok(!won.text.includes(secret), 'leaky summary never climbs');
   });
 
   it('allows absolute in-cwd paths with uppercase letters', () => {
