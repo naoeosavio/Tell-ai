@@ -176,7 +176,7 @@ describe('web sandbox: server guards', () => {
       assert.strictEqual(isHighRiskScript('git status'), false);
     });
 
-    it('blocks credential-file reads (strict sensitive-file rule)', () => {
+    it('blocks credential-file reads (sensitive-file rule)', () => {
       for (const script of ['cat .env', 'cat ~/.config/openrouter.token', 'cat id_rsa', 'git show HEAD:.env']) {
         assert.strictEqual(isHighRiskScript(script), true, script);
       }
@@ -1976,6 +1976,15 @@ describe('web sandbox: api routes', () => {
     it('.env returns 403', async () => {
       const res = await fetch(`${base}/api/file?path=${encodeURIComponent('.env')}`);
       assert.strictEqual(res.status, 403);
+    });
+
+    it('missing sensitive names still return 403 (no existence oracle)', async () => {
+      for (const name of ['absent-test.key', 'absent-secret.pem', 'nested/.env.bak']) {
+        const read = await fetch(`${base}/api/file?path=${encodeURIComponent(name)}`);
+        assert.strictEqual(read.status, 403, name);
+        const raw = await fetch(`${base}/api/file/raw?path=${encodeURIComponent(name)}`);
+        assert.strictEqual(raw.status, 403, name);
+      }
     });
 
     it('.env.example is served (not a secret)', async () => {

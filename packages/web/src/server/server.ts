@@ -837,6 +837,14 @@ app.get('/api/file', (req, res) => {
   const deniedPath = (res: express.Response): express.Response =>
     res.status(403).json({ error: 'Access denied: Directory traversal blocked' });
 
+  // Sensitive names are denied on the lexical path before existence is
+  // probed: a missing `test.key` must read as 403 like a present one,
+  // otherwise the status code becomes an existence oracle.
+  const lexical_rel = path.relative(path.resolve(CWD), path.resolve(CWD, filePath));
+  if (isSensitiveRelPath(lexical_rel)) {
+    return res.status(403).json({ error: 'Access denied: Sensitive file' });
+  }
+
   const resolvedPath = canonical_path(CWD, filePath);
   if (!resolvedPath) {
     // `canonical_path` rejects escapes and missing targets alike. A path that
@@ -877,6 +885,12 @@ app.get('/api/file/raw', (req, res) => {
   const filePath = req.query['path'];
   if (typeof filePath !== 'string' || !filePath) {
     return res.status(400).json({ error: 'File path is required' });
+  }
+
+  // Same sensitive-first rule as `/api/file`: never leak existence.
+  const lexical_rel = path.relative(path.resolve(CWD), path.resolve(CWD, filePath));
+  if (isSensitiveRelPath(lexical_rel)) {
+    return res.status(403).json({ error: 'Access denied: Sensitive file' });
   }
 
   const resolvedPath = canonical_path(CWD, filePath);

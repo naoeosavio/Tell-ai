@@ -264,8 +264,9 @@ export function resolveStreamMode(requestValue: unknown, serverDefault: boolean)
  *
  * The sandbox uses the core owner (`assess_base_risk(script, 'strict')`) —
  * the Web profile is the strict one (any interpreter eval, bare `env`,
- * `base64 -d`, shell expansions), so the rules live in a single place and
- * can never drift from the CLI's matrix.
+ * `base64 -d`, shell expansions, credential-file reads — the last one now
+ * shared with the CLI, which prompts instead of blocking), so the rules
+ * live in a single place and can never drift from the CLI's matrix.
  *
  * @param script - Command script to classify.
  * @returns Whether the script must be blocked.

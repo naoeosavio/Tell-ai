@@ -479,11 +479,15 @@ the upgrade query string, so avoid exposing query strings in proxy logs.
   (`curl`, `wget`, `ssh`), `printenv`, shell `-c`, crontab manipulation, `mkfs`,
   `dd of=`, interpreter eval (`python/node/deno/bun/perl/ruby/php/lua
   -c/-e/-r/--eval`), `env`-launched
-  commands, `base64 -d` payloads, and shell expansion (`${…}`, `$(…)`, backticks
-  with pipes). This is a heuristic, not a security boundary — treat it as
+  commands, `base64 -d` payloads, shell expansion (`${…}`, `$(…)`, backticks
+  with pipes), and credential-file reads (`cat .env`, tokens, keys,
+  `.git/**`, `.tell/**` — the same rule the CLI enforces via confirmation).
+  This is a heuristic, not a security boundary — treat it as
   best-effort.
 - **Sensitive files are never served** through the file API (`.env*`, `.tell/`,
   `.git/`, `*.key`, `*.pem`) and cannot be overwritten via the editor API.
+  The deny applies to the lexical name before existence is checked, so a
+  missing `absent.key` answers `403` exactly like a present one (no oracle).
 - **API keys come from the environment** (`OPENAI_API_KEY`, etc.). The sandbox never
   stores key values — only the provider names you used. The server captures
   provider configuration in memory and purges credential/loader variables from
