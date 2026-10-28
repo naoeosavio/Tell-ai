@@ -24,7 +24,7 @@ The guard is a thin CLI boolean (`is_high_risk_script` in `src/core-adapters.ts`
 | 13 | `sed -i… privileged_path` | `sed -i 's/root/pwned/' /etc/passwd` |
 | 14 | `tee … privileged_path` | `echo pwned ¦ tee /etc/hosts` |
 | 15 | `\d*(>>?¦>\|¦&>) privileged_path` | `echo pwned > /etc/profile`, `bad-command 2> /etc/hosts` |
-| 16 | credential-file name (both profiles, `data-exfiltration`) | `cat .env`, `cat ~/.config/openrouter.token`, `cat id_rsa`, `git show HEAD:.env` (`.env.example` stays allowed) |
+| 16 | credential-file name (both profiles, `data-exfiltration`) | `cat .env`, `cat ~/.config/openrouter.token`, `cat id_rsa`, `git show HEAD:.env`; quoted/braced/globbed/ANSI-C spellings (`cat '.en'v`, `cat {a.txt,.env}`, `cat .en?`, `cat *.key`, `cat $'\x2eenv'`) (`.env.example` stays allowed) |
 
 `privileged_path` (`PRIVILEGED_PATH` in `packages/core/src/risk.ts`): `/(etc|boot|dev|proc|sys|usr|bin|sbin|lib|lib64)(/¦\b)`, `/var/spool/cron`, `/var/cron`, `/etc/cron[.d|daily|…]`, `~/.config/autostart`, `~/.config/systemd/user`, `~/.local/share/systemd/user` (with `$HOME` variants).
 
@@ -35,6 +35,10 @@ Since Phase 5 every interpreter one-liner needs confirmation, even local-only on
 Independent of the pattern table: with `-y`, any command referencing a path that resolves outside the working directory requires confirmation — reads included (`cat /etc/os-release`, `cat ~/.ssh/id_rsa`, `rm ../outside-file`, `ls --output=/tmp/out`), mirroring the `@path` mention read gate in `mentions.ts`. Path tokens are matched in absolute, home (`~/`, `$HOME`), traversal (`../`, `./`, bare `..`/`~`), after-`=` and quoted forms, then resolved via `is_outside_cwd` (lexical + symlink/realpath — a symlink inside `cwd` pointing outside counts as outside). When cwd IS `$HOME`, `~/x` resolves inside and stays allowed. Non-TTY stdin rejects (fail-closed), same as the high-risk guard.
 
 Guard limits: regex heuristics, not a sandbox. Do not rely on it in production/trusted hosts without a container/VM. `--no-exec` always wins over `-y`.
+
+Credential reads that the classifier cannot resolve (`cat sec*`, `cat *`, recursive `grep -r`) still execute, but command output crosses the redaction boundary: the CLI and Web scan credential-named workspace files (`.env*`, keys, `id_*`, bounded) and mask their values (`[redacted]`) before feedback, log, context and the model turn. The same scan masks provider keys. In the CLI an approval authorizes **execution**, not exfiltration: even an approved high-risk read stays redacted (the Web chain's explicit approval is the documented exception — the confirm card shows the server-kept script and its risk, so its output is shown as executed). Encoding/transforming the value (e.g. `base64` without `-d`, which is itself high-risk) is the remaining documented gap — the deny-list is a speed bump, not a sandbox.
+
+The CLI `@path` mention read gate applies the same sensitive-name predicate (see `docs/cli/mentions.md`): `@.env` asks on a TTY and is denied without one, while `@.env.example` stays allowed.
 
 ## File-mention read gate (`mentions.ts:39-58`, `Tell.ts:845`)
 

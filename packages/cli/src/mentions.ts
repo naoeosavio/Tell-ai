@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
 
-import { DEFAULT_EXEC_TIMEOUT_MS } from '@tell-ai/core';
+import { DEFAULT_EXEC_TIMEOUT_MS, is_sensitive_rel_path } from '@tell-ai/core';
 
 /** Max bytes of file content injected per mention before truncation. */
 export const MAX_MENTION_BYTES = 64 * 1024;
@@ -75,20 +75,21 @@ function warn_mention(message: string): void {
 }
 
 /**
- * Asks interactively whether an outside-cwd path may be read.
+ * Asks interactively whether a gated mention may be read.
  *
- * Never auto-approves: the `yes` flag and pipes do not bypass this prompt.
- * Without a TTY the read is denied.
+ * Never auto-approves: the `yes` flag, task mode and pipes do not bypass this
+ * prompt. Without a TTY the read is denied.
  *
  * @param display - Mention token as typed by the user, for display.
+ * @param header - Reason line shown above the token.
  * @returns True when the user confirmed with `y`/`yes`.
  */
-function confirm_outside_read(display: string): Promise<boolean> {
+function confirm_read(display: string, header: string): Promise<boolean> {
   if (!process.stdin.isTTY) {
     return Promise.resolve(false);
   } else {
     const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
-    process.stderr.write(`External file requested:\n${display}\n`);
+    process.stderr.write(`${header}\n${display}\n`);
     return new Promise((resolve) => {
       let settled = false;
       const done = (value: boolean): void => {
@@ -108,6 +109,28 @@ function confirm_outside_read(display: string): Promise<boolean> {
       });
     });
   }
+}
+
+/**
+ * Confirms a path outside the working directory.
+ *
+ * @param display - Mention token as typed by the user.
+ * @returns True when the user allowed the read.
+ */
+function confirm_outside_read(display: string): Promise<boolean> {
+  return confirm_read(display, 'External file requested:');
+}
+
+/**
+ * Confirms a credential/secret-named path (`.env*`, keys, tokens, `.git/`,
+ * `.tell/`). Same approval semantic as a command that names the file: ask on
+ * a TTY, deny without one. `.env.example` stays allowed.
+ *
+ * @param display - Mention token as typed by the user.
+ * @returns True when the user allowed the read.
+ */
+function confirm_sensitive_read(display: string): Promise<boolean> {
+  return confirm_read(display, 'Sensitive file requested:');
 }
 
 /**
@@ -295,11 +318,14 @@ function read_directory_block(dir: string, display: string): string | null {
  * unreadable, or binary targets emit a stderr warning and pass through
  * intact; `\@` is a literal `@`. Paths resolve against `cwd`; absolute
  * paths are accepted, but targets outside `cwd` need interactive
- * confirmation even with `yes` (denied without a TTY).
+ * confirmation even with `yes` (denied without a TTY). Credential/secret
+ * names (`.env*` except `.env.example`, `*.key`, `*.pem`, `id_*`, `.git/`,
+ * `.tell/`) need the same confirmation even inside `cwd`; a safe-named
+ * symlink to one is caught by the realpath check.
  *
  * @param prompt - User prompt text (already combined stdin/ctx text).
  * @param cwd - Working directory mentions resolve against.
- * @param options - Expansion options (`yes` never bypasses the outside-cwd prompt).
+ * @param options - Expansion options (`yes` never bypasses a read gate).
  * @returns The prompt with mention blocks injected.
  */
 export async function expand_mentions(
@@ -346,7 +372,24 @@ export async function expand_mentions(
                 // User confirmed the outside-cwd read — expand below.
               }
             } else {
-              // Inside the working directory — no confirmation needed.
+              // Inside the working directory: a credential/secret-named path
+              // still needs the same approval as a command that reads it. The
+              // realpath check catches a safe-named symlink pointing at one.
+              let sensitive = is_sensitive_rel_path(path.relative(base, resolved));
+              if (!sensitive) {
+                try {
+                  sensitive = is_sensitive_rel_path(path.relative(base, fs.realpathSync(resolved)));
+                } catch {
+                  // Unresolvable target: the open below reports it.
+                }
+              }
+              if (sensitive) {
+                const allowed = await confirm_sensitive_read(token);
+                if (!allowed) {
+                  warn_mention(`mention "@${token}" is a sensitive file, leaving as-is`);
+                  continue;
+                }
+              }
             }
             const block = stat.isFile() ? read_file_block(resolved, token) : read_directory_block(resolved, token);
             if (!block) {

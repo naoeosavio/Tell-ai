@@ -7,6 +7,7 @@ import * as readline from 'readline';
 import {
   build_execution_options,
   collect_exec_secrets,
+  collect_sensitive_file_secrets,
   create_delegation_runner,
   create_secret_redactor,
   DEFAULT_CONTEXT_MAX_CHARS,
@@ -166,6 +167,31 @@ type TaskPlan = {
   reset: boolean;
   prompt: string;
 };
+
+/**
+ * Releases a task directory claimed by a run that never persisted `main.txt`.
+ *
+ * The number is claimed with `mkdir` before the model is called, so every
+ * failure path (bad model spec, provider error, a crash before the first
+ * save) must give it back; otherwise an invisible empty task consumes the
+ * number forever. Resumed tasks keep their directory, and a task whose
+ * `main.txt` exists was persisted, so neither is removed.
+ *
+ * @param task - Resolved task plan for this invocation, if any.
+ */
+function discard_unused_task(task: TaskPlan | undefined): void {
+  if (task === undefined || task.resumed) {
+    return;
+  } else if (fs.existsSync(task.file)) {
+    return;
+  } else {
+    try {
+      fs.rmdirSync(task.dir);
+    } catch {
+      // The directory is gone or not empty — nothing to clean.
+    }
+  }
+}
 
 // Effective execution mode lives in `./core-adapters` (single owner shared
 // with the approval port); the readline prompt below only renders it.
@@ -1654,8 +1680,9 @@ async function run_tell(
   const ctx_prompt = plan_prompt_from_ref(plan);
   const raw_prompt = [ctx_prompt, prompt].filter(Boolean).join(' ').trim();
   // `@path` mentions resolve against the working directory; the expanded
-  // text is what reaches the log, the timeline, and the saved context. Task
-  // mode forces `-y`, so outside-cwd mentions are auto-approved there too.
+  // text is what reaches the log, the timeline, and the saved context. The
+  // mention read gate ignores `-y` and task mode: outside-cwd and
+  // credential-named targets ask on a TTY and are denied without one.
   const full_prompt = await expand_mentions(raw_prompt, process.cwd(), {
     yes: task !== undefined || Boolean(opts.yes),
   });
@@ -1748,7 +1775,14 @@ async function run_tell(
         key_values.push(value);
       }
     }
-    const secret_values = [...collect_exec_secrets(process.env), ...key_values];
+    const secret_values = [
+      ...collect_exec_secrets(process.env),
+      ...key_values,
+      // Credential-named workspace files: shell globs/loops can read them even
+      // when the literal name never reaches the risk classifier. Mask their
+      // values in command output before it reaches feedback/log/context.
+      ...collect_sensitive_file_secrets(process.cwd()),
+    ];
     const redact = create_secret_redactor(secret_values);
     lock_process_environment();
     await run_response_loop(ai, state, log, context_path, previous_context, redact);
@@ -1759,15 +1793,7 @@ async function run_tell(
     }
   } catch (error) {
     // A run that never persisted its context must not keep the claimed number.
-    if (task !== undefined && !task.resumed && !fs.existsSync(task.file)) {
-      try {
-        fs.rmdirSync(task.dir);
-      } catch {
-        // The directory is gone or not empty — nothing to clean.
-      }
-    } else {
-      // A resumed task (or a persisted one) keeps its directory.
-    }
+    discard_unused_task(task);
     console.error('\x1b[31m%s\x1b[0m', format_model_error(error));
     process.exitCode = EXIT_MODEL_ERROR;
     return;
@@ -1971,7 +1997,18 @@ async function main() {
   // stripped, so a positional model (`tell g --ctx ola`) does not count as a
   // prompt. A bare `--ctx` token (no `%`/`@`) is prompt text only when there
   // is no positional prompt; naming a context requires `%`.
-  await run_tell(effective_model, final_prompt, opts, input.parts.length > 0, task);
+  try {
+    await run_tell(effective_model, final_prompt, opts, input.parts.length > 0, task);
+  } catch (error) {
+    // Unexpected throws bypass the internal cleanup; release the claim here.
+    discard_unused_task(task);
+    throw error;
+  }
+  // `run_tell` reports most failures by setting `process.exitCode`, and every
+  // early return after the claim must release it too.
+  if (process.exitCode !== undefined && process.exitCode !== 0) {
+    discard_unused_task(task);
+  }
 }
 
 main().catch((error: unknown) => {
