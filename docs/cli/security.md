@@ -4,7 +4,7 @@ Threat model: the model output, piped stdin, and stored context are all untruste
 
 ## High-risk guard (`is_high_risk_script` → core `assess_base_risk`)
 
-The guard is a thin CLI boolean (`is_high_risk_script` in `src/core-adapters.ts`) over the core base classifier (`assess_base_risk`, permissive profile — see [../core/risk.md](../core/risk.md)). Input is normalized (`\\\n` → space, runs of whitespace → single space) into `compact`; every pattern below is tested against it. Match → high-risk: `-y` does not approve, TTY confirmation is still required, non-TTY auto-rejects.
+The guard is a thin CLI boolean (`is_high_risk_script` in `src/core-adapters.ts`) over the core base classifier (`assess_base_risk`, permissive profile — see [../core/risk.md](../core/risk.md)). Input is normalized (`\\\n` → space, runs of whitespace → single space) into `compact`; every pattern below is tested against it. Match → high-risk: `-y` does not approve, TTY confirmation is still required, non-TTY auto-rejects. Credential-file reads (row 16) are high-risk in both profiles: the CLI prompts even with `-y --require-approval` instead of auto-running; the Web blocks outright.
 
 | # | Pattern (summary) | Example blocked |
 |---|-------------------|-----------------|
@@ -24,6 +24,7 @@ The guard is a thin CLI boolean (`is_high_risk_script` in `src/core-adapters.ts`
 | 13 | `sed -i… privileged_path` | `sed -i 's/root/pwned/' /etc/passwd` |
 | 14 | `tee … privileged_path` | `echo pwned ¦ tee /etc/hosts` |
 | 15 | `\d*(>>?¦>\|¦&>) privileged_path` | `echo pwned > /etc/profile`, `bad-command 2> /etc/hosts` |
+| 16 | credential-file name (both profiles, `data-exfiltration`) | `cat .env`, `cat ~/.config/openrouter.token`, `cat id_rsa`, `git show HEAD:.env` (`.env.example` stays allowed) |
 
 `privileged_path` (`PRIVILEGED_PATH` in `packages/core/src/risk.ts`): `/(etc|boot|dev|proc|sys|usr|bin|sbin|lib|lib64)(/¦\b)`, `/var/spool/cron`, `/var/cron`, `/etc/cron[.d|daily|…]`, `~/.config/autostart`, `~/.config/systemd/user`, `~/.local/share/systemd/user` (with `$HOME` variants).
 

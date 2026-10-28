@@ -1006,8 +1006,15 @@ function format_missing_prompt_error(program: Command): string {
 
 function remember_assistant(state: ConversationState, log: string | null, response: string): void {
   const cleaned = strip_delegation_tags(response);
-  append_log(log, `Assistant:\n${cleaned}`);
-  state.timeline.push(`Assistant:\n${cleaned}`);
+  if (cleaned.trim() === '') {
+    // Empty model replies (a bare resume continuation, a killed
+    // mid-delegation turn) carry no content: saving `Assistant:\n` would
+    // bloat the context with an empty turn the next resume cannot use.
+    return;
+  } else {
+    append_log(log, `Assistant:\n${cleaned}`);
+    state.timeline.push(`Assistant:\n${cleaned}`);
+  }
 }
 
 function remember_command_result(state: ConversationState, result: string): void {

@@ -51,7 +51,9 @@ export type CliCoreConfigFlags = {
  *
  * Local interpreter one-liners stay allowed by design; only
  * network/decode-coupled eval is risky — the same matrix the CLI always
- * enforced, now owned by `@tell-ai/core`.
+ * enforced, now owned by `@tell-ai/core`. Credential-file reads are the
+ * exception: they are high-risk in both profiles, so `cat .env` needs
+ * explicit confirmation even with `-y`.
  *
  * @param script - Command script to classify.
  * @returns The base `RiskAssessment` (never an action verdict).

@@ -382,6 +382,21 @@ async function test_task_resume_without_prompt() {
   }
 }
 
+async function test_task_empty_reply_saves_no_assistant_turn() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-task-'));
+  try {
+    await run_tell(['-t', '%Feature', 'start'], 'first answer', { dir });
+    const resume = await run_tell(['-t', '%Feature'], '', { dir });
+    assert.strictEqual(resume.exitCode, undefined);
+    const main_text = fs.readFileSync(path.join(task_dir(resume.home, 'task-001-feature'), 'main.txt'), 'utf8');
+    assert_includes(main_text, 'first answer');
+    assert_not_includes(main_text, 'Assistant:\n\n');
+    assert_not_includes(main_text, 'Assistant:\nAssistant:');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function test_task_reset_full_wipe_keeps_dir() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-task-'));
   try {
@@ -789,6 +804,7 @@ async function main() {
     test_task_unquoted_prompt_is_not_swallowed,
     test_task_named_create_and_numbering,
     test_task_resume_without_prompt,
+    test_task_empty_reply_saves_no_assistant_turn,
     test_task_reset_full_wipe_keeps_dir,
     test_task_delegation_record_file,
     test_task_model_failure_announces_nothing,
