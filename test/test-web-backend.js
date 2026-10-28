@@ -1322,6 +1322,23 @@ test('cli args: --output-max-bytes is parsed and forwarded', () => {
   assert.ok(help.includes('--output-max-bytes'), 'help must list the new flag');
 });
 
+test('cli args: --max-delegations and --delegation-repost parse with ranges', () => {
+  assert.strictEqual(parseCliArgs(['--max-delegations', '0'], '/tmp').maxDelegations, 0);
+  assert.strictEqual(parseCliArgs(['--max-delegations', '2'], '/tmp').maxDelegations, 2);
+  assert.strictEqual(parseCliArgs(['--max-delegations', '3'], '/tmp').maxDelegations, undefined);
+  assert.strictEqual(parseCliArgs(['--max-delegations', '-1'], '/tmp').maxDelegations, undefined);
+  assert.strictEqual(parseCliArgs([], '/tmp').maxDelegations, undefined);
+  assert.strictEqual(parseCliArgs(['--delegation-repost', '512'], '/tmp').delegationRepostChars, 512);
+  assert.strictEqual(parseCliArgs(['--delegation-repost', '8192'], '/tmp').delegationRepostChars, 8192);
+  assert.strictEqual(parseCliArgs(['--delegation-repost', '511'], '/tmp').delegationRepostChars, undefined);
+  assert.strictEqual(parseCliArgs([], '/tmp').delegationRepostChars, undefined);
+  assert.strictEqual(parseCliArgs(['--delegation-max-rounds', '0'], '/tmp').delegationMaxRounds, 0);
+  assert.strictEqual(parseCliArgs(['--delegation-max-rounds', '32'], '/tmp').delegationMaxRounds, 32);
+  assert.strictEqual(parseCliArgs(['--delegation-max-rounds', '128'], '/tmp').delegationMaxRounds, 128);
+  assert.strictEqual(parseCliArgs(['--delegation-max-rounds', '129'], '/tmp').delegationMaxRounds, undefined);
+  assert.strictEqual(parseCliArgs([], '/tmp').delegationMaxRounds, undefined);
+});
+
 test('delivered output cap uses the core marker once', () => {
   const big = 'a'.repeat(300 * 1024);
   const capped = truncate_output(big, DEFAULT_OUTPUT_MAX_BYTES);

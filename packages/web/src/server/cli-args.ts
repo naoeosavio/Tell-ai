@@ -1,6 +1,6 @@
 import path from 'path';
 
-import { MAX_EXEC_TIMEOUT_MS, MIN_EXEC_TIMEOUT_MS } from '@tell-ai/core';
+import { DELEGATION_MAX_DELEGATIONS, MAX_EXEC_TIMEOUT_MS, MIN_EXEC_TIMEOUT_MS } from '@tell-ai/core';
 
 export interface CliArgs {
   /** Resolved absolute working directory for the sandbox. */
@@ -29,6 +29,12 @@ export interface CliArgs {
   contextChars?: number | undefined;
   /** Validated stdin timeout ms forwarded by the CLI (`--stdin-timeout-ms`). */
   stdinTimeoutMs?: number | undefined;
+  /** Validated delegation budget forwarded by the CLI (`--max-delegations`, 0..2). */
+  maxDelegations?: number | undefined;
+  /** Validated delegation repost target forwarded by the CLI (`--delegation-repost`, 512..8192). */
+  delegationRepostChars?: number | undefined;
+  /** Validated delegation round cap forwarded by the CLI (`--delegation-max-rounds`, 0..128). */
+  delegationMaxRounds?: number | undefined;
   /** Whether to continue after command output until the AI gives a final answer. */
   chain: boolean;
   /** Whether command execution is auto-confirmed (autoExecute on). */
@@ -104,10 +110,31 @@ export function parseCliArgs(argv: string[], defaultCwd: string): CliArgs {
   const outputMaxBytesRaw = argValue(argv, '--output-max-bytes');
   const contextCharsRaw = argValue(argv, '--context-chars');
   const stdinTimeoutMsRaw = argValue(argv, '--stdin-timeout-ms');
+  const maxDelegationsRaw = argValue(argv, '--max-delegations');
+  const delegationRepostRaw = argValue(argv, '--delegation-repost', '--delegation-repost-chars');
+  const delegationMaxRoundsRaw = argValue(argv, '--delegation-max-rounds');
   const toPositiveInt = (raw: string | undefined): number | undefined => {
     if (raw === undefined) return undefined;
     const value = Math.floor(Number(raw));
     return Number.isFinite(value) && value > 0 ? value : undefined;
+  };
+  const toDelegations = (raw: string | undefined): number | undefined => {
+    if (raw === undefined) return undefined;
+    const value = Math.floor(Number(raw));
+    if (!Number.isFinite(value) || value < 0 || value > DELEGATION_MAX_DELEGATIONS) return undefined;
+    return value;
+  };
+  const toRepostChars = (raw: string | undefined): number | undefined => {
+    if (raw === undefined) return undefined;
+    const value = Math.floor(Number(raw));
+    if (!Number.isFinite(value) || value < 512 || value > 8 * 1024) return undefined;
+    return value;
+  };
+  const toDelegationRounds = (raw: string | undefined): number | undefined => {
+    if (raw === undefined) return undefined;
+    const value = Math.floor(Number(raw));
+    if (!Number.isFinite(value) || value < 0 || value > 128) return undefined;
+    return value;
   };
   const toTemperature = (raw: string | undefined): number | undefined => {
     if (raw === undefined) return undefined;
@@ -128,6 +155,9 @@ export function parseCliArgs(argv: string[], defaultCwd: string): CliArgs {
     outputMaxBytes: toPositiveInt(outputMaxBytesRaw),
     contextChars: toPositiveInt(contextCharsRaw),
     stdinTimeoutMs: toPositiveInt(stdinTimeoutMsRaw),
+    maxDelegations: toDelegations(maxDelegationsRaw),
+    delegationRepostChars: toRepostChars(delegationRepostRaw),
+    delegationMaxRounds: toDelegationRounds(delegationMaxRoundsRaw),
     chain,
     yes,
     requireApproval,
@@ -168,6 +198,12 @@ Options:
                     Limit override forwarded by the CLI
   --stdin-timeout-ms <n>
                     Limit override forwarded by the CLI
+  --max-delegations <n>
+                    Delegation budget 0..2 forwarded by the CLI (default: 2, 0 disables)
+  --delegation-repost <n>
+                    Delegation repost target 512..8192 forwarded by the CLI (default: 2048)
+  --delegation-max-rounds <n>
+                    Delegation round cap 0..128 forwarded by the CLI (default: 32)
   --port <number>   TCP port for the web server (default: PORT env or 3000)
   --host <address>  Bind address (default: 127.0.0.1; use 0.0.0.0 to expose on LAN)
   --exec-timeout <ms>

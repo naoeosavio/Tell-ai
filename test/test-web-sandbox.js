@@ -2538,6 +2538,47 @@ describe('web sandbox: chain routes', () => {
       const body = await res.json();
       assert.strictEqual(body.limits.maxChainSteps, 1);
     });
+
+    it('/api/config exposes the delegation budget and repost target', async () => {
+      const res = await fetch(`${base}/api/config`);
+      const body = await res.json();
+      assert.strictEqual(body.maxDelegations, 0, 'chain cap 1 → budget 0');
+      assert.strictEqual(body.delegationRepostChars, 2048, 'default repost target');
+      assert.strictEqual(body.delegationMaxRounds, 32, 'default round cap');
+    });
+  });
+
+  describe('forwarded delegation limits', () => {
+    let handle;
+    let base;
+
+    before(async () => {
+      handle = bootChain([
+        '--max-chain-steps',
+        '8',
+        '--max-delegations',
+        '1',
+        '--delegation-repost',
+        '512',
+        '--delegation-max-rounds',
+        '5',
+      ]);
+      base = await handle.basePromise;
+    });
+
+    after(() => shutdown(handle));
+
+    it('/api/config reflects --max-delegations and --delegation-repost', async () => {
+      const res = await fetch(`${base}/api/config`);
+      assert.strictEqual(res.status, 200);
+      const body = await res.json();
+      assert.strictEqual(body.maxDelegations, 1);
+      assert.strictEqual(body.delegationRepostChars, 512);
+      assert.strictEqual(body.delegationMaxRounds, 5);
+      assert.strictEqual(body.limits.maxDelegations, 1);
+      assert.strictEqual(body.limits.delegationRepostChars, 512);
+      assert.strictEqual(body.limits.delegationMaxRounds, 5);
+    });
   });
 
   describe('chain rate limit', () => {
@@ -2713,9 +2754,9 @@ describe('web sandbox: delegation (sub-tell)', () => {
           return 'Both:\n<DELEGATE>list the txt files</DELEGATE>\n<SUBTASK>build something</SUBTASK>';
         }
         if (content === 'think tag') return '<think><DELEGATE>list the txt files</DELEGATE></think>final';
-        if (content.includes('Research result:')) return 'Research done, no more commands.';
+        if (content.includes('Research result (')) return 'Research done, no more commands.';
         if (content.includes('Executed command:')) return `Noted: ${content}`;
-        if (content === 'list the txt files') return '<RUN>ls</RUN>';
+        if (content.includes('list the txt files')) return '<RUN>ls</RUN>';
         return 'Final answer.';
       });
       handle = bootDelegate(['-m', 'q', '-t', '%research'], { LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stub.port}/v1` });
@@ -2733,9 +2774,9 @@ describe('web sandbox: delegation (sub-tell)', () => {
       assert.strictEqual(res.status, 200);
       const run = await res.json();
       assert.strictEqual(run.status, 'completed');
-      const records = run.events.filter((e) => typeof e.text === 'string' && e.text.startsWith('Research result:'));
+      const records = run.events.filter((e) => typeof e.text === 'string' && e.text.startsWith('Research result ('));
       assert.strictEqual(records.length, 1, 'only the first tag runs');
-      assert.ok(!run.events.some((e) => typeof e.text === 'string' && e.text.startsWith('Task result:')));
+      assert.ok(!run.events.some((e) => typeof e.text === 'string' && e.text.startsWith('Task result (')));
       const warning = run.events.find((e) => e.type === 'denied' && /extra tag/.test(e.text || ''));
       assert.ok(warning, 'the ignored tag is reported, never dropped in silence');
     });
@@ -2745,7 +2786,7 @@ describe('web sandbox: delegation (sub-tell)', () => {
       assert.strictEqual(res.status, 200);
       const run = await res.json();
       assert.strictEqual(run.status, 'completed');
-      const records = run.events.filter((e) => typeof e.text === 'string' && e.text.startsWith('Research result:'));
+      const records = run.events.filter((e) => typeof e.text === 'string' && e.text.startsWith('Research result ('));
       assert.strictEqual(records.length, 0, 'reasoning is data, not an instruction');
       const assistantTexts = run.events.filter((e) => e.type === 'message').map((e) => e.text || '');
       assert.ok(assistantTexts.includes('final'), 'the literal think block leaves the stored turn');
@@ -2757,7 +2798,7 @@ describe('web sandbox: delegation (sub-tell)', () => {
       const run = await res.json();
       assert.strictEqual(run.status, 'completed');
       assert.strictEqual(run.pending, null);
-      const records = run.events.filter((e) => typeof e.text === 'string' && e.text.startsWith('Research result:'));
+      const records = run.events.filter((e) => typeof e.text === 'string' && e.text.startsWith('Research result ('));
       assert.strictEqual(records.length, 1);
       assert.ok(records[0].text.includes('hello.txt'), 'child stdout reaches the parent only as summary');
       const assistantTexts = run.events.filter((e) => e.type === 'message').map((e) => e.text || '');
@@ -2777,9 +2818,9 @@ describe('web sandbox: delegation (sub-tell)', () => {
     before(async () => {
       stub = await startDelegateStub((content) => {
         if (content === 'please build') return 'On it.\n<SUBTASK>create out.txt with hi</SUBTASK>';
-        if (content.includes('Task result:')) return 'Build done, no more commands.';
+        if (content.includes('Task result (')) return 'Build done, no more commands.';
         if (content.includes('Executed command:')) return 'Wrote it.';
-        if (content === 'create out.txt with hi') return '<RUN>echo hi > out.txt</RUN>';
+        if (content.includes('create out.txt with hi')) return '<RUN>echo hi > out.txt</RUN>';
         return 'Final answer.';
       });
       handle = bootDelegate(['-m', 'q', '-t', '%build', '-y'], { LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stub.port}/v1` });
@@ -2798,7 +2839,7 @@ describe('web sandbox: delegation (sub-tell)', () => {
       const run = await res.json();
       assert.strictEqual(run.status, 'completed');
       assert.strictEqual(fs.readFileSync(path.join(handle.dir, 'out.txt'), 'utf8'), 'hi\n');
-      const records = run.events.filter((e) => typeof e.text === 'string' && e.text.startsWith('Task result:'));
+      const records = run.events.filter((e) => typeof e.text === 'string' && e.text.startsWith('Task result ('));
       assert.strictEqual(records.length, 1);
       const assistantTexts = run.events.filter((e) => e.type === 'message').map((e) => e.text || '');
       assert.ok(!assistantTexts.some((t) => t.includes('<SUBTASK>')), 'tag leaves the stored turno');
@@ -2813,8 +2854,8 @@ describe('web sandbox: delegation (sub-tell)', () => {
     before(async () => {
       stub = await startDelegateStub((content) => {
         if (content === 'please build') return 'On it.\n<SUBTASK>create out.txt with hi</SUBTASK>';
-        if (content === 'create out.txt with hi') return '<RUN>echo hi > out.txt</RUN>';
-        if (content.includes('Task result:')) return 'Build done, no more commands.';
+        if (content.includes('create out.txt with hi')) return '<RUN>echo hi > out.txt</RUN>';
+        if (content.includes('Task result (')) return 'Build done, no more commands.';
         return 'Final answer.';
       });
       handle = bootDelegate(['-m', 'q', '-t', '%build-auto'], {
@@ -2836,7 +2877,7 @@ describe('web sandbox: delegation (sub-tell)', () => {
       assert.strictEqual(run.status, 'completed');
       assert.strictEqual(run.childPending, null, 'task mode forces -y: no child approval card');
       assert.ok(fs.existsSync(path.join(handle.dir, 'out.txt')), 'build child executed');
-      const records = run.events.filter((e) => typeof e.text === 'string' && e.text.startsWith('Task result:'));
+      const records = run.events.filter((e) => typeof e.text === 'string' && e.text.startsWith('Task result ('));
       assert.strictEqual(records.length, 1);
       const assistantTexts = run.events.filter((e) => e.type === 'message').map((e) => e.text || '');
       assert.ok(!assistantTexts.some((t) => t.includes('<SUBTASK>')));
@@ -2850,7 +2891,7 @@ describe('web sandbox: delegation (sub-tell)', () => {
 
     before(async () => {
       stub = await startDelegateStub((content) => {
-        if (content === 'please build') return '<RUN>echo hi > out.txt</RUN>';
+        if (content.includes('please build')) return '<RUN>echo hi > out.txt</RUN>';
         return 'Built it.';
       });
       handle = bootDelegate(['-m', 'q', '-t', '%delegate-auto'], {
@@ -2871,7 +2912,7 @@ describe('web sandbox: delegation (sub-tell)', () => {
       const res = await postJson(base, '/api/delegate', { kind: 'build', objective: 'please build' });
       assert.strictEqual(res.status, 200);
       const done = await res.json();
-      assert.ok(typeof done.record === 'string' && done.record.includes('Task result:'));
+      assert.ok(typeof done.record === 'string' && done.record.includes('Task result ('));
       assert.ok(!done.record.includes('echo hi > out.txt'), 'summary only, never the raw script');
       assert.ok(fs.existsSync(path.join(handle.dir, 'out.txt')), 'build child executed');
     });
@@ -2887,13 +2928,13 @@ describe('web sandbox: delegation (sub-tell)', () => {
       delegateTurns = 0;
       stub = await startDelegateStub((content) => {
         if (content === 'please delegate') return '<DELEGATE>objective 1</DELEGATE>';
-        if (content.includes('Research result:')) {
+        if (content.includes('Research result (')) {
           delegateTurns += 1;
           if (delegateTurns < 3) return `<DELEGATE>objective ${delegateTurns + 1}</DELEGATE>`;
           return 'Enough research, final answer.';
         }
         if (content.includes('Executed command:')) return 'Listed.';
-        if (content.startsWith('objective')) return '<RUN>ls</RUN>';
+        if (content.includes('objective')) return '<RUN>ls</RUN>';
         return 'Final answer.';
       });
       handle = bootDelegate(['-m', 'q', '-t', '%build', '-y'], { LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stub.port}/v1` });
@@ -2911,11 +2952,12 @@ describe('web sandbox: delegation (sub-tell)', () => {
       assert.strictEqual(res.status, 200);
       const run = await res.json();
       assert.strictEqual(run.status, 'completed');
-      const records = run.events.filter((e) => typeof e.text === 'string' && e.text.startsWith('Research result:'));
+      const records = run.events.filter((e) => typeof e.text === 'string' && e.text.startsWith('Research result ('));
       assert.strictEqual(records.length, 2, 'default cap 8 → budget 2');
+      assert.ok(records.every((e) => typeof e.text === 'string' && e.text.includes('(DONE)')), 'host status rides the record');
       const denied = run.events.filter((e) => e.type === 'denied');
       assert.strictEqual(denied.length, 1, 'spent tag is denied with motive, never silent');
-      assert.match(denied[0].text, /research delegation not enabled/);
+      assert.match(denied[0].text, /Delegation budget exceeded \(2\)/);
       const assistantTexts = run.events.filter((e) => e.type === 'message').map((e) => e.text || '');
       assert.ok(!assistantTexts.some((t) => t.includes('<DELEGATE>')), 'spent tag stays stripped inert text');
     });
@@ -2946,7 +2988,7 @@ describe('web sandbox: delegation (sub-tell)', () => {
       assert.strictEqual(res.status, 200);
       const run = await res.json();
       assert.strictEqual(run.status, 'completed');
-      const records = run.events.filter((e) => typeof e.text === 'string' && e.text.startsWith('Research result:'));
+      const records = run.events.filter((e) => typeof e.text === 'string' && e.text.startsWith('Research result ('));
       assert.strictEqual(records.length, 0, 'the tag never starts a child outside task mode');
       const assistantTexts = run.events.filter((e) => e.type === 'message').map((e) => e.text || '');
       assert.ok(!assistantTexts.some((t) => t.includes('<DELEGATE>')), 'the inert tag leaves the stored turn');

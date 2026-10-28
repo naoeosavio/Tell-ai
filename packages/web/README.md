@@ -58,6 +58,9 @@ tell-web --help
 | `--system-file <path>` | — | Custom instructions file (64 KB cap), composed into the system prompt (forwarded by `tell --web --system-file`) |
 | `--temperature <n>` | provider default | Sampling temperature `0..2`, applied to both the one-shot and the streamed reply and exposed on `/api/config` (forwarded by `tell --web --temperature`; out-of-range values are dropped, never clamped) |
 | `--stdin-timeout-ms <n>` | — | Stdin timeout override, exposed on `/api/config` (web has no stdin; a disabled deadline is omitted) |
+| `--max-delegations <n>` | `2` | Delegation budget `0..2` (`0` disables), exposed on `/api/config` (forwarded by `tell --web --max-delegations`) |
+| `--delegation-repost <n>` | `2048` | Delegation repost target `512..8192`, exposed on `/api/config` (forwarded by `tell --web --delegation-repost`) |
+| `--delegation-max-rounds <n>` | `32` | Delegation round cap `0..128`, exposed on `/api/config` |
 | `--chain` | off | Continue after output until final answer |
 | `--stream` | off | Seed the Stream toggle (Settings → Agent Runtime) and keep NDJSON as the server fallback |
 | `--think` | off | Start reasoning headers expanded (manual collapse/expand persists) |
@@ -218,12 +221,12 @@ Bind to `0.0.0.0` only together with both of these: `TELL_TOKEN` and
 | GET | `/api/models` | Models/aliases + `keysStatus` per vendor |
 | GET | `/api/auth/status` | Public: `{authRequired}` only (drives the isolated login screen) |
 | POST | `/api/auth/verify` | Public + rate-limited (5/15min/IP): `{token}` → `200`/`401` generic/`429` + `Retry-After` |
-| GET | `/api/config` | `defaultModel`, `autoExecute`, `requireApproval`, `noExec`, `chain`, `yes`, `stream`, `think`, `cwd`, `initialPrompt`, plus the forwarded `profile`, `temperature`, `limits` and `hasCustomSystem` (requires auth when `TELL_TOKEN` is set) |
+| GET | `/api/config` | `defaultModel`, `autoExecute`, `requireApproval`, `noExec`, `chain`, `yes`, `stream`, `think`, `cwd`, `initialPrompt`, plus the forwarded `profile`, `temperature`, `limits`, `maxDelegations`, `delegationRepostChars` and `hasCustomSystem` (requires auth when `TELL_TOKEN` is set) |
 | GET | `/api/context` | Generated system prompt (tree + README + conventions) |
 | POST | `/api/tell` | `{messages, modelAlias?, systemPrompt?, stream?}` (400 invalid payload, 429); NDJSON event stream when `stream` is `true`, JSON otherwise. Missing `stream` falls back to the server's boot `--stream` |
 | POST | `/api/chain` | Starts a server-side chain run: same payload shape as `/api/tell` (same 400/429 validation). Runs the model loop on the server (≤8 rounds) and pauses with a server-kept approval instead of returning scripts to the browser |
 | GET | `/api/chain/:runId` | Replay: `{runId, status, version, rounds, text, events, pending, childPending}` (404 unknown/expired, 429). Event `seq` is monotonic for incremental clients; `childPending` carries the nested sub-task approval (v2, `[sub-tarefa]`-prefixed script) while `pending` stays the parent slot |
-| POST | `/api/chain` | `{messages, modelAlias?, systemPrompt?}` → snapshot. With `-t` the chain honors one delegation tag per answer (an extra tag appends a warning event) and never scans a literal `<think>` block for tags. |
+| POST | `/api/chain` | `{messages, modelAlias?, systemPrompt?}` → snapshot. With `-t` the chain honors one delegation tag per answer (an extra tag appends a warning event; a spent budget appends the budget warning as a denied event) and never scans a literal `<think>` block for tags. |
 | POST | `/api/chain/:runId/confirm` | `{decisionId\|approvalId, expectedVersion, decision: 'approve'\|'skip'}` — any `script`/`command`/`path` field is 400. Same id + same verdict replays without re-executing; different verdict, stale version or unknown id is 409; high-risk/`--no-exec` is 403 without execution; cancel wins over in-flight confirms. A child decisionId resolves the nested bridge (records `approved`/`skipped`, no direct execution — the delegation runner executes) instead of running the script here |
 | POST | `/api/chain/:runId/cancel` | Invalidates the run and its pending approval (idempotent; 404 unknown/expired). Also unblocks a parked nested child as denied |
 | POST | `/api/delegate` | Task mode only (`-t`, 403 otherwise). `{kind: 'research'\|'build', objective, modelAlias?}` → `{record}`. Research and `-y` builds run directly (same concurrency/rate-limit/abort guards as `/api/execute`); a build without `-y` parks on `202 {status: 'awaiting_approval', decisionId, script}` and resumes via confirm below (fail-closed: 403 `--no-exec`, 429 busy, 500 model failure; TTL 15min, restart drops) |

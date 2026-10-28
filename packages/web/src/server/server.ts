@@ -16,6 +16,9 @@ import {
   create_secret_redactor,
   DEFAULT_CONTEXT_MAX_CHARS,
   DEFAULT_EXEC_TIMEOUT_MS,
+  DELEGATION_SUMMARY_MAX_CHARS,
+  DELEGATION_MAX_ROUNDS,
+  delegation_budget_notice,
   EXEC_CANCELLED_EXIT_CODE,
   EXIT_CONFIG_ERROR,
   extract_delegation,
@@ -27,7 +30,7 @@ import {
   has_lexical_target,
   is_path_inside_base,
   is_task_id,
-  max_delegations_for_chain,
+  resolve_max_delegations,
   resolve_task_id,
   split_task_value,
   strip_delegation_tags,
@@ -131,12 +134,18 @@ const FORWARDED_LIMITS = {
   ...(cliArgs.outputMaxBytes !== undefined ? { outputMaxBytes: cliArgs.outputMaxBytes } : {}),
   ...(cliArgs.contextChars !== undefined ? { contextChars: cliArgs.contextChars } : {}),
   ...(cliArgs.stdinTimeoutMs !== undefined ? { stdinTimeoutMs: cliArgs.stdinTimeoutMs } : {}),
+  ...(cliArgs.maxDelegations !== undefined ? { maxDelegations: cliArgs.maxDelegations } : {}),
+  ...(cliArgs.delegationRepostChars !== undefined ? { delegationRepostChars: cliArgs.delegationRepostChars } : {}),
+  ...(cliArgs.delegationMaxRounds !== undefined ? { delegationMaxRounds: cliArgs.delegationMaxRounds } : {}),
 } as {
   maxChainSteps?: number;
   maxBufferBytes?: number;
   outputMaxBytes?: number;
   contextChars?: number;
   stdinTimeoutMs?: number;
+  maxDelegations?: number;
+  delegationRepostChars?: number;
+  delegationMaxRounds?: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -278,6 +287,12 @@ const CHAIN_ROUND_CAP = Math.min(
   CHAIN_MAX_ROUNDS,
   Math.max(1, Math.floor(FORWARDED_LIMITS.maxChainSteps ?? CHAIN_MAX_ROUNDS)),
 );
+/** Fixed delegation budget (2 when the chain has ≥2 rounds, else 0; `--max-delegations` wins). */
+const DELEGATION_BUDGET = resolve_max_delegations(CHAIN_ROUND_CAP, FORWARDED_LIMITS.maxDelegations);
+/** Delegation repost target (goal, not cap; `--delegation-repost` wins). */
+const DELEGATION_REPOST_TARGET = FORWARDED_LIMITS.delegationRepostChars ?? DELEGATION_SUMMARY_MAX_CHARS;
+/** Delegation round cap (`--delegation-max-rounds` wins). */
+const DELEGATION_ROUND_CAP = FORWARDED_LIMITS.delegationMaxRounds ?? DELEGATION_MAX_ROUNDS;
 /**
  * Chain-limit notice for the effective cap (same wording family as the core,
  * with the actual cap so a forwarded `--max-chain-steps 2` reports `(2)`).
@@ -1084,8 +1099,11 @@ app.post('/api/delegate', async (req, res) => {
       const outcome = await run_web_delegation(modelSpec, kind, objective, token);
       if (outcome === null) {
         return res.status(403).json({ error: `${kind} delegation not enabled on this host` });
+      } else if ('refused' in outcome) {
+        return res.status(429).json({ error: delegation_budget_notice(DELEGATION_BUDGET) });
+      } else {
+        return res.json({ record: outcome.record });
       }
-      return res.json({ record: outcome.record });
     } catch (_error) {
       return res.status(500).json({ error: 'delegation failed' });
     }
@@ -1392,6 +1410,9 @@ app.get('/api/config', (_req, res) => {
     profile: FORWARDED_PROFILE ?? null,
     temperature: FORWARDED_TEMPERATURE ?? null,
     limits: FORWARDED_LIMITS,
+    maxDelegations: DELEGATION_BUDGET,
+    delegationRepostChars: DELEGATION_REPOST_TARGET,
+    delegationMaxRounds: DELEGATION_ROUND_CAP,
     hasCustomSystem: FORWARDED_SYSTEM_TEXT !== undefined,
   });
 });
@@ -1690,10 +1711,14 @@ function new_web_runner(modelSpec: string, cancellation?: CancellationToken, run
     approval: build_gate,
     redact: SERVER_REDACT,
     cwd: CWD,
+    platform: `${os.platform()} ${os.release()}`,
+    ...(TASK !== undefined ? { taskId: TASK.id } : {}),
     exec_enabled: !NO_EXEC,
     timeout_ms: EXEC_TIMEOUT_MS,
     ...(cancellation !== undefined ? { cancellation } : {}),
-    max_delegations: max_delegations_for_chain(CHAIN_ROUND_CAP),
+    max_delegations: DELEGATION_BUDGET,
+    repost_chars: DELEGATION_REPOST_TARGET,
+    max_rounds: DELEGATION_ROUND_CAP,
   });
 }
 
@@ -1708,7 +1733,8 @@ function new_web_runner(modelSpec: string, cancellation?: CancellationToken, run
  * @param objective - Sanitized child goal.
  * @param cancellation - Optional token (request abort on `/api/delegate`).
  * @param runner - Optional prebuilt runner (the chain passes its cached one so the budget spans the run).
- * @returns The ready record, or null when denied.
+ * @param context - Briefing context (the turno that emitted the tag, sanitized by the runner).
+ * @returns The ready record with its host status, a budget refusal, or null when denied.
  */
 async function run_web_delegation(
   modelSpec: string,
@@ -1716,7 +1742,8 @@ async function run_web_delegation(
   objective: string,
   cancellation?: CancellationToken,
   runner?: DelegationRunner,
-): Promise<{ record: string } | null> {
+  context?: string,
+): Promise<{ record: string; status?: string } | { refused: 'budget' } | null> {
   if (NO_EXEC) {
     return null;
   }
@@ -1727,11 +1754,18 @@ async function run_web_delegation(
     return null;
   }
   const active = runner ?? new_web_runner(modelSpec, cancellation);
-  const delegation_result = await active({ kind, objective });
-  if (delegation_result === null || !('outcome' in delegation_result)) {
+  const delegation_result = await active({
+    kind,
+    objective,
+    ...(context !== undefined && context.trim() !== '' ? { context } : {}),
+  });
+  if (delegation_result === null) {
     return null;
+  } else if (!('outcome' in delegation_result)) {
+    return delegation_result.refused === 'budget' ? { refused: 'budget' as const } : null;
   } else {
-    return { record: delegation_result.outcome.record };
+    const outcome = delegation_result.outcome;
+    return { record: outcome.record, ...(outcome.status !== undefined ? { status: outcome.status } : {}) };
   }
 }
 
@@ -1868,6 +1902,7 @@ async function advanceChainRun(runId: string, modelSpec: string, system: string)
               bgObjective,
               undefined,
               chain_runner_for(runId, bgModelSpec),
+              bgVisible,
             );
             const live = chainStore.getRun(runId);
             if (live === null || live.status === 'cancelled') {
@@ -1876,6 +1911,13 @@ async function advanceChainRun(runId: string, modelSpec: string, system: string)
               chainStore.appendEvent(runId, {
                 type: 'denied',
                 text: `${bgKind} delegation not enabled on this host`,
+              });
+              dropContinuationIfTerminal(runId, chainStore.completeRun(runId, bgVisible));
+              return;
+            } else if ('refused' in delegated) {
+              chainStore.appendEvent(runId, {
+                type: 'denied',
+                text: delegation_budget_notice(DELEGATION_BUDGET),
               });
               dropContinuationIfTerminal(runId, chainStore.completeRun(runId, bgVisible));
               return;
@@ -1902,11 +1944,18 @@ async function advanceChainRun(runId: string, modelSpec: string, system: string)
         delegation.objective,
         undefined,
         chain_runner_for(runId, modelSpec),
+        visible_text,
       );
       if (delegated === null) {
         chainStore.appendEvent(runId, {
           type: 'denied',
           text: `${delegation.kind} delegation not enabled on this host`,
+        });
+        return chainStore.completeRun(runId, visible_text);
+      } else if ('refused' in delegated) {
+        chainStore.appendEvent(runId, {
+          type: 'denied',
+          text: delegation_budget_notice(DELEGATION_BUDGET),
         });
         return chainStore.completeRun(runId, visible_text);
       }
