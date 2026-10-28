@@ -25,6 +25,8 @@ export type TellrcLimits = {
   stdin_max_bytes?: number | undefined;
   exec_timeout_ms?: number | undefined;
   output_max_bytes?: number | undefined;
+  max_delegations?: number | undefined;
+  delegation_repost_chars?: number | undefined;
 };
 
 /** Profile data: prompt/style/model/temperature plus deny data and limits. */

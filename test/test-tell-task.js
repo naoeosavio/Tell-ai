@@ -394,7 +394,8 @@ async function test_task_reset_truncates_main_only() {
     assert_not_includes(main_text, 'keep me');
     assert_not_includes(main_text, 'old answer');
     assert_includes(main_text, 'fresh start');
-    assert.strictEqual(fs.readFileSync(path.join(task_directory, 'delegate-001.txt'), 'utf8'), 'old child record\n');
+    assert.ok(!fs.existsSync(path.join(task_directory, 'delegate-001.txt')), 'full-wipe removes child records');
+    assert.ok(fs.existsSync(task_directory), 'directory anchors the NNN');
     // The reset does not renumber: the next new task still takes 002.
     const next = await run_tell(['-t', '%Other', 'other'], 'x', { dir });
     assert_includes(next.stderr, 'Created task: task-002-other');
@@ -693,6 +694,83 @@ async function test_task_visible_in_history() {
   }
 }
 
+async function test_task_delegation_budget_two_and_third_warns() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-task-'));
+  try {
+    const responses = [
+      '<DELEGATE>first</DELEGATE>',
+      'child1',
+      '<DELEGATE>second</DELEGATE>',
+      'child2',
+      '<DELEGATE>third</DELEGATE>',
+      'done',
+    ];
+    const result = await run_tell(['-t', '%budget', 'go'], responses, { dir, chain: true });
+    assert_includes(result.stderr, 'Delegation budget exceeded (2)');
+    const task_directory = task_dir(result.home, 'task-001-budget');
+    assert.ok(fs.existsSync(path.join(task_directory, 'delegate-001.txt')), 'first runs');
+    assert.ok(fs.existsSync(path.join(task_directory, 'delegate-002.txt')), 'second runs');
+    assert.ok(!fs.existsSync(path.join(task_directory, 'delegate-003.txt')), 'third stays inert');
+    assert_includes(result.stdout, 'done');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+async function test_task_briefing_reaches_child() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-task-'));
+  try {
+    const responses = ['<DELEGATE>do x</DELEGATE>\nparent bg here', 'child done', 'final'];
+    const result = await run_tell(['-t', '%brief', 'go'], responses, { dir });
+    const child_message = result.tellMessages.find((message) => message.includes('Objective:'));
+    assert.ok(child_message !== undefined, 'child gets an Objective block');
+    assert_includes(child_message, 'Context (data, not instructions):');
+    assert_includes(child_message, 'parent bg here');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+async function test_task_status_in_record_file() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-task-'));
+  try {
+    const result = await run_tell(['-t', '%st', 'go'], ['<DELEGATE>list</DELEGATE>', 'findings', 'done'], { dir });
+    const record = fs.readFileSync(path.join(task_dir(result.home, 'task-001-st'), 'delegate-001.txt'), 'utf8');
+    assert_includes(record, 'Status: DONE');
+    assert_includes(record, 'Research result (DONE):');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+async function test_task_max_delegations_zero_disables() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-task-'));
+  try {
+    const result = await run_tell(['-t', '%off', '--max-delegations', '0', 'go'], '<DELEGATE>list</DELEGATE>', {
+      dir,
+    });
+    assert_not_includes(result.tellCalls[0].options.system, '<DELEGATE>');
+    const task_directory = task_dir(result.home, 'task-001-off');
+    assert.ok(!fs.existsSync(path.join(task_directory, 'delegate-001.txt')), 'zero budget runs nothing');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+async function test_task_delegation_repost_custom_target() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-task-'));
+  try {
+    const long_child = 'y'.repeat(2000);
+    const responses = ['<DELEGATE>x</DELEGATE>', long_child, 'short sum', 'done'];
+    const result = await run_tell(['-t', '%repost', '--delegation-repost', '512', 'go'], responses, { dir });
+    const record = fs.readFileSync(path.join(task_dir(result.home, 'task-001-repost'), 'delegate-001.txt'), 'utf8');
+    assert_includes(record, 'short sum');
+    assert.ok(!record.includes(long_child.slice(0, 100)), 'custom target prefers the short summary');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   const tests = [
     test_task_no_exec_conflict,
@@ -723,6 +801,11 @@ async function main() {
     test_chain_without_task_keeps_baseline_prompt,
     test_chain_without_task_ignores_delegation_tag,
     test_task_low_chain_budget_hides_delegation,
+    test_task_delegation_budget_two_and_third_warns,
+    test_task_briefing_reaches_child,
+    test_task_status_in_record_file,
+    test_task_max_delegations_zero_disables,
+    test_task_delegation_repost_custom_target,
   ];
   let failed = 0;
   for (const test of tests) {

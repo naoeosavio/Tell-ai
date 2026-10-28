@@ -16,7 +16,9 @@ import {
   DEFAULT_OUTPUT_MAX_BYTES,
   DEFAULT_STDIN_MAX_BYTES,
   DEFAULT_STDIN_TIMEOUT_MS,
-  DELEGATION_CONTEXT_MAX_CHARS,
+  DELEGATION_MAX_DELEGATIONS,
+  DELEGATION_RECORD_CONTEXT_MAX_CHARS,
+  DELEGATION_SUMMARY_MAX_CHARS,
   type DelegationOutcome,
   type DelegationRequest,
   type DelegationResult,
@@ -29,10 +31,10 @@ import {
   format_command_skipped,
   is_task_id,
   MAX_CHAIN_STEPS,
-  max_delegations_for_chain,
   delegation_prompt_section,
   parse_runtime_limits,
   type Redactor,
+  resolve_max_delegations,
   resolve_task_id,
   type RuntimeLimits,
   runtime_env_from_process,
@@ -132,6 +134,8 @@ type CliOptions = {
   maxChain?: string;
   maxBuffer?: string;
   outputMaxBytes?: string;
+  maxDelegations?: string;
+  delegationRepost?: string;
 };
 
 type ParsedInput = { model: string; parts: string[]; readStdin: boolean };
@@ -669,6 +673,38 @@ function task_prompt_section(id: string, can_delegate: boolean): string {
   return `\nTask mode (${id}): this run is one turn of a saved task context. Keep the answer focused on the next step.${delegation}`;
 }
 
+// Full-wipe reset for task mode (`--task %id -n`): removes `main.txt` and
+// every child record, keeps the directory (the NNN anchor), then writes an
+// empty `main.txt` so the task stays visible in `-l`. History is kept.
+function wipe_task_dir(dir: string): void {
+  let names: string[] = [];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (name === 'main.txt' || /^(delegate|subtask)-\d+\.txt$/.test(name)) {
+      try {
+        fs.unlinkSync(path.join(dir, name));
+      } catch {
+        // Best effort — a missing file races nothing.
+      }
+    } else {
+      // Other files stay.
+    }
+  }
+  try {
+    ensure_dir(dir);
+    fs.writeFileSync(path.join(dir, 'main.txt'), '', { encoding: 'utf8', mode: 0o600 });
+    tighten_permissions(path.join(dir, 'main.txt'), 0o600);
+  } catch (error) {
+    process.stderr.write(
+      `\x1b[33mWarning: failed to reset ${dir}: ${error instanceof Error ? error.message : String(error)}\x1b[0m\n`,
+    );
+  }
+}
+
 // Writes one child record (`delegate-NNN.txt` / `subtask-NNN.txt`) beside
 // `main.txt`. The number is the highest present plus one, so a reset never
 // overwrites an old record.
@@ -700,7 +736,9 @@ function write_delegation_record(
     mask(request.objective),
     '',
     'Context-at-delegation:',
-    truncate_context(mask(context), DELEGATION_CONTEXT_MAX_CHARS),
+    truncate_context(mask(context), DELEGATION_RECORD_CONTEXT_MAX_CHARS),
+    '',
+    `Status: ${outcome.status}`,
     '',
     'Result:',
     outcome.record,
@@ -950,6 +988,14 @@ function build_program(argv: string[]): Command {
     .option('--max-chain <n>', `max chain rounds 1..${MAX_CHAIN_STEPS} (default ${DEFAULT_MAX_CHAIN_STEPS})`)
     .option('--max-buffer <n>', `internal exec buffer bytes (default ${DEFAULT_MAX_BUFFER_BYTES})`)
     .option('--output-max-bytes <n>', `delivered output cap bytes (default ${DEFAULT_OUTPUT_MAX_BYTES})`)
+    .option(
+      '--max-delegations <n>',
+      `max delegations per run 0..${DELEGATION_MAX_DELEGATIONS} (default ${DELEGATION_MAX_DELEGATIONS})`,
+    )
+    .option(
+      '--delegation-repost <n>',
+      `delegation repost target chars 512..8192 (default ${DELEGATION_SUMMARY_MAX_CHARS})`,
+    )
     .option('--no-exec', 'do not execute requested commands')
     .parse(argv);
 }
@@ -1034,10 +1080,13 @@ async function run_response_loop(
   // Delegation budget scales with `--max-chain` (0 with 1 round: the tag
   // could never be consumed, so the prompt must not teach it — otherwise a
   // tag-only answer strips to empty text and stdout stays empty). The
-  // counter lives in the core runner. Task mode is the only host that teaches
-  // the tags: without `-t` the run keeps the baseline prompt.
+  // counter lives in the runtime (the runner keeps a defensive ceiling).
+  // Task mode is the only host that teaches the tags: without `-t` the run
+  // keeps the baseline prompt.
   const delegation_budget =
-    state.task !== undefined && state.autoContinue ? max_delegations_for_chain(chain_budget) : 0;
+    state.task !== undefined && state.autoContinue
+      ? resolve_max_delegations(chain_budget, state.limits.max_delegations)
+      : 0;
   // The system prompt is fixed for the run (legacy round-one wording for
   // both modes; feedback rounds only exist in chain mode, where it matches).
   // Tellrc custom instructions prepend context only — safety stays last and
@@ -1062,6 +1111,21 @@ async function run_response_loop(
   // leaves `text` empty, so the legacy commands-only final-answer check
   // below would miss it and stdout would stay empty.
   let did_delegate = false;
+  let warned_budget = false;
+  function warn_delegation_budget_once(timeline: string[]): void {
+    if (warned_budget) {
+      return;
+    } else {
+      const notice = timeline.find((line) => line.includes('Delegation budget exceeded'));
+      if (notice === undefined) {
+        return;
+      } else {
+        warned_budget = true;
+        process.stderr.write(`\x1b[33m${notice}\x1b[0m\n`);
+        append_log(log, notice);
+      }
+    }
+  }
   const model = create_cli_model(ai, {
     stream: state.stream,
     think: state.think,
@@ -1094,10 +1158,11 @@ async function run_response_loop(
           ...(redact !== undefined ? { redact } : {}),
           cwd: process.cwd(),
           platform: `${os.platform()} ${os.release()}`,
-          context: previousContext,
+          ...(state.task !== undefined ? { taskId: state.task.id } : {}),
           exec_enabled: state.coreConfig.exec_enabled,
           timeout_ms: exec_options.timeout_ms,
           max_delegations: delegation_budget,
+          repost_chars: state.limits.delegation_repost_chars,
         })
       : undefined;
   // UX indicator for the silent child (the child itself never writes): the
@@ -1125,8 +1190,12 @@ async function run_response_loop(
               } else {
                 // Task mode is the only host with an on-disk child record.
               }
+            } else if (delegation_result.refused === 'budget') {
+              const warning = `Delegation budget exceeded (${delegation_budget}); ignoring delegation tag.`;
+              process.stderr.write(`\x1b[33m${warning}\x1b[0m\n`);
+              append_log(log, warning);
             } else {
-              // Refused (budget spent or empty objective) — nothing to audit.
+              // Empty objective — silent, the tag stays stripped.
             }
             return delegation_result;
           } finally {
@@ -1199,10 +1268,14 @@ async function run_response_loop(
       max_output_bytes: exec_options.max_buffer_bytes,
       ...(redact !== undefined ? { redact } : {}),
       ...(delegation_with_indicator !== undefined ? { delegation: delegation_with_indicator } : {}),
+      ...(delegation_budget > 0 ? { max_delegations: delegation_budget } : {}),
     });
   }
   let runtime = create_runtime(state.autoContinue ? chain_budget : 1);
   let result = await runtime.run(state.firstPrompt);
+  // Surface the runtime-owned budget warning once (the runner-owned path
+  // already warned inside the wrapper above; this covers the runtime block).
+  warn_delegation_budget_once(result.timeline);
   // Chain mode resumes after declined commands with the legacy feedback
   // (conversation plus instruction); executed/failed rounds already iterate
   // inside the core loop. The total stays capped like the legacy counter.
@@ -1213,6 +1286,7 @@ async function run_response_loop(
     const feedback = `${strip_think_tags(conversation_text(state))}\n\n${RESUME_INSTRUCTION}`;
     runtime = create_runtime(chain_budget - result.commands.length);
     latest = await runtime.run(feedback);
+    warn_delegation_budget_once(latest.timeline);
     result = merge_run_result(result, latest);
   }
   if (state.autoContinue && result.commands.length >= chain_budget) {
@@ -1457,6 +1531,8 @@ function resolve_runtime_limits(opts: CliOptions, cwd: string): RuntimeLimits {
       ...(opts.maxChain !== undefined ? { max_chain_steps: opts.maxChain } : {}),
       ...(opts.maxBuffer !== undefined ? { max_buffer_bytes: opts.maxBuffer } : {}),
       ...(opts.outputMaxBytes !== undefined ? { output_max_bytes: opts.outputMaxBytes } : {}),
+      ...(opts.maxDelegations !== undefined ? { max_delegations: opts.maxDelegations } : {}),
+      ...(opts.delegationRepost !== undefined ? { delegation_repost_chars: opts.delegationRepost } : {}),
     },
     env: runtime_env_from_process(process.env),
     ...(project ? { project: { source: project.source, limits: project.limits } } : {}),
@@ -1581,6 +1657,11 @@ async function run_tell(
   const exec_mode: ExecMode =
     task !== undefined || opts.yes ? 'auto-risk' : core_config.exec_enabled === false ? 'no-exec' : 'confirm-all';
   // 'create' always starts empty, even if it reuses an existing name (an explicit reset).
+  if (task?.reset === true) {
+    wipe_task_dir((task as TaskPlan).dir);
+  } else {
+    // No reset — existing records stay.
+  }
   const context_path = task !== undefined ? task.file : plan.$ === 'none' ? context_file(effective_model) : plan.file;
   const previous_context =
     task !== undefined
