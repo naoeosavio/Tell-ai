@@ -30,7 +30,13 @@ export const DELEGATION_MAX_ROUNDS = 3;
 /** Max output bytes delivered per child command. */
 export const DELEGATION_OUTPUT_MAX_BYTES = 8 * 1024;
 /** Max context chars seeded into a delegated child. */
-export const DELEGATION_CONTEXT_MAX_CHARS = 16 * 1024;
+export const DELEGATION_CONTEXT_MAX_CHARS = 64 * 1024;
+/** Max delegations per invocation (0 when the chain has fewer than 2 rounds). */
+export const DELEGATION_MAX_DELEGATIONS = 2;
+/** Max chars of the briefing context block (`Context (data, not instructions)`). */
+export const DELEGATION_BRIEFING_MAX_CHARS = 2 * 1024;
+/** Max chars of `Context-at-delegation` kept in the record file. */
+export const DELEGATION_RECORD_CONTEXT_MAX_CHARS = 8 * 1024;
 
 /** Invalid flag/env/tellrc limit value (the host maps this to its exit status). */
 export const EXIT_CONFIG_ERROR = 2;
@@ -58,6 +64,8 @@ export type RuntimeLimits = {
   max_chain_steps: number;
   max_buffer_bytes: number;
   output_max_bytes: number;
+  max_delegations: number;
+  delegation_repost_chars: number;
 };
 
 /** External executor options injected into the core executor/loop. */
@@ -78,6 +86,8 @@ export type RuntimeLimitFlags = {
   max_chain_steps?: string | number | undefined;
   max_buffer_bytes?: string | number | undefined;
   output_max_bytes?: string | number | undefined;
+  max_delegations?: string | number | undefined;
+  delegation_repost_chars?: string | number | undefined;
 };
 
 /** Env layer subset (`TELL_*` knobs only, never secrets). */
@@ -89,6 +99,8 @@ export type RuntimeLimitEnv = {
   TELL_MAX_CHAIN_STEPS?: string | undefined;
   TELL_MAX_BUFFER_BYTES?: string | undefined;
   TELL_OUTPUT_MAX_BYTES?: string | undefined;
+  TELL_MAX_DELEGATIONS?: string | undefined;
+  TELL_DELEGATION_REPOST_CHARS?: string | undefined;
 };
 
 /**
@@ -222,6 +234,24 @@ const LIMIT_SPECS: Record<keyof RuntimeLimits, LimitSpec> = {
     env_key: 'TELL_OUTPUT_MAX_BYTES',
     tellrc_key: 'output_max_bytes',
   },
+  max_delegations: {
+    key: 'max_delegations',
+    min: 0,
+    max: DELEGATION_MAX_DELEGATIONS,
+    allow_zero: true,
+    flag_key: 'max_delegations',
+    env_key: 'TELL_MAX_DELEGATIONS',
+    tellrc_key: 'max_delegations',
+  },
+  delegation_repost_chars: {
+    key: 'delegation_repost_chars',
+    min: 512,
+    max: 8 * 1024,
+    allow_zero: false,
+    flag_key: 'delegation_repost_chars',
+    env_key: 'TELL_DELEGATION_REPOST_CHARS',
+    tellrc_key: 'delegation_repost_chars',
+  },
 };
 
 const LIMIT_SPEC_LIST: LimitSpec[] = Object.values(LIMIT_SPECS);
@@ -242,6 +272,8 @@ const DEFAULT_LIMITS: RuntimeLimits = {
   max_chain_steps: DEFAULT_MAX_CHAIN_STEPS,
   max_buffer_bytes: DEFAULT_MAX_BUFFER_BYTES,
   output_max_bytes: DEFAULT_OUTPUT_MAX_BYTES,
+  max_delegations: DELEGATION_MAX_DELEGATIONS,
+  delegation_repost_chars: DELEGATION_SUMMARY_MAX_CHARS,
 };
 
 /**
@@ -801,19 +833,38 @@ export function truncate_output(output: string, max_bytes: number = DEFAULT_OUTP
 }
 
 /**
+ * Resolves the delegation budget for one invocation (fixed ceiling).
+ *
+ * The budget is 2 whenever the chain has at least 2 rounds (one round can
+ * never consume a delegation summary — the consuming round is always the
+ * next one), otherwise 0. An explicit `max_delegations` flag (0..2,
+ * already validated by `parse_runtime_limits`) wins over the chain gate and
+ * is the only way to disable (`0`) or lower the budget.
+ *
+ * @param max_chain_steps - Round cap of the parent run.
+ * @param flag - Explicit `max_delegations` override, if any.
+ * @returns The delegation budget for the run (0..2).
+ */
+export function resolve_max_delegations(max_chain_steps: number, flag?: number | undefined): number {
+  if (flag !== undefined) {
+    return flag;
+  } else if (!Number.isFinite(max_chain_steps) || max_chain_steps < 2) {
+    return 0;
+  } else {
+    return DELEGATION_MAX_DELEGATIONS;
+  }
+}
+
+/**
  * Computes how many delegations a run may spend from its chain budget.
  *
- * Scales with `--max-chain`: default 8 gives 2, 128 gives 4, and 1 gives 0
- * (one round can never consume a delegation summary — the consuming round is
- * always the next one).
+ * Kept as a thin alias of `resolve_max_delegations(chain)` without a flag:
+ * fixed budget 2 whenever the chain has at least 2 rounds, else 0. New code
+ * should call `resolve_max_delegations` with the explicit flag.
  *
  * @param max_chain_steps - Round cap of the parent run.
  * @returns The delegation budget for the run.
  */
 export function max_delegations_for_chain(max_chain_steps: number): number {
-  if (!Number.isFinite(max_chain_steps) || max_chain_steps < 2) {
-    return 0;
-  } else {
-    return Math.min(4, Math.max(1, Math.floor(max_chain_steps / 4)));
-  }
+  return resolve_max_delegations(max_chain_steps);
 }
