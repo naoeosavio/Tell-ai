@@ -382,7 +382,7 @@ async function test_task_resume_without_prompt() {
   }
 }
 
-async function test_task_reset_truncates_main_only() {
+async function test_task_reset_full_wipe_keeps_dir() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-task-'));
   try {
     await run_tell(['-t', '%Feature', 'keep me'], 'old answer', { dir });
@@ -485,7 +485,11 @@ async function test_task_tag_only_answer_gets_final_ask() {
 async function test_task_web_forwards_flags() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-task-'));
   try {
-    const result = await run_tell(['-t', '%web-task', 'goal', '-w', '--cwd', path.join(dir, 'work')], '', { dir });
+    const result = await run_tell(
+      ['-t', '%web-task', 'goal', '-w', '--cwd', path.join(dir, 'work'), '--max-delegations', '1', '--delegation-repost', '512'],
+      '',
+      { dir },
+    );
     const call = result.spawnCalls[0];
     assert.strictEqual(call.cmd, 'tell-web');
     const taskAt = call.args.indexOf('--task');
@@ -493,6 +497,8 @@ async function test_task_web_forwards_flags() {
     assert.strictEqual(call.args[taskAt + 1], '%web-task');
     assert.strictEqual(call.args[call.args.indexOf('--prompt') + 1], 'goal');
     assert.ok(!call.args.includes('--task-reset'));
+    assert.strictEqual(call.args[call.args.indexOf('--max-delegations') + 1], '1');
+    assert.strictEqual(call.args[call.args.indexOf('--delegation-repost') + 1], '512');
     const reset = await run_tell(
       ['-t', '%web-task', '-n', 'fresh', '-w', '--cwd', path.join(dir, 'work')],
       '',
@@ -783,7 +789,7 @@ async function main() {
     test_task_unquoted_prompt_is_not_swallowed,
     test_task_named_create_and_numbering,
     test_task_resume_without_prompt,
-    test_task_reset_truncates_main_only,
+    test_task_reset_full_wipe_keeps_dir,
     test_task_delegation_record_file,
     test_task_model_failure_announces_nothing,
     test_task_child_record_numbering_past_999,

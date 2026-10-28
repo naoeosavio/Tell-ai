@@ -27,6 +27,7 @@ export type TellrcLimits = {
   output_max_bytes?: number | undefined;
   max_delegations?: number | undefined;
   delegation_repost_chars?: number | undefined;
+  delegation_max_rounds?: number | undefined;
 };
 
 /** Profile data: prompt/style/model/temperature plus deny data and limits. */

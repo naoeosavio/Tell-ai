@@ -1163,6 +1163,7 @@ async function run_response_loop(
           timeout_ms: exec_options.timeout_ms,
           max_delegations: delegation_budget,
           repost_chars: state.limits.delegation_repost_chars,
+          max_rounds: state.limits.delegation_max_rounds,
         })
       : undefined;
   // UX indicator for the silent child (the child itself never writes): the
@@ -1359,6 +1360,9 @@ async function launch_web(opts: {
   contextChars?: number | undefined;
   stdinTimeoutMs?: number | undefined;
   execTimeout?: number | undefined;
+  maxDelegations?: number | undefined;
+  delegationRepostChars?: number | undefined;
+  delegationMaxRounds?: number | undefined;
   task?: boolean | string | undefined;
   taskReset?: boolean | undefined;
 }): Promise<void> {
@@ -1415,6 +1419,11 @@ async function launch_web(opts: {
     if (opts.contextChars !== undefined) child_args.push('--context-chars', String(opts.contextChars));
     if (opts.stdinTimeoutMs !== undefined) child_args.push('--stdin-timeout-ms', String(opts.stdinTimeoutMs));
     if (opts.execTimeout !== undefined) child_args.push('--exec-timeout', String(opts.execTimeout));
+    if (opts.maxDelegations !== undefined) child_args.push('--max-delegations', String(opts.maxDelegations));
+    if (opts.delegationRepostChars !== undefined)
+      child_args.push('--delegation-repost', String(opts.delegationRepostChars));
+    if (opts.delegationMaxRounds !== undefined)
+      child_args.push('--delegation-max-rounds', String(opts.delegationMaxRounds));
     // Task mode forwards the same raw value the CLI received, so `tell-web`
     // resolves the identical id from the identical prompt and cwd.
     if (opts.task !== undefined) {
@@ -1657,8 +1666,9 @@ async function run_tell(
   const exec_mode: ExecMode =
     task !== undefined || opts.yes ? 'auto-risk' : core_config.exec_enabled === false ? 'no-exec' : 'confirm-all';
   // 'create' always starts empty, even if it reuses an existing name (an explicit reset).
-  if (task?.reset === true) {
-    wipe_task_dir((task as TaskPlan).dir);
+  const active_task = task;
+  if (active_task?.reset === true) {
+    wipe_task_dir(active_task.dir);
   } else {
     // No reset — existing records stay.
   }
@@ -1926,6 +1936,18 @@ async function main() {
         opts.execTimeout !== undefined || web_env.TELL_EXEC_TIMEOUT_MS !== undefined
           ? early_limits.exec_timeout_ms
           : early_tellrc.limits.exec_timeout_ms,
+      maxDelegations:
+        opts.maxDelegations !== undefined || web_env.TELL_MAX_DELEGATIONS !== undefined
+          ? early_limits.max_delegations
+          : early_tellrc.limits.max_delegations,
+      delegationRepostChars:
+        opts.delegationRepost !== undefined || web_env.TELL_DELEGATION_REPOST_CHARS !== undefined
+          ? early_limits.delegation_repost_chars
+          : early_tellrc.limits.delegation_repost_chars,
+      delegationMaxRounds:
+        web_env.TELL_DELEGATION_MAX_ROUNDS !== undefined
+          ? early_limits.delegation_max_rounds
+          : early_tellrc.limits.delegation_max_rounds,
       temperature: early_tellrc.temperature,
       task: opts.task,
       taskReset: Boolean(opts.name),
