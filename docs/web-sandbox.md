@@ -55,6 +55,12 @@ tell --web                       # open http://localhost:3000
 > builds the binary. With scripts disabled the install still "succeeds" and every
 > PTY terminal fails to load.
 
+> `tell --web` sets `NODE_ENV=production` for the child. Running the published
+> `tell-web --cwd <project>` directly also serves the built client: the server
+> uses Vite only when `dist/index.html` is absent (source/dev runs), so
+> `NODE_ENV` is not required. `tell-web --help` lists the flags; the access
+> token comes from `TELL_TOKEN`, not a `--token` flag.
+
 > `-w` / `--web` enables the auto-generated project context. You can run the sandbox
 > in another directory with `--cwd <path>` (created with a warning if it does not
 > exist) and fill the chat inbox by passing a prompt, e.g.
@@ -305,6 +311,15 @@ The chat header controls how AI-requested commands run:
   high-risk outright — asking lives in the chain/chat flow only.
 - **No-Exec** (seeded by `--no-exec`) — nothing executes; confirming a command
   just records what would have run and the chain continues with that feedback.
+
+Command output crosses the redaction boundary before it reaches the client or
+the next model turn: provider keys and the values in credential-named workspace
+files (`.env*`, `*.key`, `*.pem`, `id_*`; bounded scan) appear as `[redacted]`.
+This covers glob/loop reads the lexical classifier cannot resolve (`cat sec*`,
+`grep -r`). An **explicitly approved** high-risk script is user consent and its
+output is shown as executed (the confirm card already carried the risk reason).
+Encoding or transforming the value remains the documented limit of the
+name-based guard.
 
 Reasoning headers (🧠) are collapsed by default; `--think` starts them expanded
 and any manual expand/collapse persists for future messages.

@@ -176,6 +176,32 @@ export function parseCliArgs(argv: string[], defaultCwd: string): CliArgs {
   };
 }
 
+/**
+ * Picks how the HTTP server serves the browser client.
+ *
+ * Development (`NODE_ENV=development`, `tsx src/server/server.ts`) needs the
+ * Vite middleware. The published `tell-web` binary runs the built
+ * `dist/server.js`; it must serve the static assets next to it even when the
+ * host does not set `NODE_ENV` (the documented `tell-web --cwd <project>`
+ * invocation does not). The presence of `dist/index.html` is the signal:
+ * source runs have no built index beside the server file.
+ *
+ * @param options - `NODE_ENV` and whether `index.html` exists beside the server.
+ * @returns `'vite'` for source/dev runs, `'static'` for built output.
+ */
+export function resolveAssetMode(options: {
+  nodeEnv?: string | undefined;
+  distIndexExists: boolean;
+}): 'vite' | 'static' {
+  if (options.nodeEnv === 'development') {
+    return 'vite';
+  } else if (options.nodeEnv === 'production' || options.distIndexExists) {
+    return 'static';
+  } else {
+    return 'vite';
+  }
+}
+
 export function printHelp(): void {
   console.log(`Tell Web — usage: tell [options]
 

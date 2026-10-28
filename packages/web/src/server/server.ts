@@ -10,6 +10,7 @@ import {
   canonical_path,
   canonical_write_path,
   collect_exec_secrets,
+  collect_sensitive_file_secrets,
   create_cancellation_token,
   create_delegation_runner,
   create_node_executor,
@@ -55,7 +56,7 @@ import {
   type ChainRunSnapshot,
   createChainStore,
 } from './chain-store';
-import { parseCliArgs, printHelp } from './cli-args';
+import { parseCliArgs, printHelp, resolveAssetMode } from './cli-args';
 import { buildSystemPrompt } from './context-builder';
 import {
   authFailureMessage,
@@ -361,14 +362,31 @@ configureScrollbackMax(Number(process.env['TELL_SCROLLBACK_MAX']) || undefined);
 // boot stays a plain module evaluation. Invalid `CUSTOM_API`/`CUSTOM_HEADERS`
 // throw here, failing the boot.
 const SDK_CONFIG = build_sdk_config_from_env(process.env);
-// Redactor for delegation summaries: masks provider keys the process knew at
-// boot (before the scrub below removes them from the child environment).
-const SERVER_REDACT = create_secret_redactor([
+// Redaction sources the process knew at boot: provider keys and scrubbed
+// environment values. Credential-named workspace files are added per output
+// by `serverRedact` (they can change while the server runs).
+const BASE_SERVER_SECRETS = [
   ...collect_exec_secrets(process.env),
   ...Object.values(SDK_CONFIG.keys ?? {}).filter(
     (value): value is string => typeof value === 'string' && value.length > 0,
   ),
-]);
+];
+
+/**
+ * Masks known secrets and credential-file values in command/delegation output.
+ *
+ * The lexical sensitive-file rule is a speed bump: `cat .en?`, `for f in .*`,
+ * `cat sec*` and `grep -r` reach the files without naming them. Every output
+ * that can carry model-facing or client-facing command text goes through this
+ * boundary, so a bypass does not forward the secret. Re-scanning per call
+ * keeps `.env` files created after boot covered; the scan is bounded.
+ *
+ * @param text - Command output, record or feedback text.
+ * @returns The text with known secret values replaced by `[redacted]`.
+ */
+function serverRedact(text: string): string {
+  return create_secret_redactor([...BASE_SERVER_SECRETS, ...collect_sensitive_file_secrets(CWD)])(text);
+}
 const RETAINED_SERVER_ENV = new Set([
   'COLORTERM',
   'FORCE_COLOR',
@@ -1050,8 +1068,13 @@ app.post('/api/execute', async (req, res) => {
     // The exit code travels with the output: the browser-side loop formats
     // the round feedback through the core (`format_command_result`), which
     // reports a failure as `Command failed (exit code N)`. Without it the
-    // browser could not tell a failed command from a successful one.
-    return res.json({ output: cap_execution_output(result.stdout, result.stderr), exit_code: result.exit_code });
+    // browser could not tell a failed command from a successful one. The
+    // output crosses the redaction boundary: a glob/loop read of `.env` must
+    // not expose the value to the client or the next model turn.
+    return res.json({
+      output: serverRedact(cap_execution_output(result.stdout, result.stderr)),
+      exit_code: result.exit_code,
+    });
   } catch (error: any) {
     // The executor only throws for spawn/cancellation failures, never for a
     // command exit status — report the message the same way the old path did.
@@ -1167,7 +1190,7 @@ app.post('/api/delegate', async (req, res) => {
           return verdict;
         }
       },
-      redact: SERVER_REDACT,
+      redact: serverRedact,
       cwd: CWD,
       exec_enabled: !NO_EXEC,
       timeout_ms: EXEC_TIMEOUT_MS,
@@ -1744,7 +1767,7 @@ function new_web_runner(modelSpec: string, cancellation?: CancellationToken, run
       }
     },
     approval: build_gate,
-    redact: SERVER_REDACT,
+    redact: serverRedact,
     cwd: CWD,
     platform: `${os.platform()} ${os.release()}`,
     ...(TASK !== undefined ? { taskId: TASK.id } : {}),
@@ -1839,7 +1862,7 @@ async function runChainScript(runId: string, script: string): Promise<boolean> {
       timeout_ms: EXEC_TIMEOUT_MS,
       max_output_bytes: EXEC_MAX_BUFFER,
     });
-    const output = cap_execution_output(result.stdout, result.stderr);
+    const output = serverRedact(cap_execution_output(result.stdout, result.stderr));
     chainStore.pushMessage(runId, {
       role: 'user',
       content: format_executed_command(script, truncateChainFeedbackTail(output)),
@@ -2256,6 +2279,9 @@ app.post('/api/chain/:runId/confirm', async (req, res) => {
         timeout_ms: EXEC_TIMEOUT_MS,
         max_output_bytes: EXEC_MAX_BUFFER,
       });
+      // An explicitly approved high-risk script is user consent: its output is
+      // shown as-is (the confirm card already carried the risk reason). Only
+      // auto-executed scripts cross the workspace-secret redactor.
       const output = cap_execution_output(result.stdout, result.stderr);
       chainStore.pushMessage(runId, {
         role: 'user',
@@ -2428,11 +2454,18 @@ process.on('unhandledRejection', (reason) => {
   console.error('Unhandled rejection:', reason instanceof Error ? reason.message : String(reason));
 });
 
-// Setup Vite dev server middleware in development, and static file serving in production
+// Serve the built client from `dist/` (the published `tell-web` binary) and
+// use Vite only for source/dev runs. Relying on NODE_ENV alone left the
+// documented `tell-web --cwd <project>` invocation serving Vite from the
+// project cwd with no index.html (404 on `/`).
 async function startServer() {
   const server = http.createServer(app);
+  const assetMode = resolveAssetMode({
+    nodeEnv: process.env['NODE_ENV'],
+    distIndexExists: fs.existsSync(path.join(__dirname, 'index.html')),
+  });
 
-  if (process.env['NODE_ENV'] !== 'production') {
+  if (assetMode === 'vite') {
     const vite = await createViteServer({
       server: { middlewareMode: true, hmr: { server } },
       appType: 'spa',
