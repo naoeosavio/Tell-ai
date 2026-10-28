@@ -35,6 +35,12 @@ export interface CliArgs {
   yes: boolean;
   /** Whether the Require Approval toggle is seeded on the client's first visit (`--require-approval`). */
   requireApproval: boolean;
+  /** Raw `-t/--task` value (empty when the flag is bare); undefined without task mode. */
+  task?: string | undefined;
+  /** Whether the task context starts empty at boot (`--task-reset`, from the CLI `-n`). */
+  taskReset: boolean;
+  /** Boot-time flag conflict, printed and exited by the server (exit 2). */
+  error?: string | undefined;
   /** Whether responses are streamed to the browser as they are generated (`--stream`). */
   stream: boolean;
   /** Whether reasoning headers start expanded (`--think`; collapse persists). */
@@ -73,11 +79,17 @@ export function parseCliArgs(argv: string[], defaultCwd: string): CliArgs {
   const argCwd = argValue(argv, '--cwd');
   const initialPrompt = argValue(argv, '--prompt');
   const model = argValue(argv, '-m', '--model') || '';
-  const chain = has(argv, '--chain');
-  const yes = has(argv, '-y', '--yes');
+  const hasTask = has(argv, '-t', '--task');
+  // A bare `--task` (no value before the next flag) is task mode with no ref.
+  const taskRaw = hasTask ? (argValue(argv, '-t', '--task') ?? '') : undefined;
+  const taskReset = has(argv, '--task-reset');
   const noExec = has(argv, '--no-exec');
-  const requireApproval = has(argv, '--require-approval');
-  const stream = has(argv, '--stream');
+  // Task mode forces the chain and the execution contract; the conflict is a
+  // boot error, never a silent deny.
+  const chain = hasTask || has(argv, '--chain');
+  const yes = hasTask || has(argv, '-y', '--yes');
+  const requireApproval = hasTask || has(argv, '--require-approval');
+  const stream = hasTask || has(argv, '--stream');
   const think = has(argv, '--think');
   const portRaw = argValue(argv, '--port');
   const port = portRaw !== undefined ? Number(portRaw) : undefined;
@@ -119,6 +131,9 @@ export function parseCliArgs(argv: string[], defaultCwd: string): CliArgs {
     chain,
     yes,
     requireApproval,
+    task: taskRaw,
+    taskReset,
+    error: hasTask && noExec ? 'error: --task cannot be combined with --no-exec' : undefined,
     stream,
     think,
     port: port !== undefined && Number.isFinite(port) && port > 0 ? port : undefined,
@@ -157,6 +172,9 @@ Options:
   --host <address>  Bind address (default: 127.0.0.1; use 0.0.0.0 to expose on LAN)
   --exec-timeout <ms>
                     Per-command timeout in ms (default: 120000, max: 600000)
+  -t, --task [ref]  Run one task (%id resume/create, or the initial prompt):
+                    forces --chain, -y, --require-approval and --stream
+  --task-reset      Start the task context empty (the CLI forwards -n here)
   --chain           Continue after command output until the AI gives a final answer
   --stream          Seed the client's Stream toggle on the first visit, and keep
                     streaming as the server fallback for requests that omit the

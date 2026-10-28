@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import http from 'http';
+import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import {
@@ -13,8 +14,10 @@ import {
   create_node_executor,
   compose_custom_system,
   create_secret_redactor,
+  DEFAULT_CONTEXT_MAX_CHARS,
   DEFAULT_EXEC_TIMEOUT_MS,
   EXEC_CANCELLED_EXIT_CODE,
+  EXIT_CONFIG_ERROR,
   extract_delegation,
   HOST_DEFAULT_MODEL,
   DEFAULT_MAX_BUFFER_BYTES,
@@ -23,14 +26,19 @@ import {
   format_executed_command,
   has_lexical_target,
   is_path_inside_base,
+  is_task_id,
   max_delegations_for_chain,
+  resolve_task_id,
+  split_task_value,
   strip_delegation_tags,
+  task_name_from_ref,
+  truncate_context,
   truncate_output,
   type CancellationToken,
   type DelegationRunner,
   validate_chain_decision_payload,
 } from '@tell-ai/core';
-import { create_ask_ai, extract_runs, get_model, MODELS, resolve_model_spec } from '@tell-ai/sdk';
+import { create_ask_ai, extract_runs, get_model, MODELS, resolve_model_spec, strip_think_tags } from '@tell-ai/sdk';
 import { generateText } from 'ai';
 import { config as loadEnv } from 'dotenv';
 import express from 'express';
@@ -80,6 +88,11 @@ if (cliArgs.help) {
   printHelp();
   process.exit(0);
 }
+if (cliArgs.error !== undefined) {
+  // A flag conflict is a boot error, never a silent deny.
+  console.error(cliArgs.error);
+  process.exit(EXIT_CONFIG_ERROR);
+}
 if (!fs.existsSync(cliArgs.cwd) || !fs.statSync(cliArgs.cwd).isDirectory()) {
   console.error(`Error: --cwd "${cliArgs.cwd}" does not exist or is not a directory.`);
   process.exit(1);
@@ -126,9 +139,121 @@ const FORWARDED_LIMITS = {
   stdinTimeoutMs?: number;
 };
 
+// ---------------------------------------------------------------------------
+// Task mode (`-t/--task`). The CLI forwards the same raw value, so both hosts
+// resolve the identical `task-NNN-name` id from the same prompt and cwd. The
+// task context (`main.txt`) is owned by the CLI; this host reads it as the
+// prior context and only creates the anchor when the task is new.
+// ---------------------------------------------------------------------------
+
+/** Root of every saved context and task (`~/.ai/tell_context`). */
+const CONTEXT_DIR = path.join(os.homedir(), '.ai', 'tell_context');
+
+/** Effective context cap for the task section (`--context-chars` wins). */
+const TASK_CONTEXT_MAX_CHARS = FORWARDED_LIMITS.contextChars ?? DEFAULT_CONTEXT_MAX_CHARS;
+
+/** A resolved task pointer for this server (undefined when task mode is off). */
+type HostTask = {
+  /** The task id (`task-NNN-name`). */
+  id: string;
+  /** The task context file (`~/.ai/tell_context/<id>/main.txt`). */
+  file: string;
+  /** True when the id already existed (a resume, not a create). */
+  resumed: boolean;
+};
+
+/** Saved task ids; a missing directory means that no task exists yet. */
+function list_task_ids(): string[] {
+  try {
+    return fs.readdirSync(CONTEXT_DIR).filter((name) => is_task_id(name));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Reads the saved task context (`main.txt`), capped.
+ *
+ * @param task - The resolved task pointer.
+ * @returns The stored context text (empty when the file is absent).
+ */
+function read_task_context(task: HostTask): string {
+  try {
+    return truncate_context(fs.readFileSync(task.file, 'utf8').trim(), TASK_CONTEXT_MAX_CHARS);
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Creates the task directory and an empty context file.
+ *
+ * Anchors the task number for the CLI: a task that the Web opened must exist
+ * on disk, or the CLI would allocate the same number again.
+ *
+ * @param task - The resolved task pointer.
+ */
+function init_task_context(task: HostTask): void {
+  try {
+    fs.mkdirSync(path.dirname(task.file), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(task.file, '', { encoding: 'utf8', mode: 0o600 });
+  } catch (error) {
+    console.error('Task context could not be created:', error instanceof Error ? error.message : String(error));
+  }
+}
+
+/**
+ * Resolves the boot `--task` value into a task pointer.
+ *
+ * @param raw - The `-t/--task` value ('' when the flag is bare).
+ * @param prompt - The initial prompt (`--prompt`), used for the hash name.
+ * @param reset - Whether `--task-reset` starts the context empty.
+ * @returns The task pointer, or undefined when task mode is off.
+ */
+function resolve_host_task(raw: string | undefined, prompt: string, reset: boolean): HostTask | undefined {
+  if (raw === undefined) {
+    return undefined;
+  } else {
+    const { first, rest } = split_task_value(raw);
+    const reference = first.startsWith('%') ? first.slice(1) : null;
+    const task_prompt = [rest, prompt].filter(Boolean).join(' ').trim();
+    const name =
+      reference !== null
+        ? task_name_from_ref(reference)
+        : crypto.createHash('sha256').update(`${CWD}\n${task_prompt}`).digest('hex').slice(0, 8);
+    if (name === '') {
+      throw new Error('Invalid task name — use letters, digits and dashes');
+    } else {
+      // The name is usable; resolve it below.
+    }
+    const resolved = resolve_task_id(reference, name, list_task_ids());
+    const task: HostTask = {
+      id: resolved.id,
+      file: path.join(CONTEXT_DIR, resolved.id, 'main.txt'),
+      resumed: resolved.resumed,
+    };
+    if (!resolved.resumed || reset) {
+      init_task_context(task);
+    } else {
+      // An existing task keeps its saved context.
+    }
+    return task;
+  }
+}
+
+/** The task for this server, or undefined when the sandbox runs without `-t`. */
+const TASK = ((): HostTask | undefined => {
+  try {
+    return resolve_host_task(cliArgs.task, INITIAL_PROMPT ?? '', cliArgs.taskReset);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(EXIT_CONFIG_ERROR);
+  }
+})();
+
 /** Default internal exec buffer in bytes (owned by `@tell-ai/core`). */
-const EXEC_DEFAULT_MAX_BUFFER = DEFAULT_MAX_BUFFER_BYTES;
-/** Effective exec buffer: the forwarded CLI override wins, default otherwise. */
+const EXEC_DEFAULT_MAX_BUFFER =
+  DEFAULT_MAX_BUFFER_BYTES; /** Effective exec buffer: the forwarded CLI override wins, default otherwise. */
 const EXEC_MAX_BUFFER = FORWARDED_LIMITS.maxBufferBytes ?? EXEC_DEFAULT_MAX_BUFFER;
 /**
  * Effective delivered output cap in bytes. The number and the truncation
@@ -183,6 +308,26 @@ const FORWARDED_SYSTEM_TEXT = load_forwarded_system_text(cliArgs.systemFile);
 function compose_forwarded_system(base: string): string {
   if (!FORWARDED_SYSTEM_TEXT) return base;
   return compose_custom_system(FORWARDED_SYSTEM_TEXT, base);
+}
+
+/** Host-owned task block appended after the SDK prompt (task mode only). */
+function task_system_section(task: HostTask): string {
+  const prior = read_task_context(task);
+  const head = `\n\nTask mode (${task.id}): this session is one task with a saved context. Keep the context small; delegate research and builds instead of restating history.`;
+  return prior === '' ? head : `${head}\n\nTask context so far:\n${prior}`;
+}
+
+/**
+ * Builds the effective system prompt for this host.
+ *
+ * Delegation sections exist only in task mode: without `-t` the run keeps the
+ * baseline prompt (commit 09269bb) and the tags are inert.
+ *
+ * @returns The project context, the SDK protocol and the task section.
+ */
+function build_effective_system(): string {
+  const base = compose_forwarded_system(buildSystemPrompt(CWD, TASK === undefined ? undefined : 'both'));
+  return TASK === undefined ? base : `${base}${task_system_section(TASK)}`;
 }
 const TELL_TOKEN = process.env['TELL_TOKEN'] || '';
 const ALLOWED_HOSTS = new Set(
@@ -910,6 +1055,11 @@ app.post('/api/delegate', async (req, res) => {
   if (NO_EXEC) {
     return res.status(403).json({ error: 'delegation disabled by --no-exec' });
   }
+  if (TASK === undefined) {
+    // Delegation is task-only: without `-t` the prompt never teaches the tags
+    // and the host has no task context to spend them on.
+    return res.status(403).json({ error: 'delegation is only available in task mode (--task)' });
+  }
   if (!delegateRateLimit.check(clientIp(req))) {
     return res.status(429).json({ error: 'Rate limit exceeded (10/min). Slow down.' });
   }
@@ -1233,6 +1383,7 @@ app.get('/api/config', (_req, res) => {
     noExec: NO_EXEC,
     chain: CHAIN,
     yes: YES,
+    taskId: TASK?.id ?? null,
     requireApproval: REQUIRE_APPROVAL,
     stream: STREAM,
     think: THINK,
@@ -1248,7 +1399,7 @@ app.get('/api/config', (_req, res) => {
 // API: Auto-generated project context (tree 4 levels + README + AGENTS + protocol)
 app.get('/api/context', (_req, res) => {
   try {
-    const systemPrompt = compose_forwarded_system(buildSystemPrompt(CWD, 'both'));
+    const systemPrompt = build_effective_system();
     res.json({ systemPrompt, cwd: CWD });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -1402,9 +1553,7 @@ app.post('/api/tell', async (req, res) => {
       content: m.content,
     }));
 
-    const effectiveSystem = systemPrompt?.trim()
-      ? systemPrompt
-      : compose_forwarded_system(buildSystemPrompt(CWD, 'both'));
+    const effectiveSystem = systemPrompt?.trim() ? systemPrompt : build_effective_system();
 
     // Streaming mode: per-request `stream` override wins over the boot `--stream`.
     // Streaming replies are NDJSON events; the model is resolved before headers are sent.
@@ -1671,14 +1820,29 @@ async function advanceChainRun(runId: string, modelSpec: string, system: string)
     } else {
       // Still running — record the turn below.
     }
-    const delegation = extract_delegation(generated.text);
-    const visible_text = strip_delegation_tags(generated.text);
+    // The tags are inert outside task mode: the prompt never teaches them, so
+    // any tag in the answer is stripped as plain text and never starts a child.
+    // Tag scanning never looks inside a literal `<think>` block: reasoning is
+    // data, not an instruction.
+    const scan = strip_think_tags(generated.text);
+    const delegation = TASK === undefined ? { kind: null, objective: '', extras: 0 } : extract_delegation(scan);
+    const visible_text = strip_delegation_tags(strip_think_tags(generated.text));
     chainStore.pushMessage(runId, { role: 'assistant', content: visible_text });
     chainStore.setText(runId, visible_text);
     chainStore.appendEvent(runId, { type: 'message', text: visible_text });
     chainStore.countRound(runId);
+    if (delegation.extras > 0) {
+      // The host honors one tag per answer; say so instead of dropping the
+      // rest in silence.
+      chainStore.appendEvent(runId, {
+        type: 'denied',
+        text: `Only the first delegation tag runs; ${delegation.extras} extra tag${delegation.extras === 1 ? '' : 's'} ignored.`,
+      });
+    } else {
+      // No extra tag to report.
+    }
     if (delegation.kind !== null) {
-      const scripts_in_delegation = extract_runs(generated.text)
+      const scripts_in_delegation = extract_runs(scan)
         .scripts.map((entry) => entry.trim())
         .filter((entry) => entry.length > 0);
       for (const skipped_script of scripts_in_delegation) {
@@ -1750,7 +1914,7 @@ async function advanceChainRun(runId: string, modelSpec: string, system: string)
       chainStore.appendEvent(runId, { type: 'message', text: delegated.record });
       continue;
     }
-    const script = extractFirstScript(generated.text);
+    const script = extractFirstScript(scan);
     if (script === null) {
       return chainStore.completeRun(runId, visible_text);
     } else if (NO_EXEC) {
@@ -1825,9 +1989,7 @@ app.post('/api/chain', async (req, res) => {
       content: m.content,
     }));
 
-    const effectiveSystem = systemPrompt?.trim()
-      ? systemPrompt
-      : compose_forwarded_system(buildSystemPrompt(CWD, 'both'));
+    const effectiveSystem = systemPrompt?.trim() ? systemPrompt : build_effective_system();
 
     const created = chainStore.createRun(formattedMessages);
     chainContinuations.set(created.runId, { modelSpec, system: effectiveSystem });

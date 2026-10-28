@@ -5,7 +5,7 @@ import {
   max_delegations_for_chain,
   strip_delegation_tags,
 } from '@tell-ai/core';
-import { extract_runs } from '@tell-ai/sdk/browser';
+import { extract_runs, strip_think_tags } from '@tell-ai/sdk/browser';
 import {
   Maximize2,
   MessagesSquare as MessagesSquareIcon,
@@ -496,6 +496,14 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
           setStreamMode(data.stream);
         // Server `--prompt`: fill the chat inbox (never auto-sent, never a message).
         if (typeof data.initialPrompt === 'string' && data.initialPrompt) setInputPrompt(data.initialPrompt);
+        // Task mode forces the server-side chain contract; a saved choice must
+        // not silently disable it (the CLI and the Web stay identical).
+        if (typeof data.taskId === 'string' && data.taskId) {
+          setChainMode(true);
+          setAutoExecute(true);
+          setRequireApproval(true);
+          setStreamMode(true);
+        }
       } catch (error) {
         console.error('Error fetching server config:', error);
       }
@@ -1118,7 +1126,9 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
             thought = data.reasoning || null;
           }
 
-          const delegation = extract_delegation(text);
+          // Tags inside a literal `<think>` block are never actions.
+          const scan = strip_think_tags(text);
+          const delegation = extract_delegation(scan);
           const visible = delegation.kind !== null ? strip_delegation_tags(text) : text;
           const assistantMessage: ChatMessage = {
             id: message_id,
@@ -1139,7 +1149,7 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
               delegation: { kind: delegation.kind, objective: delegation.objective },
             };
           }
-          const scripts = extractRunScripts(visible);
+          const scripts = extractRunScripts(strip_think_tags(visible));
           if (scripts.length > 1) {
             appendAgentLine('system', `+${scripts.length - 1} additional script(s) ignored (only the first one runs).`);
           }
