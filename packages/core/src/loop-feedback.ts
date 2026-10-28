@@ -129,17 +129,21 @@ export function format_cancelled_command(script: string): string {
  * Formats the record of one research delegation.
  *
  * The summary is host-assembled (never model-assembled stats beyond one line);
- * callers must pass an already redacted and capped summary.
+ * callers must pass an already redacted and capped summary. The status is
+ * host-assigned (never model text): when present the header carries it as
+ * `Research result (STATUS):`, otherwise the legacy `Research result:`.
  *
  * @param summary - Redacted, capped research summary.
  * @param stats - Optional single stats line (e.g. `3 commands, exit 0`).
+ * @param status - Optional host status (`DONE` / `IN PROGRESS` / `BLOCKED`).
  * @returns The research record text.
  */
-export function format_research_result(summary: string, stats?: string): string {
+export function format_research_result(summary: string, stats?: string, status?: string): string {
+  const header = status === undefined || status.trim() === '' ? RESEARCH_HEADER : `Research result (${status.trim()}):`;
   if (stats === undefined || stats.trim() === '') {
-    return `${RESEARCH_HEADER}\n${summary}`;
+    return `${header}\n${summary}`;
   } else {
-    return `${RESEARCH_HEADER}\n${summary}\n(${stats.trim()})`;
+    return `${header}\n${summary}\n(${stats.trim()})`;
   }
 }
 
@@ -148,13 +152,15 @@ export function format_research_result(summary: string, stats?: string): string 
  *
  * @param summary - Redacted, capped task summary.
  * @param stats - Optional single stats line.
+ * @param status - Optional host status (`DONE` / `IN PROGRESS` / `BLOCKED`).
  * @returns The task record text.
  */
-export function format_subtask_result(summary: string, stats?: string): string {
+export function format_subtask_result(summary: string, stats?: string, status?: string): string {
+  const header = status === undefined || status.trim() === '' ? SUBTASK_HEADER : `Task result (${status.trim()}):`;
   if (stats === undefined || stats.trim() === '') {
-    return `${SUBTASK_HEADER}\n${summary}`;
+    return `${header}\n${summary}`;
   } else {
-    return `${SUBTASK_HEADER}\n${summary}\n(${stats.trim()})`;
+    return `${header}\n${summary}\n(${stats.trim()})`;
   }
 }
 

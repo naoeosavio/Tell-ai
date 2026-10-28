@@ -53,10 +53,12 @@ export type RuntimeCommand = {
 export type DelegationRecord = {
   /** Whether the child researched or built. */
   kind: DelegationKind;
-  /** Host-assembled record (`Research result:` / `Task result:` + stats). */
+  /** Host-assembled record (`Research result (STATUS):` / `Task result (STATUS):` + stats). */
   record: string;
   /** Redacted, capped summary. */
   summary: string;
+  /** Host-assigned status (never model text). */
+  status?: string | undefined;
 };
 
 /**
@@ -540,15 +542,22 @@ export function createTellRuntime(options: TellRuntimeOptions): TellRuntime {
           await save_turn(message, text);
           return { status: 'cancelled', text, timeline, commands: [] };
         }
-        const outcome = await options.delegation({
+        const delegation_result = (await options.delegation({
           kind: delegation_request.kind,
           objective: delegation_request.objective,
-        });
-        if (outcome === null) {
+          ...(text.trim() !== '' ? { context: text } : {}),
+        })) as unknown as
+          | { outcome: { kind: DelegationKind; record: string; summary: string; status?: string } }
+          | { refused: string }
+          | null;
+        if (delegation_result === null || (typeof delegation_result === 'object' && 'refused' in delegation_result)) {
           // Budget or host refused — the tag stays stripped, no record.
           await save_turn(message, text);
           return { status: 'completed', text, timeline, commands: [] };
         }
+        const outcome = (
+          delegation_result as { outcome: { kind: DelegationKind; record: string; summary: string; status?: string } }
+        ).outcome;
         timeline.push(outcome.record);
         if (callbacks.onDelegation !== undefined) {
           await callbacks.onDelegation({
@@ -565,7 +574,12 @@ export function createTellRuntime(options: TellRuntimeOptions): TellRuntime {
           text,
           timeline,
           commands: [],
-          delegation: { kind: outcome.kind, record: outcome.record, summary: outcome.summary },
+          delegation: {
+            kind: outcome.kind,
+            record: outcome.record,
+            summary: outcome.summary,
+            ...(outcome.status !== undefined ? { status: outcome.status } : {}),
+          },
         };
       }
     } else {

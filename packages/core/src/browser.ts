@@ -23,14 +23,19 @@ export type { ConfigLayer, CoreConfig, CoreHost, ResolvedConfigInput } from './c
 export { HOST_DEFAULT_MODEL, load_env_layer, resolve_core_config } from './config';
 export { CUSTOM_SYSTEM_PREFIX, compose_custom_system } from './custom-system';
 export type {
+  DelegationChildEnv,
   DelegationOutcome,
+  DelegationRefusalReason,
   DelegationRequest,
+  DelegationResult,
   DelegationRunner,
   DelegationRunnerOptions,
   DelegationStats,
 } from './delegation';
 export type { DelegationPromptMode } from './delegation-prompt';
 export { delegation_prompt_section } from './delegation-prompt';
+export type { DelegationFacts, DelegationStatus } from './delegation-status';
+export { derive_delegation_status } from './delegation-status';
 export type {
   DelegationBlock,
   DelegationKind,
