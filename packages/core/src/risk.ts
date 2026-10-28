@@ -39,17 +39,19 @@ const PRIVILEGED_PATH = [
  *
  * Common rules run in both profiles. `permissive_only` rules are CLI
  * divergences kept verbatim (broad download pipes, process substitution,
- * network-gated interpreter eval, non-recursive privileged chmod) and `strict`
- * adds the Web-only divergences (any interpreter eval, `env`,
- * `base64 -d`, shell expansions). Credential-file reads are a common rule:
- * naming `.env*` (except `.env.example`), keys, tokens, `.git/**` or
- * `.tell/**` is `data-exfiltration` in both profiles, so the CLI asks for
- * explicit confirmation instead of auto-running.
+ * network-gated interpreter eval, non-recursive privileged chmod).
+ * Credential-file reads are a common rule: naming `.env*` (except
+ * `.env.example`), keys, tokens, `.git/**` or `.tell/**` is
+ * `data-exfiltration` in both profiles, so the CLI asks for explicit
+ * confirmation instead of auto-running. Since Phase 5 every former
+ * Web-only rule (any interpreter eval, `env`, `base64 -d`, shell
+ * expansions, narrow download pipe) is common too: the CLI prompts
+ * (or denies non-TTY) instead of auto-running, the Web blocks outright.
  *
  * The two profiles differ on purpose, but the strict one must never be
  * *laxer* about an interpreter eval: every `-c`/`-e`/`-r`/`eval` form the
  * permissive profile flags as `interpreter-eval` is flagged by the strict
- * profile too (the strict rule covers php/lua/deno/bun as well).
+ * profile too (the common rule covers php/lua/deno/bun as well).
  */
 const BASE_RISK_RULES: readonly RiskRule[] = [
   {
@@ -234,52 +236,46 @@ const BASE_RISK_RULES: readonly RiskRule[] = [
     reason: 'download piped into sh',
     flags: ['pipe-to-shell', 'network-client'],
     pattern: /(?:curl|wget)\b[^|;&]*\|\s*(?:ba)?sh\b/,
-    strict_only: true,
   },
   {
-    id: 'strict-interpreter-eval',
+    id: 'interpreter-eval',
     category: 'interpreter-eval',
     severity: 'high',
     reason: 'interpreter eval flag (-c/-e/-r/--eval)',
     flags: ['interpreter-eval'],
     pattern: /\b(?:python3?|node|deno|bun|perl|ruby|php|lua)\b[^;&|]*\s(?:-c|-e|-r|--eval|eval)\b/,
-    strict_only: true,
   },
   {
-    id: 'strict-env-launch',
+    id: 'env-launch',
     category: 'environment-escape',
     severity: 'medium',
     reason: 'env used to launch commands',
     flags: ['env-launch'],
     pattern: /(?:^|[;&|(){}<>]\s*)(?:[^\s;&|()]*\/)?env\b/,
-    strict_only: true,
   },
   {
-    id: 'strict-base64-decode',
+    id: 'base64-decode',
     category: 'payload-decode',
     severity: 'medium',
     reason: 'payload de-obfuscation (base64 -d)',
     flags: ['base64-decode'],
     pattern: /\bbase64\s+(?:-[a-zA-Z]+\s+)*(?:-d\b|--decode\b)/,
-    strict_only: true,
   },
   {
-    id: 'strict-shell-brace-expansion',
+    id: 'shell-brace-expansion',
     category: 'shell-expansion',
     severity: 'medium',
     reason: 'shell brace expansion (${...})',
     flags: ['shell-expansion'],
     pattern: /\$\{[^}]*\}/,
-    strict_only: true,
   },
   {
-    id: 'strict-shell-substitution',
+    id: 'shell-substitution',
     category: 'shell-expansion',
     severity: 'medium',
     reason: 'shell command substitution ($(...))',
     flags: ['shell-expansion'],
     pattern: /\$\([^)]*\)/,
-    strict_only: true,
   },
   {
     id: 'sensitive-file',
@@ -296,13 +292,12 @@ const BASE_RISK_RULES: readonly RiskRule[] = [
       /(?:^|[\s"'=:;|&<>()/])(?:\.env(?!\.example)(?:\.[\w.-]+)?|id_(?:rsa|dsa|ecdsa|ed25519)|[\w.-]+\.(?:key|pem|p12)|\.git\/[\w./-]+|\.tell\/[\w./-]+|\.aws\/credentials|\.config\/[\w.-]*\.token)(?=$|[\s"'=:;|&<>()/])/i,
   },
   {
-    id: 'strict-shell-backtick-pipe',
+    id: 'shell-backtick-pipe',
     category: 'shell-expansion',
     severity: 'medium',
     reason: 'backtick pipeline substitution',
     flags: ['shell-expansion'],
     pattern: /`[^`]*\|[^`]*`/,
-    strict_only: true,
   },
 ];
 
@@ -337,10 +332,11 @@ function severity_rank(severity: RiskSeverity): number {
  * Classifies one script with the observable base rules (no verdict).
  *
  * The union of CLI/Web patterns is split by profile: common rules always
- * run, `permissive` adds the CLI-only divergences (broad pipes, process
- * substitution, network-gated eval, direct privileged chmod) and `strict`
- * adds the Web-only divergences (any interpreter eval, `env`,
- * `base64 -d`, shell expansions). Credential-file reads are common to
+ * run and `permissive` adds the CLI-only divergences (broad pipes, process
+ * substitution, network-gated eval, direct privileged chmod). The former
+ * Web-only rules (any interpreter eval, `env`, `base64 -d`, shell
+ * expansions, narrow download pipe) are common since Phase 5: the CLI
+ * prompts instead of auto-running. Credential-file reads are common to
  * both. The result carries only severity, category, reasons and flags.
  *
  * @param script - Command script to classify.

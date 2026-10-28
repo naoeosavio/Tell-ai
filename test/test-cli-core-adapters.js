@@ -45,9 +45,16 @@ new Function('require', 'module', 'exports', compile_cli_source('core-adapters.t
 );
 const adapters = adapters_module.exports;
 
-const SAFE_SCRIPTS = ['echo hi', 'ls -la', 'printf safe', 'cat ./local.txt', 'node -e "console.log(1)"'];
+const SAFE_SCRIPTS = ['echo hi', 'ls -la', 'printf safe', 'cat ./local.txt'];
 
 const RISKY_SCRIPTS = [
+  'node -e "console.log(1)"',
+  'python3 -c "print(1)"',
+  'echo ${HOME}',
+  'echo $(whoami)',
+  'echo `a|b`',
+  'env ls',
+  'echo abc | base64 -d',
   'sudo ls /',
   'rm -rf ./important-dir',
   'git clean -fdx',
@@ -250,6 +257,28 @@ describe('cli approval port preserves -y/--require-approval/--no-exec', () => {
     for (const script of SENSITIVE_SAFE_SCRIPTS) {
       assert.strictEqual(adapters.is_high_risk_script(script), false, script);
     }
+  });
+
+  it('never auto-approves former strict-only shapes, even inside cwd', async () => {
+    for (const script of [
+      'node -e "console.log(1)"',
+      'python3 -c "print(1)"',
+      'echo ${HOME}',
+      'echo $(whoami)',
+      'echo `a|b`',
+      'env ls',
+      'echo abc | base64 -d',
+    ]) {
+      assert.strictEqual(adapters.is_high_risk_script(script), true, script);
+      assert.strictEqual(adapters.can_auto_approve(script, 'auto-risk', process.cwd()), false, script);
+    }
+    let asked = 0;
+    const approval = adapters.create_cli_approval('auto-risk', async () => {
+      asked += 1;
+      return false;
+    });
+    assert.strictEqual(await approval({ script: 'echo $(whoami)' }), 'skipped');
+    assert.strictEqual(asked, 1);
   });
 
   it('always asks in confirm-all mode', async () => {

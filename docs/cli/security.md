@@ -28,7 +28,7 @@ The guard is a thin CLI boolean (`is_high_risk_script` in `src/core-adapters.ts`
 
 `privileged_path` (`PRIVILEGED_PATH` in `packages/core/src/risk.ts`): `/(etc|boot|dev|proc|sys|usr|bin|sbin|lib|lib64)(/¦\b)`, `/var/spool/cron`, `/var/cron`, `/etc/cron[.d|daily|…]`, `~/.config/autostart`, `~/.config/systemd/user`, `~/.local/share/systemd/user` (with `$HOME` variants).
 
-Deliberately allowed: local-only one-liners like `node -e "require('fs').writeFileSync('pwned','1')"` — the `-e` rule fires only with a network/decode token. This is asserted, not accidental (`test-tell-security.js:179-183`).
+Since Phase 5 every interpreter one-liner needs confirmation, even local-only ones like `node -e "require('fs').writeFileSync('pwned','1')"` — the `-e` rule fires with or without a network/decode token. This is asserted, not accidental (`test-tell-security.js:333-337` expects the run skipped under `--yes` without a TTY).
 
 ## Outside-cwd command gate (`script_touches_outside_cwd`, `Tell.ts`)
 
@@ -61,7 +61,7 @@ Consequences, all covered by tests:
 | Concern | Test |
 |---------|------|
 | 30+ risky scripts skipped under `--yes` | `test-tell-security.js:143-190` |
-| Local one-liner still runs | `test-tell-security.js:179-183` |
+| Interpreter one-liner now asks (no local-only pass) | `test-tell-security.js:333-337` |
 | Injection policy in system prompt | `assertPromptInjectionPolicy` |
 | Literal user `<RUN>` not executed | `USER_PROMPT_PWN` case |
 | `--no-exec` wins | `test_no_exec_overrides_yes_flag` (both suites) |
