@@ -482,7 +482,7 @@ describe('delegation runner', () => {
   });
 
   it('respects child caps (rounds, objective)', async () => {
-    assert.strictEqual(core.DELEGATION_MAX_ROUNDS, 3);
+    assert.strictEqual(core.DELEGATION_MAX_ROUNDS, 32);
     assert.strictEqual(core.DELEGATION_OUTPUT_MAX_BYTES, 8 * 1024);
     assert.strictEqual(core.DELEGATION_CONTEXT_MAX_CHARS, 64 * 1024);
     assert.strictEqual(core.DELEGATION_SUMMARY_MAX_CHARS, 2 * 1024);
@@ -539,6 +539,20 @@ describe('delegation runner', () => {
     assert.strictEqual(outcome.facts.hit_cap, true);
     assert.strictEqual(outcome.status, 'IN PROGRESS');
     assert.ok(outcome.record.includes('(IN PROGRESS)'));
+  });
+
+  it('honors a per-runner round cap override', async () => {
+    const runner = core.create_delegation_runner({
+      model: scripted_model(['<RUN>\ncat f\n</RUN>']),
+      executor: async () => ({ stdout: 'out', stderr: '', exit_code: 0 }),
+      approval: async () => 'approved',
+      exec_enabled: true,
+      max_rounds: 1,
+    });
+    const outcome = await run_outcome(runner, { kind: 'research', objective: 'list' });
+    assert.strictEqual(outcome.facts.rounds, 1, 'the override stops the child early');
+    assert.strictEqual(outcome.facts.hit_cap, true);
+    assert.strictEqual(outcome.status, 'IN PROGRESS');
   });
 
   it('sanitizes the briefing context (tags, redact, 2k cap)', () => {

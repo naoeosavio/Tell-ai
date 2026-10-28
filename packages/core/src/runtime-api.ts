@@ -1,6 +1,6 @@
 import { extract_runs, get_system_prompt, strip_run_tags, strip_think_tags } from '@tell-ai/sdk/pure';
-import type { DelegationRunner } from './delegation';
-import { delegation_budget_notice } from './delegation-status';
+import type { DelegationResult, DelegationRunner } from './delegation';
+import { type DelegationStatus, delegation_budget_notice } from './delegation-status';
 import type { DelegationKind } from './delegation-tags';
 import { extract_delegation, strip_delegation_tags } from './delegation-tags';
 
@@ -59,7 +59,7 @@ export type DelegationRecord = {
   /** Redacted, capped summary. */
   summary: string;
   /** Host-assigned status (never model text). */
-  status?: string | undefined;
+  status?: DelegationStatus | undefined;
 };
 
 /**
@@ -220,7 +220,7 @@ export type RuntimeCallbacks = {
     kind: DelegationKind;
     record: string;
     extras: number;
-    status?: string | undefined;
+    status?: DelegationStatus | undefined;
   }) => void | Promise<void>;
   onStorageLoad?: (event: { key: string }) => void | Promise<void>;
   onStorageSave?: (event: { key: string }) => void | Promise<void>;
@@ -557,19 +557,16 @@ export function createTellRuntime(options: TellRuntimeOptions): TellRuntime {
           await save_turn(message, text);
           return { status: 'completed', text, timeline, commands: [] };
         }
-        const delegation_result = (await options.delegation({
+        const delegation_result: DelegationResult | null = await options.delegation({
           kind: delegation_request.kind,
           objective: delegation_request.objective,
           ...(text.trim() !== '' ? { context: text } : {}),
-        })) as unknown as
-          | { outcome: { kind: DelegationKind; record: string; summary: string; status?: string } }
-          | { refused: string }
-          | null;
+        });
         if (delegation_result === null) {
           // Legacy runner without a reason — the tag stays stripped, no record.
           await save_turn(message, text);
           return { status: 'completed', text, timeline, commands: [] };
-        } else if (typeof delegation_result === 'object' && 'refused' in delegation_result) {
+        } else if ('refused' in delegation_result) {
           if (delegation_result.refused === 'budget') {
             timeline.push(
               runtime_budget !== undefined
@@ -582,9 +579,7 @@ export function createTellRuntime(options: TellRuntimeOptions): TellRuntime {
           await save_turn(message, text);
           return { status: 'completed', text, timeline, commands: [] };
         }
-        const outcome = (
-          delegation_result as { outcome: { kind: DelegationKind; record: string; summary: string; status?: string } }
-        ).outcome;
+        const outcome = delegation_result.outcome;
         delegation_used += 1;
         timeline.push(outcome.record);
         if (callbacks.onDelegation !== undefined) {

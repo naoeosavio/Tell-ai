@@ -13,6 +13,9 @@
 | Chain rounds | `max_chain_steps` | 8 | 1..128 | `--max-chain` | `TELL_MAX_CHAIN_STEPS` | `max_chain_steps` |
 | Internal buffer | `max_buffer_bytes` | 33 554 432 | 1 024..268 435 456 | `--max-buffer` | `TELL_MAX_BUFFER_BYTES` | `max_buffer_bytes` |
 | Delivered output | `output_max_bytes` | 204 800 | 1 024..33 554 432 | `--output-max-bytes` | `TELL_OUTPUT_MAX_BYTES` | `output_max_bytes` |
+| Delegation budget | `max_delegations` | 2 (`0` when chain `< 2`) | 0..2 | `--max-delegations` | `TELL_MAX_DELEGATIONS` | `max_delegations` |
+| Delegation repost | `delegation_repost_chars` | 2 048 (target, not cap) | 512..8 192 | `--delegation-repost` | `TELL_DELEGATION_REPOST_CHARS` | `delegation_repost_chars` |
+| Delegation rounds | `delegation_max_rounds` | 32 | 0..128 | — (env/tellrc only) | `TELL_DELEGATION_MAX_ROUNDS` | `delegation_max_rounds` |
 
 Precedence: `flag > env > project .tellrc > user ~/.tellrc > default`. Flag/env values are validated strictly — any present-but-invalid value throws `RuntimeLimitError` (exit `EXIT_CONFIG_ERROR` = 2) before any model call or execution. Tellrc values carry their file source so failures are diagnosable. A `Record<keyof RuntimeLimits, LimitSpec>` makes a missing limit a type error instead of a silent default.
 

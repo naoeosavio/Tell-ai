@@ -38,6 +38,9 @@ describe('runtime limits: defaults preserve the CLI baseline', () => {
     assert.strictEqual(limits.max_chain_steps, core.DEFAULT_MAX_CHAIN_STEPS);
     assert.strictEqual(limits.max_buffer_bytes, core.DEFAULT_MAX_BUFFER_BYTES);
     assert.strictEqual(limits.output_max_bytes, core.DEFAULT_OUTPUT_MAX_BYTES);
+    assert.strictEqual(limits.max_delegations, core.DELEGATION_MAX_DELEGATIONS);
+    assert.strictEqual(limits.delegation_repost_chars, core.DELEGATION_SUMMARY_MAX_CHARS);
+    assert.strictEqual(limits.delegation_max_rounds, core.DELEGATION_MAX_ROUNDS);
   });
 });
 
@@ -107,6 +110,7 @@ describe('runtime limits: tellrc schema is published, not reimplemented', () => 
   it('publishes every tellrc limit key, including the three the CLI never accepted', () => {
     assert.deepStrictEqual(core.TELLRC_LIMIT_KEYS.slice().sort(), [
       'context_chars',
+      'delegation_max_rounds',
       'delegation_repost_chars',
       'exec_timeout_ms',
       'max_buffer_bytes',
@@ -129,6 +133,10 @@ describe('runtime limits: tellrc schema is published, not reimplemented', () => 
     assert.strictEqual(core.validate_tellrc_limit_value('delegation_repost_chars', 2048), 2048);
     assert.strictEqual(core.validate_tellrc_limit_value('delegation_repost_chars', 511), undefined);
     assert.strictEqual(core.validate_tellrc_limit_value('delegation_repost_chars', 8193), undefined);
+    assert.strictEqual(core.validate_tellrc_limit_value('delegation_max_rounds', 32), 32);
+    assert.strictEqual(core.validate_tellrc_limit_value('delegation_max_rounds', 0), 0);
+    assert.strictEqual(core.validate_tellrc_limit_value('delegation_max_rounds', 128), 128);
+    assert.strictEqual(core.validate_tellrc_limit_value('delegation_max_rounds', 129), undefined);
   });
 });
 
@@ -144,6 +152,7 @@ describe('runtime limits: execution options handed to the injected executor', ()
       output_max_bytes: 1024,
       max_delegations: 2,
       delegation_repost_chars: 2048,
+      delegation_max_rounds: 32,
     });
     assert.deepStrictEqual(options, {
       timeout_ms: 5000,
@@ -193,9 +202,10 @@ describe('runtime limits: turn-atomic context truncation', () => {
 });
 
 describe('runtime limits: env keys are published, never read here', () => {
-  it('publishes exactly the seven TELL_* limit keys', () => {
+  it('publishes every TELL_* limit key', () => {
     assert.deepStrictEqual(core.TELL_LIMIT_ENV_KEYS.slice().sort(), [
       'TELL_CONTEXT_MAX_CHARS',
+      'TELL_DELEGATION_MAX_ROUNDS',
       'TELL_DELEGATION_REPOST_CHARS',
       'TELL_EXEC_TIMEOUT_MS',
       'TELL_MAX_BUFFER_BYTES',
@@ -412,15 +422,22 @@ describe('convergence guards: no host restates a core owner', () => {
 });
 
 describe('runtime limits: delegation budget fixed at 2 (task 054 phase 0)', () => {
-  it('keeps delegation defaults (2 budget, 2k repost/briefing, 64k child, 8k record)', () => {
+  it('keeps delegation defaults (2 budget, 2k repost/briefing, 64k child, 8k record, 32 rounds)', () => {
     assert.strictEqual(core.DELEGATION_MAX_DELEGATIONS, 2);
     assert.strictEqual(core.DELEGATION_SUMMARY_MAX_CHARS, 2 * 1024);
     assert.strictEqual(core.DELEGATION_BRIEFING_MAX_CHARS, 2 * 1024);
     assert.strictEqual(core.DELEGATION_RECORD_CONTEXT_MAX_CHARS, 8 * 1024);
     assert.strictEqual(core.DELEGATION_CONTEXT_MAX_CHARS, 64 * 1024);
+    assert.strictEqual(core.DELEGATION_MAX_ROUNDS, 32);
     const limits = core.parse_runtime_limits();
     assert.strictEqual(limits.max_delegations, 2);
     assert.strictEqual(limits.delegation_repost_chars, 2 * 1024);
+    assert.strictEqual(limits.delegation_max_rounds, 32);
+    assert.strictEqual(
+      core.parse_runtime_limits({ env: { TELL_DELEGATION_MAX_ROUNDS: '8' } }).delegation_max_rounds,
+      8,
+    );
+    assert.throws(() => core.parse_runtime_limits({ env: { TELL_DELEGATION_MAX_ROUNDS: '129' } }), /delegation/);
   });
 
   it('validates ranges (0..2 budget, 512..8k repost)', () => {

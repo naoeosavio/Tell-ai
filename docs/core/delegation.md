@@ -1,7 +1,6 @@
 # Delegation flow (parent → child)
 
-> Status: planned (task 054). This page describes the designed flow; the shipped
-> code is the pre-054 delegation. The plan lives in
+> Status: shipped (task 054). The plan lived in
 > `../../tasks/task_054_delegation-limits.md`.
 
 The parent model asks for a sub-tell with `<DELEGATE>` (research, read-only) or
@@ -32,7 +31,7 @@ flowchart TD
     P[parent] -->|"<DELEGATE> / <SUBTASK>"| B{"runtime: budget left?"}
     B -- no --> W[tag stripped + warning]
     B -- yes --> R["request: kind + objective 4k + context 2k"]
-    R --> C["child: system (cwd/platform/task)<br/>storage 64k, rounds 3"]
+    R --> C["child: system (cwd/platform/task)<br/>storage 64k, rounds 32"]
     C --> F["facts: rounds, commands, denied, hit_cap"]
     F --> S["status (host): DONE / IN PROGRESS / BLOCKED"]
     S --> Z{"result > target?"}
@@ -54,7 +53,7 @@ flowchart TD
    and capped at 2k; an empty context omits the block.
 4. The child runs with the system prompt (rules + `cwd`/`platform`/`task`), the
    objective and the context. Its storage is bounded at 64k and it gets at most
-   3 rounds — whichever comes first stops it at a round boundary.
+   32 rounds (adjustable `0..128`) — whichever comes first stops it at a round boundary.
 5. The host derives the status from the facts: `BLOCKED` when commands were
    requested and none ran (denied/skipped/`--no-exec`) or the answer is empty;
    `IN PROGRESS` when the round or context cap stopped it with work pending;
@@ -98,7 +97,7 @@ flowchart TD
 | `DELEGATION_SUMMARY_MAX_CHARS` | 2 KiB | repost target (not a cap); `--delegation-repost` |
 | `DELEGATION_BRIEFING_MAX_CHARS` | 2 KiB | context block in the briefing |
 | `DELEGATION_CONTEXT_MAX_CHARS` | 64 KiB | child storage (objective + context + turns) |
-| `DELEGATION_MAX_ROUNDS` | 32 | round cap; 64k is a safety ceiling unless this grows |
+| `DELEGATION_MAX_ROUNDS` | 32 | round cap `0..128` (`TELL_DELEGATION_MAX_ROUNDS`/tellrc); 64k is a safety ceiling unless this grows |
 | `DELEGATION_RECORD_CONTEXT_MAX_CHARS` | 8 KiB | `Context-at-delegation` in the record file |
 | `DELEGATION_OBJECTIVE_MAX_CHARS` | 4 KiB | fixed |
 | `DELEGATION_OUTPUT_MAX_BYTES` | 8 KiB | per command output |

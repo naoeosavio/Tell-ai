@@ -122,6 +122,8 @@ export type DelegationRunnerOptions = {
   max_delegations?: number;
   /** Repost target for the summarize rule (defaults to `DELEGATION_SUMMARY_MAX_CHARS`). */
   repost_chars?: number | undefined;
+  /** Child round cap (defaults to `DELEGATION_MAX_ROUNDS`). */
+  max_rounds?: number | undefined;
 };
 
 /**
@@ -244,8 +246,8 @@ export function build_child_message(objective: string, context: string): string 
  * Creates a delegation runner over the parent ports.
  *
  * Mounts a nested `create_core_runtime` with bounded storage, the child
- * system prompt (rules + `cwd`/`platform`/`task`), child caps (3 rounds,
- * 8 KiB per command, 64 KiB storage) and `delegation: undefined` (depth 1
+ * system prompt (rules + `cwd`/`platform`/`task`), child caps (32 rounds
+ * by default, 8 KiB per command, 64 KiB storage) and `delegation: undefined` (depth 1
  * by construction). Research wraps the approval with the read-only gate;
  * build inherits the host approval unchanged. The briefing context is
  * per-delegation (`request.context`, fallback to the deprecated
@@ -320,7 +322,7 @@ export function create_delegation_runner(options: DelegationRunnerOptions): Dele
       system: child_system_prompt(request.kind, child_env),
       ...(options.env !== undefined ? { env: options.env } : {}),
       redact,
-      max_rounds: DELEGATION_MAX_ROUNDS,
+      max_rounds: options.max_rounds ?? DELEGATION_MAX_ROUNDS,
       max_output_bytes: DELEGATION_OUTPUT_MAX_BYTES,
     });
     // Research under `--no-exec` never executes: the wiring reports denied.

@@ -26,7 +26,7 @@ export const DELEGATION_SUMMARY_MAX_CHARS = 2 * 1024;
 /** Max chars of a delegation objective before it becomes a child prompt. */
 export const DELEGATION_OBJECTIVE_MAX_CHARS = 4 * 1024;
 /** Max model→command rounds inside one delegated child. */
-export const DELEGATION_MAX_ROUNDS = 3;
+export const DELEGATION_MAX_ROUNDS = 32;
 /** Max output bytes delivered per child command. */
 export const DELEGATION_OUTPUT_MAX_BYTES = 8 * 1024;
 /** Max context chars seeded into a delegated child. */
@@ -66,6 +66,7 @@ export type RuntimeLimits = {
   output_max_bytes: number;
   max_delegations: number;
   delegation_repost_chars: number;
+  delegation_max_rounds: number;
 };
 
 /** External executor options injected into the core executor/loop. */
@@ -101,6 +102,7 @@ export type RuntimeLimitEnv = {
   TELL_OUTPUT_MAX_BYTES?: string | undefined;
   TELL_MAX_DELEGATIONS?: string | undefined;
   TELL_DELEGATION_REPOST_CHARS?: string | undefined;
+  TELL_DELEGATION_MAX_ROUNDS?: string | undefined;
 };
 
 /**
@@ -163,7 +165,8 @@ type LimitSpec = {
   min: number;
   max: number;
   allow_zero: boolean;
-  flag_key: keyof RuntimeLimitFlags;
+  /** Flag key, absent when the knob is env/tellrc-only. */
+  flag_key?: keyof RuntimeLimitFlags | undefined;
   env_key: keyof RuntimeLimitEnv;
   tellrc_key: string;
 };
@@ -252,6 +255,14 @@ const LIMIT_SPECS: Record<keyof RuntimeLimits, LimitSpec> = {
     env_key: 'TELL_DELEGATION_REPOST_CHARS',
     tellrc_key: 'delegation_repost_chars',
   },
+  delegation_max_rounds: {
+    key: 'delegation_max_rounds',
+    min: 0,
+    max: 128,
+    allow_zero: true,
+    env_key: 'TELL_DELEGATION_MAX_ROUNDS',
+    tellrc_key: 'delegation_max_rounds',
+  },
 };
 
 const LIMIT_SPEC_LIST: LimitSpec[] = Object.values(LIMIT_SPECS);
@@ -274,6 +285,7 @@ const DEFAULT_LIMITS: RuntimeLimits = {
   output_max_bytes: DEFAULT_OUTPUT_MAX_BYTES,
   max_delegations: DELEGATION_MAX_DELEGATIONS,
   delegation_repost_chars: DELEGATION_SUMMARY_MAX_CHARS,
+  delegation_max_rounds: DELEGATION_MAX_ROUNDS,
 };
 
 /**
@@ -372,7 +384,7 @@ export function validate_tellrc_limit_value(key: string, raw: unknown): number |
 export function parse_runtime_limits(input: ParseRuntimeLimitsInput = {}): RuntimeLimits {
   const resolved: RuntimeLimits = { ...DEFAULT_LIMITS };
   for (const spec of LIMIT_SPEC_LIST) {
-    const flag_raw = input.flags?.[spec.flag_key];
+    const flag_raw = spec.flag_key !== undefined ? input.flags?.[spec.flag_key] : undefined;
     if (flag_raw !== undefined) {
       const parsed = to_limit_int(flag_raw);
       if (parsed === undefined) {
