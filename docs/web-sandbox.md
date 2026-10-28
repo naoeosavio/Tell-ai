@@ -298,7 +298,11 @@ The chat header controls how AI-requested commands run:
 - **Require Approval** — risky commands show a confirmation card first; safe ones
   follow Auto-Run (run directly when on, confirmation card when off). Combine
   both toggles for "auto the safe, approve the risky". With `--chain`, each
-  held command pauses for your approval.
+  held command pauses for your approval. Booted with `--require-approval`,
+  asking is server-enforced: high-risk commands park on a pending approval
+  showing the risk reason instead of being blocked (approve runs the
+  server-kept script, skip continues without it). `/api/execute` still blocks
+  high-risk outright — asking lives in the chain/chat flow only.
 - **No-Exec** (seeded by `--no-exec`) — nothing executes; confirming a command
   just records what would have run and the chain continues with that feedback.
 
@@ -323,8 +327,9 @@ position restores the same log.
 Precedence: `No-Exec` > per-command risk gate. These are client-side toggles
 whose last choice is remembered in `localStorage` (survives page reloads;
 `localStorage` → first-visit only, server flags like `-y`/`--no-exec` seed the
-default); high-risk commands (`sudo`, `rm -rf`, `curl|sh`, …) are always
-blocked server-side — see [Security notes](#security-notes).
+default); high-risk commands (`sudo`, `rm -rf`, `curl|sh`, …) are blocked
+server-side unless the server booted with `--require-approval`, which parks
+them on a pending approval instead — see [Security notes](#security-notes).
 
 ---
 
@@ -349,7 +354,9 @@ model directly.
   `modelAlias?`, `systemPrompt?`, same limits). Answers with the run snapshot:
   `{runId, status, version, rounds, text, events, pending}`. `pending` carries
   only `{decisionId, script, expectedVersion}` for display — the script is
-  server-kept.
+  server-kept — plus an optional `risk` reason when the script is high-risk
+  and the server booted with `--require-approval` (the confirm card shows it;
+  safe pendings omit the line).
 - `GET /api/chain/:runId` — replays the event sequence (`seq` is monotonic,
   so clients render incrementally). Unknown ids and TTL-expired runs (15 min
   idle) read as 404; a restart drops every run.
@@ -358,7 +365,9 @@ model directly.
   field is rejected with 400 before any state transition. Retrying the same
   decision id with the same verdict replays the stored result without
   re-executing; a different verdict, a stale `expectedVersion` or an unknown
-  id is 409; high-risk scripts and `--no-exec` answer 403 without executing;
+  id is 409; high-risk scripts and `--no-exec` answer 403 without executing
+  (without `--require-approval`: with the flag, high-risk parks on a pending
+  approval instead and approve runs the server-kept script);
   a cancel that lands mid-flight wins and the run stays cancelled.
 - `POST /api/chain/:runId/cancel` — invalidates the run and its pending
   approval (idempotent).

@@ -2432,6 +2432,153 @@ describe('web sandbox: chain routes', () => {
     });
   });
 
+  describe('require-approval asks on high-risk instead of denying', () => {
+    const RISKY_REPLY = 'Reading it now.\n<RUN>cat .env</RUN>';
+    const CANARY = 'sandbox-canary-require-approval';
+
+    let stub;
+    let stubPort;
+
+    function startRiskyStub() {
+      const server = http.createServer((req, res) => {
+        let body = '';
+        req.on('data', (chunk) => {
+          body += chunk;
+        });
+        req.on('end', () => {
+          let payload = {};
+          try {
+            payload = JSON.parse(body || '{}');
+          } catch {
+            /* ignore */
+          }
+          const messages = Array.isArray(payload.messages) ? payload.messages : [];
+          const last = messages[messages.length - 1];
+          const content = typeof last?.content === 'string' ? last.content : '';
+          const done =
+            content.startsWith('Executed command:') || content.startsWith('Skipped by user:');
+          const reply = done ? FINAL_REPLY : RISKY_REPLY;
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              id: 'stub-risky',
+              object: 'chat.completion',
+              created: 1,
+              model: payload.model,
+              choices: [{ index: 0, message: { role: 'assistant', content: reply }, finish_reason: 'stop' }],
+              usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 },
+            }),
+          );
+        });
+      });
+      return new Promise((resolve) => {
+        server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port }));
+      });
+    }
+
+    function bootRisky(extraArgs = []) {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-web-chain-risk-'));
+      fs.writeFileSync(path.join(dir, '.env'), `CANARY=${CANARY}\n`);
+      const env = {
+        ...process.env,
+        PORT: '0',
+        NODE_ENV: 'production',
+        LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stubPort}/v1`,
+      };
+      delete env.TELL_TOKEN;
+      const child = spawn(process.execPath, [DIST_SERVER, '--cwd', dir, '-m', 'q', ...extraArgs], {
+        env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      return { dir, child, basePromise: waitForServer(child) };
+    }
+
+    before(async () => {
+      stub = await startRiskyStub();
+      stubPort = stub.port;
+    });
+
+    after(() => {
+      if (stub) {
+        stub.server.closeAllConnections?.();
+        stub.server.close();
+      }
+    });
+
+    describe('with --require-approval', () => {
+      let handle;
+      let base;
+
+      before(async () => {
+        handle = bootRisky(['--require-approval']);
+        base = await handle.basePromise;
+      });
+
+      after(() => shutdown(handle));
+
+      it('parks high-risk on a pending carrying the risk reason', async () => {
+        const run = await (await createRun(base, 'read the env file')).json();
+        assert.strictEqual(run.status, 'awaiting_approval');
+        assert.strictEqual(run.pending.script, 'cat .env');
+        assert.match(run.pending.risk, /data-exfiltration/);
+        const replay = await (await fetch(`${base}/api/chain/${run.runId}`)).json();
+        assert.deepStrictEqual(replay.pending, run.pending);
+      });
+
+      it('approve executes the server-kept high-risk script', async () => {
+        const run = await (await createRun(base, 'read the env file')).json();
+        const res = await postJson(base, `/api/chain/${run.runId}/confirm`, {
+          decisionId: run.pending.decisionId,
+          expectedVersion: run.pending.expectedVersion,
+          decision: 'approve',
+        });
+        assert.strictEqual(res.status, 200);
+        const approved = await res.json();
+        assert.strictEqual(approved.status, 'completed');
+        const executed = approved.events.filter((e) => e.type === 'executed');
+        assert.strictEqual(executed.length, 1);
+        assert.strictEqual(executed[0].script, 'cat .env');
+        assert.match(executed[0].output, new RegExp(CANARY));
+      });
+
+      it('skip continues clean without executing', async () => {
+        const run = await (await createRun(base, 'read the env file')).json();
+        const res = await postJson(base, `/api/chain/${run.runId}/confirm`, {
+          decisionId: run.pending.decisionId,
+          expectedVersion: run.pending.expectedVersion,
+          decision: 'skip',
+        });
+        assert.strictEqual(res.status, 200);
+        const skipped = await res.json();
+        assert.strictEqual(skipped.status, 'completed');
+        assert.ok(skipped.events.some((e) => e.type === 'skipped'));
+        assert.ok(!skipped.events.some((e) => e.type === 'executed'));
+      });
+    });
+
+    describe('without the flag', () => {
+      let handle;
+      let base;
+
+      before(async () => {
+        handle = bootRisky();
+        base = await handle.basePromise;
+      });
+
+      after(() => shutdown(handle));
+
+      it('denies high-risk exactly as before (no pending, run completes)', async () => {
+        const run = await (await createRun(base, 'read the env file')).json();
+        assert.strictEqual(run.status, 'completed');
+        assert.strictEqual(run.pending, null);
+        assert.ok(run.events.some((e) => e.type === 'denied'));
+        assert.ok(!run.events.some((e) => e.type === 'executed'));
+        const replay = await (await fetch(`${base}/api/chain/${run.runId}`)).json();
+        assert.strictEqual(replay.status, 'completed');
+      });
+    });
+  });
+
   describe('chain auth', () => {
     const TOKEN = 'chain-token-abc123';
     let handle;

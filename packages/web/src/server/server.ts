@@ -5,6 +5,7 @@ import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import {
+  assess_base_risk,
   build_sdk_config_from_env,
   canonical_path,
   canonical_write_path,
@@ -1630,6 +1631,19 @@ function chainConfirmHttpStatus(error: ChainConfirmError): number {
   }
 }
 
+/**
+ * Server-kept risk reason for a pending approval, shown on the confirm card.
+ * Reuses the core base classifier (strict profile, same predicate as
+ * `isHighRiskScript`); safe scripts carry no reason (the card omits the line).
+ *
+ * @param script - Command script to describe.
+ * @returns `reason (category)` for risky scripts, else undefined.
+ */
+function highRiskReason(script: string): string | undefined {
+  const assessment = assess_base_risk(script, 'strict');
+  return assessment.risky ? `${assessment.reason} (${assessment.category})` : undefined;
+}
+
 /** Records a `denied` outcome for a script that must never execute. */
 function denyChainScript(
   runId: string,
@@ -1689,14 +1703,21 @@ function new_web_runner(modelSpec: string, cancellation?: CancellationToken, run
   const build_gate = async (request: { script: string }): Promise<'approved' | 'denied' | 'skipped'> => {
     if (NO_EXEC) {
       return 'denied';
-    } else if (isHighRiskScript(request.script)) {
+    } else if (isHighRiskScript(request.script) && !REQUIRE_APPROVAL) {
       return 'denied';
-    } else if (AUTO_EXECUTE) {
+    } else if (AUTO_EXECUTE && !isHighRiskScript(request.script)) {
       return 'approved';
     } else if (runId === undefined) {
       return 'denied';
     } else {
-      const pending = chainStore.requestApproval(runId, `[sub-tarefa] ${request.script}`, 'child');
+      // With `--require-approval` a high-risk child parks here (ask with the
+      // server-kept risk reason) instead of the denied branch above.
+      const pending = chainStore.requestApproval(
+        runId,
+        `[sub-tarefa] ${request.script}`,
+        'child',
+        highRiskReason(request.script),
+      );
       if (pending === null) {
         return 'denied';
       } else {
@@ -1985,10 +2006,10 @@ async function advanceChainRun(runId: string, modelSpec: string, system: string)
       // reason 'no-exec', and nothing is executed.
       chainStore.appendEvent(runId, { type: 'denied', script, text: 'disabled (--no-exec)' });
       return chainStore.completeRun(runId, generated.text);
-    } else if (isHighRiskScript(script)) {
+    } else if (isHighRiskScript(script) && !REQUIRE_APPROVAL) {
       chainStore.appendEvent(runId, { type: 'denied', script, text: 'high-risk: blocked without execution' });
       return chainStore.completeRun(runId, generated.text);
-    } else if (AUTO_EXECUTE) {
+    } else if (AUTO_EXECUTE && !isHighRiskScript(script)) {
       // Auto-Run (`-y`): the server executes the safe command itself instead
       // of pausing for an approval the operator already granted.
       const executed = await runChainScript(runId, script);
@@ -1998,7 +2019,10 @@ async function advanceChainRun(runId: string, modelSpec: string, system: string)
         // The command output is now the context — the loop asks the model again.
       }
     } else {
-      const pending = chainStore.requestApproval(runId, script);
+      // No auto-run for this script: park on the pending machinery. With
+      // `--require-approval` a high-risk script parks here too (ask with the
+      // server-kept risk reason) instead of the denied branch above.
+      const pending = chainStore.requestApproval(runId, script, 'parent', highRiskReason(script));
       if (pending === null) {
         return chainStore.failRun(runId, 'Chain approval could not be recorded');
       } else {
@@ -2130,7 +2154,7 @@ app.post('/api/chain/:runId/confirm', async (req, res) => {
       }
       dropContinuationIfTerminal(runId, snapshot);
       return res.status(403).json({ error: 'disabled', run: snapshot });
-    } else if (isHighRiskScript(script.replace(/^\[sub-tarefa\] /, ''))) {
+    } else if (isHighRiskScript(script.replace(/^\[sub-tarefa\] /, '')) && !REQUIRE_APPROVAL) {
       const snapshot = chainStore.finishConfirm(runId, decisionId, {
         type: 'denied',
         script,
@@ -2182,7 +2206,7 @@ app.post('/api/chain/:runId/confirm', async (req, res) => {
     const snapshot = denyChainScript(runId, decisionId, script, 'disabled', '--no-exec');
     dropContinuationIfTerminal(runId, snapshot);
     return res.status(403).json({ error: 'disabled', run: snapshot });
-  } else if (isHighRiskScript(script)) {
+  } else if (isHighRiskScript(script) && !REQUIRE_APPROVAL) {
     const snapshot = denyChainScript(runId, decisionId, script, 'high-risk', 'risk-check');
     dropContinuationIfTerminal(runId, snapshot);
     return res.status(403).json({ error: 'high-risk script blocked without execution', run: snapshot });

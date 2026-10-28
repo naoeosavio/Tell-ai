@@ -219,8 +219,12 @@ Options:
   -y, --yes         Auto-confirm command execution
   --no-exec         Disable automatic execution of AI-generated commands
   --require-approval
-                    Seed the Require Approval toggle on the client's first visit
-                    (safe commands auto-run, risky ones need the confirm card)
+                    Ask before running high-risk commands (server-enforced:
+                    the server parks them on a pending approval showing the
+                    risk reason; approve, skip or cancel from the confirm
+                    card). Also seeds the Require Approval toggle on the
+                    client's first visit. /api/execute still blocks
+                    high-risk outright (stateless clients cannot confirm).
   -h, --help        Show this help
 `);
 }

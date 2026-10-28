@@ -160,8 +160,8 @@ interface ChainSnapshot {
   rounds: number;
   text: string;
   events: ChainSnapshotEvent[];
-  pending: { decisionId: string; script: string; expectedVersion: number } | null;
-  childPending?: { decisionId: string; script: string; expectedVersion: number } | null;
+  pending: { decisionId: string; script: string; expectedVersion: number; risk?: string } | null;
+  childPending?: { decisionId: string; script: string; expectedVersion: number; risk?: string } | null;
 }
 
 // Server-kept approval the confirm card answers (decision id + version, no script).
@@ -170,6 +170,7 @@ interface ServerChainPending {
   decisionId: string;
   expectedVersion: number;
   script: string;
+  risk?: string;
 }
 
 export default function App({ onLogout }: { onLogout?: (() => void) | undefined }) {
@@ -268,6 +269,8 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
 
   const [terminalLines, setTerminalLines] = useState<TerminalLine[]>([]);
   const [pendingCommand, setPendingCommand] = useState<string | null>(null);
+  // Server-kept risk reason for the pending script (confirm card line, absent for safe scripts).
+  const [pendingRisk, setPendingRisk] = useState<string | null>(null);
   // Server-side chain approval (set only by `/api/chain` snapshots; the local
   // `runAiTurn` loop below stays as the offline fallback until the removal
   // criteria in the core task are met). Ref-only: every update site also
@@ -746,19 +749,24 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
           decisionId: snapshot.childPending.decisionId,
           expectedVersion: snapshot.childPending.expectedVersion,
           script: snapshot.childPending.script,
+          ...(snapshot.childPending.risk !== undefined ? { risk: snapshot.childPending.risk } : {}),
         };
         setPendingCommand(snapshot.childPending.script);
+        setPendingRisk(snapshot.childPending.risk ?? null);
       } else if (snapshot.pending) {
         serverChainRef.current = {
           runId: snapshot.runId,
           decisionId: snapshot.pending.decisionId,
           expectedVersion: snapshot.pending.expectedVersion,
           script: snapshot.pending.script,
+          ...(snapshot.pending.risk !== undefined ? { risk: snapshot.pending.risk } : {}),
         };
         setPendingCommand(snapshot.pending.script);
+        setPendingRisk(snapshot.pending.risk ?? null);
       } else {
         serverChainRef.current = null;
         setPendingCommand(null);
+        setPendingRisk(null);
       }
       setRefreshFileTreeTrigger((prev) => prev + 1);
     },
@@ -1396,6 +1404,7 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
     const serverPending = serverChainRef.current;
     if (serverPending && command === serverPending.script && !isNoExec) {
       setPendingCommand(null);
+      setPendingRisk(null);
       setLoading(true);
       try {
         const snapshot = await confirmServerChain('approve');
@@ -1502,6 +1511,7 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
     if (serverPending) {
       // Server-kept approval: skip continues the server loop without the script.
       setPendingCommand(null);
+      setPendingRisk(null);
       appendAgentLine('system', 'Command execution skipped by user.');
       if (chainMode) {
         setLoading(true);
@@ -2050,6 +2060,7 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
         onRetryMessage={handleRetryMessage}
         onForkFromMessage={handleForkFromMessage}
         pendingCommand={pendingCommand}
+        pendingRisk={pendingRisk}
         onConfirmPending={handleConfirmPending}
         onSkipPending={handleSkipPending}
       />

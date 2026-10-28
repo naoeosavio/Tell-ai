@@ -228,6 +228,7 @@ test('cli: printHelp documents the task flags', () => {
   const help = lines.join('\n');
   assert.ok(help.includes('-t, --task'), 'the help lists the task flag');
   assert.ok(help.includes('--task-reset'), 'the help lists the reset flag');
+  assert.ok(help.includes('server-enforced'), 'the help documents --require-approval as server-enforced');
 });
 
 test('cli: --task forces the chain contract and rejects --no-exec', () => {
@@ -955,6 +956,28 @@ test('chain: happy-path approve runs through the gate then finishes once', () =>
   });
   assert.strictEqual(done.status, 'running');
   assert.strictEqual(done.pending, null);
+});
+
+test('chain: pending carries the server-kept risk reason when provided', () => {
+  const store = createChainStore();
+  const created = store.createRun([{ role: 'user', content: 'hi' }]);
+  const pending = store.requestApproval(created.runId, 'cat .env', 'parent', 'credential file (data-exfiltration)');
+  assert.ok(pending);
+  assert.strictEqual(pending.risk, 'credential file (data-exfiltration)');
+  const snap = store.getRun(created.runId);
+  assert.strictEqual(snap.pending.script, 'cat .env');
+  assert.strictEqual(snap.pending.risk, 'credential file (data-exfiltration)');
+  // Without a reason the key is absent (cards render without the line).
+  const plain = store.createRun([{ role: 'user', content: 'hi' }]);
+  store.requestApproval(plain.runId, 'echo hi');
+  const plainSnap = store.getRun(plain.runId);
+  assert.strictEqual(plainSnap.pending.script, 'echo hi');
+  assert.ok(!('risk' in plainSnap.pending));
+  // The child slot behaves the same.
+  const nested = store.createRun([{ role: 'user', content: 'hi' }]);
+  store.requestApproval(nested.runId, 'cat .env', 'child', 'credential file (data-exfiltration)');
+  const nestedSnap = store.getRun(nested.runId);
+  assert.strictEqual(nestedSnap.childPending.risk, 'credential file (data-exfiltration)');
 });
 
 test('chain: retry of the same decision id is idempotent (no re-execution)', () => {

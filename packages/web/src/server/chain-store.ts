@@ -66,6 +66,8 @@ export type ChainPending = {
   scriptHash: string;
   expectedVersion: number;
   createdAt: number;
+  /** Optional server-kept risk reason, shown on the confirm card when present. */
+  risk?: string;
 };
 
 /** Approval level for nested delegation (v2): parent or child. */
@@ -88,9 +90,9 @@ export type ChainRunSnapshot = {
   rounds: number;
   text: string;
   events: ChainEvent[];
-  pending: { decisionId: string; script: string; expectedVersion: number } | null;
+  pending: { decisionId: string; script: string; expectedVersion: number; risk?: string } | null;
   /** Second slot for nested delegation (v2): child approval while parent waits. */
-  childPending: { decisionId: string; script: string; expectedVersion: number } | null;
+  childPending: { decisionId: string; script: string; expectedVersion: number; risk?: string } | null;
 };
 
 /** Machine-readable reason for a rejected confirm transition. */
@@ -166,7 +168,7 @@ export function createChainStore(options: ChainStoreOptions = {}): {
   pushMessage(runId: string, message: ChainMessage): boolean;
   setText(runId: string, text: string): boolean;
   countRound(runId: string): boolean;
-  requestApproval(runId: string, script: string, level?: ChainApprovalLevel): ChainPending | null;
+  requestApproval(runId: string, script: string, level?: ChainApprovalLevel, risk?: string): ChainPending | null;
   tryBeginConfirm(
     runId: string,
     validated: { decision_id: string; expected_version: number; decision: ChainVerdict },
@@ -229,6 +231,8 @@ export function createChainStore(options: ChainStoreOptions = {}): {
             decisionId: run.pending.decisionId,
             script: run.pending.script,
             expectedVersion: run.pending.expectedVersion,
+            // Optional: cards render without the line when no reason was kept.
+            ...(run.pending.risk !== undefined ? { risk: run.pending.risk } : {}),
           }
         : null,
       childPending: run.childPending
@@ -236,6 +240,7 @@ export function createChainStore(options: ChainStoreOptions = {}): {
             decisionId: run.childPending.decisionId,
             script: run.childPending.script,
             expectedVersion: run.childPending.expectedVersion,
+            ...(run.childPending.risk !== undefined ? { risk: run.childPending.risk } : {}),
           }
         : null,
     };
@@ -351,7 +356,12 @@ export function createChainStore(options: ChainStoreOptions = {}): {
       }
     },
 
-    requestApproval(runId: string, script: string, level: ChainApprovalLevel = 'parent'): ChainPending | null {
+    requestApproval(
+      runId: string,
+      script: string,
+      level: ChainApprovalLevel = 'parent',
+      risk?: string,
+    ): ChainPending | null {
       const run = live(runId);
       if (run === null) {
         return null;
@@ -366,6 +376,7 @@ export function createChainStore(options: ChainStoreOptions = {}): {
             scriptHash: hashChainScript(script),
             expectedVersion: run.version,
             createdAt: now(),
+            ...(risk !== undefined ? { risk } : {}),
           };
           run.childPending = pending;
           // Child activity moves the version: refresh the outstanding
@@ -388,6 +399,7 @@ export function createChainStore(options: ChainStoreOptions = {}): {
             scriptHash: hashChainScript(script),
             expectedVersion: run.version,
             createdAt: now(),
+            ...(risk !== undefined ? { risk } : {}),
           };
           run.pending = pending;
           run.status = 'awaiting_approval';
