@@ -107,9 +107,11 @@ describe('runtime limits: tellrc schema is published, not reimplemented', () => 
   it('publishes every tellrc limit key, including the three the CLI never accepted', () => {
     assert.deepStrictEqual(core.TELLRC_LIMIT_KEYS.slice().sort(), [
       'context_chars',
+      'delegation_repost_chars',
       'exec_timeout_ms',
       'max_buffer_bytes',
       'max_chain_steps',
+      'max_delegations',
       'output_max_bytes',
       'stdin_max_bytes',
       'stdin_timeout_ms',
@@ -122,6 +124,11 @@ describe('runtime limits: tellrc schema is published, not reimplemented', () => 
     assert.strictEqual(core.validate_tellrc_limit_value('max_chain_steps', 129), undefined);
     assert.strictEqual(core.validate_tellrc_limit_value('exec_timeout_ms', 'nope'), undefined);
     assert.strictEqual(core.validate_tellrc_limit_value('not_a_limit', 1), undefined);
+    assert.strictEqual(core.validate_tellrc_limit_value('max_delegations', 2), 2);
+    assert.strictEqual(core.validate_tellrc_limit_value('max_delegations', 3), undefined);
+    assert.strictEqual(core.validate_tellrc_limit_value('delegation_repost_chars', 2048), 2048);
+    assert.strictEqual(core.validate_tellrc_limit_value('delegation_repost_chars', 511), undefined);
+    assert.strictEqual(core.validate_tellrc_limit_value('delegation_repost_chars', 8193), undefined);
   });
 });
 
@@ -135,6 +142,8 @@ describe('runtime limits: execution options handed to the injected executor', ()
       max_chain_steps: 3,
       max_buffer_bytes: 4096,
       output_max_bytes: 1024,
+      max_delegations: 2,
+      delegation_repost_chars: 2048,
     });
     assert.deepStrictEqual(options, {
       timeout_ms: 5000,
@@ -187,9 +196,11 @@ describe('runtime limits: env keys are published, never read here', () => {
   it('publishes exactly the seven TELL_* limit keys', () => {
     assert.deepStrictEqual(core.TELL_LIMIT_ENV_KEYS.slice().sort(), [
       'TELL_CONTEXT_MAX_CHARS',
+      'TELL_DELEGATION_REPOST_CHARS',
       'TELL_EXEC_TIMEOUT_MS',
       'TELL_MAX_BUFFER_BYTES',
       'TELL_MAX_CHAIN_STEPS',
+      'TELL_MAX_DELEGATIONS',
       'TELL_OUTPUT_MAX_BYTES',
       'TELL_STDIN_MAX_BYTES',
       'TELL_STDIN_TIMEOUT_MS',
@@ -397,5 +408,59 @@ describe('convergence guards: no host restates a core owner', () => {
       mentions.includes('DEFAULT_EXEC_TIMEOUT_MS') || mentions.includes('EXEC_DEFAULT_TIMEOUT_MS'),
       'mentions must import the core timeout owner',
     );
+  });
+});
+
+describe('runtime limits: delegation budget fixed at 2 (task 054 phase 0)', () => {
+  it('keeps delegation defaults (2 budget, 2k repost/briefing, 64k child, 8k record)', () => {
+    assert.strictEqual(core.DELEGATION_MAX_DELEGATIONS, 2);
+    assert.strictEqual(core.DELEGATION_SUMMARY_MAX_CHARS, 2 * 1024);
+    assert.strictEqual(core.DELEGATION_BRIEFING_MAX_CHARS, 2 * 1024);
+    assert.strictEqual(core.DELEGATION_RECORD_CONTEXT_MAX_CHARS, 8 * 1024);
+    assert.strictEqual(core.DELEGATION_CONTEXT_MAX_CHARS, 64 * 1024);
+    const limits = core.parse_runtime_limits();
+    assert.strictEqual(limits.max_delegations, 2);
+    assert.strictEqual(limits.delegation_repost_chars, 2 * 1024);
+  });
+
+  it('validates ranges (0..2 budget, 512..8k repost)', () => {
+    assert.strictEqual(core.parse_runtime_limits({ flags: { max_delegations: '0' } }).max_delegations, 0);
+    assert.strictEqual(core.parse_runtime_limits({ flags: { max_delegations: '2' } }).max_delegations, 2);
+    assert.strictEqual(
+      core.parse_runtime_limits({ flags: { delegation_repost_chars: '512' } }).delegation_repost_chars,
+      512,
+    );
+    assert.strictEqual(
+      core.parse_runtime_limits({ flags: { delegation_repost_chars: '8192' } }).delegation_repost_chars,
+      8192,
+    );
+    assert.throws(() => core.parse_runtime_limits({ flags: { max_delegations: '3' } }), /max_delegations/);
+    assert.throws(() => core.parse_runtime_limits({ flags: { delegation_repost_chars: '511' } }), /delegation/);
+    assert.throws(() => core.parse_runtime_limits({ flags: { delegation_repost_chars: '8193' } }), /delegation/);
+  });
+
+  it('keeps flag > env > project > user precedence for the new knobs', () => {
+    const layers = (winner) => ({
+      flags: { max_delegations: winner === 'flag' ? '1' : undefined },
+      env: { TELL_MAX_DELEGATIONS: winner === 'env' ? '0' : undefined },
+      project: { source: 'proj', limits: { max_delegations: winner === 'project' ? 2 : undefined } },
+      user: { source: 'user', limits: { max_delegations: winner === 'user' ? 1 : undefined } },
+    });
+    assert.strictEqual(core.parse_runtime_limits(layers('flag')).max_delegations, 1);
+    assert.strictEqual(core.parse_runtime_limits(layers('env')).max_delegations, 0);
+    assert.strictEqual(core.parse_runtime_limits(layers('project')).max_delegations, 2);
+    assert.strictEqual(core.parse_runtime_limits(layers('user')).max_delegations, 1);
+    assert.strictEqual(core.parse_runtime_limits(layers('default')).max_delegations, 2);
+  });
+
+  it('resolves a fixed budget (chain 1 gives 0, flag wins)', () => {
+    assert.strictEqual(core.resolve_max_delegations(1), 0);
+    assert.strictEqual(core.resolve_max_delegations(8), 2);
+    assert.strictEqual(core.resolve_max_delegations(128), 2);
+    assert.strictEqual(core.resolve_max_delegations(1, 2), 2);
+    assert.strictEqual(core.resolve_max_delegations(8, 0), 0);
+    assert.strictEqual(core.max_delegations_for_chain(1), 0);
+    assert.strictEqual(core.max_delegations_for_chain(8), 2);
+    assert.strictEqual(core.max_delegations_for_chain(128), 2);
   });
 });

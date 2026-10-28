@@ -400,7 +400,7 @@ describe('delegation runner', () => {
   it('respects child caps (rounds, objective)', async () => {
     assert.strictEqual(core.DELEGATION_MAX_ROUNDS, 3);
     assert.strictEqual(core.DELEGATION_OUTPUT_MAX_BYTES, 8 * 1024);
-    assert.strictEqual(core.DELEGATION_CONTEXT_MAX_CHARS, 16 * 1024);
+    assert.strictEqual(core.DELEGATION_CONTEXT_MAX_CHARS, 64 * 1024);
     assert.strictEqual(core.DELEGATION_SUMMARY_MAX_CHARS, 2 * 1024);
     assert.strictEqual(core.DELEGATION_OBJECTIVE_MAX_CHARS, 4 * 1024);
     const long_objective = 'x'.repeat(10 * 1024);
@@ -410,7 +410,10 @@ describe('delegation runner', () => {
   it('scales the parent budget with --max-chain (1 gives 0)', () => {
     assert.strictEqual(core.max_delegations_for_chain(1), 0);
     assert.strictEqual(core.max_delegations_for_chain(8), 2);
-    assert.strictEqual(core.max_delegations_for_chain(128), 4);
+    assert.strictEqual(core.max_delegations_for_chain(128), 2);
+    assert.strictEqual(core.resolve_max_delegations(1), 0);
+    assert.strictEqual(core.resolve_max_delegations(8, 0), 0);
+    assert.strictEqual(core.resolve_max_delegations(1, 2), 2);
   });
 });
 
