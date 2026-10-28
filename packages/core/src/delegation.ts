@@ -120,6 +120,8 @@ export type DelegationRunnerOptions = {
   cancellation?: CancellationToken;
   /** Max delegations this runner serves (budget spent → `refused: 'budget'`). */
   max_delegations?: number;
+  /** Repost target for the summarize rule (defaults to `DELEGATION_SUMMARY_MAX_CHARS`). */
+  repost_chars?: number | undefined;
 };
 
 /**
@@ -331,7 +333,8 @@ export function create_delegation_runner(options: DelegationRunnerOptions): Dele
     );
     // One summarize attempt when the redacted result misses the target; the
     // target is a goal (summary < target wins, else the original climbs).
-    const summarized = await summarize_result(options.model, result.text, DELEGATION_SUMMARY_MAX_CHARS, redact);
+    const repost_target = options.repost_chars ?? DELEGATION_SUMMARY_MAX_CHARS;
+    const summarized = await summarize_result(options.model, result.text, repost_target, redact);
     const summary = summarized.text;
     const ran = result.commands.filter((command) => command.status === 'executed' || command.status === 'failed');
     const denied_count = result.commands.filter(

@@ -835,21 +835,21 @@ export function truncate_output(output: string, max_bytes: number = DEFAULT_OUTP
 /**
  * Resolves the delegation budget for one invocation (fixed ceiling).
  *
- * The budget is 2 whenever the chain has at least 2 rounds (one round can
- * never consume a delegation summary — the consuming round is always the
- * next one), otherwise 0. An explicit `max_delegations` flag (0..2,
- * already validated by `parse_runtime_limits`) wins over the chain gate and
- * is the only way to disable (`0`) or lower the budget.
+ * The chain gate is structural: with fewer than 2 rounds no delegation can
+ * ever be consumed (the consuming round is always the next one), so the
+ * budget is 0 regardless of any explicit flag. Otherwise an explicit
+ * `max_delegations` value (0..2, already validated by `parse_runtime_limits`)
+ * wins, defaulting to 2. `0` disables delegation.
  *
  * @param max_chain_steps - Round cap of the parent run.
  * @param flag - Explicit `max_delegations` override, if any.
  * @returns The delegation budget for the run (0..2).
  */
 export function resolve_max_delegations(max_chain_steps: number, flag?: number | undefined): number {
-  if (flag !== undefined) {
-    return flag;
-  } else if (!Number.isFinite(max_chain_steps) || max_chain_steps < 2) {
+  if (!Number.isFinite(max_chain_steps) || max_chain_steps < 2) {
     return 0;
+  } else if (flag !== undefined) {
+    return flag;
   } else {
     return DELEGATION_MAX_DELEGATIONS;
   }

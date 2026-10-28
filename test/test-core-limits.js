@@ -457,7 +457,7 @@ describe('runtime limits: delegation budget fixed at 2 (task 054 phase 0)', () =
     assert.strictEqual(core.resolve_max_delegations(1), 0);
     assert.strictEqual(core.resolve_max_delegations(8), 2);
     assert.strictEqual(core.resolve_max_delegations(128), 2);
-    assert.strictEqual(core.resolve_max_delegations(1, 2), 2);
+    assert.strictEqual(core.resolve_max_delegations(1, 2), 0);
     assert.strictEqual(core.resolve_max_delegations(8, 0), 0);
     assert.strictEqual(core.max_delegations_for_chain(1), 0);
     assert.strictEqual(core.max_delegations_for_chain(8), 2);
