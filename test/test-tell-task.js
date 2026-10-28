@@ -544,6 +544,21 @@ async function test_task_model_failure_announces_nothing() {
   }
 }
 
+async function test_invalid_model_leaves_no_task_dir() {
+  // A failure before the model call (bad spec) used to keep the claimed
+  // directory: an invisible empty task consumed the number forever.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-task-'));
+  try {
+    const result = await run_tell(['-m', 'bogus', '-t', '%leak55', 'doomed prompt'], 'unused', { dir });
+    assert.strictEqual(result.exitCode, core.EXIT_MODEL_ERROR);
+    assert_includes(result.stderr, 'Unsupported vendor');
+    assert_not_includes(result.stderr, 'Created task');
+    assert.deepStrictEqual(list_task_ids(result.home), []);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function test_task_child_record_numbering_past_999() {
   // Child records share the numbering rule: past 999 the counter keeps
   // counting instead of stalling on the highest three-digit file.
@@ -808,6 +823,7 @@ async function main() {
     test_task_reset_full_wipe_keeps_dir,
     test_task_delegation_record_file,
     test_task_model_failure_announces_nothing,
+    test_invalid_model_leaves_no_task_dir,
     test_task_child_record_numbering_past_999,
     test_task_tag_only_answer_gets_final_ask,
     test_task_web_forwards_flags,

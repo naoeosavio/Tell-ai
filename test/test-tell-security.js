@@ -334,6 +334,15 @@ function assertPromptInjectionPolicy(result) {
     'echo ${HOME}',
     'echo $(whoami)',
     'echo `a|b`',
+    // LOG-TASK-55: quoting, brace, glob and ANSI-C obfuscations of the
+    // credential-file name are classified like the literal name.
+    "cat '.en'v",
+    'cat .e"nv"',
+    'cat .en?',
+    'cat {a.txt,.env}',
+    "cat $'\\x2eenv'",
+    'for f in .*; do cat "$f"; done',
+    'cat *.key',
   ];
 
   // Since Phase 5 every interpreter one-liner needs confirmation, even
@@ -360,6 +369,26 @@ function assertPromptInjectionPolicy(result) {
   for (const [args, script] of [...riskyScripts.map((script) => [['--yes', 'd', 'run risky command'], script])]) {
     result = await runTell(args, runBlock(script));
     assertSkipped(result);
+  }
+
+  // A glob the classifier cannot resolve (`sec*` -> secret.key) still runs,
+  // but the workspace secret scan masks the file value before it reaches the
+  // model, log or context. LOG-TASK-55 live: `cat sec*` printed [redacted].
+  const scanRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-security-scan-'));
+  try {
+    fs.mkdirSync(path.join(scanRoot, 'work'), { recursive: true });
+    fs.writeFileSync(path.join(scanRoot, 'work', 'secret.key'), 'key-canary-55\n', 'utf8');
+    const redacted = await runTell(['--yes', 'd', 'read the key files'], [runBlock('cat sec*'), 'done'], {
+      dir: scanRoot,
+      execStdout: 'key-canary-55\n',
+    });
+    assert.deepStrictEqual(redacted.execCalls, ['cat sec*']);
+    assert.strictEqual(redacted.tellMessages.length, 2);
+    assert.match(redacted.tellMessages[1], /\[redacted\]/);
+    assert.ok(!redacted.tellMessages[1].includes('key-canary-55'), redacted.tellMessages[1]);
+    assert.ok(!redacted.stdout.includes('key-canary-55'), redacted.stdout);
+  } finally {
+    fs.rmSync(scanRoot, { recursive: true, force: true });
   }
 
   // --require-approval without -y: everything needs confirmation — non-TTY

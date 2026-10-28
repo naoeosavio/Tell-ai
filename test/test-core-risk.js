@@ -233,3 +233,43 @@ describe('assess_base_risk sensitive-file reads (both profiles)', () => {
     }
   });
 });
+
+describe('assess_base_risk obfuscated credential reads (LOG-TASK-55)', () => {
+  it('sees through shell quoting, brace expansion, globs and ANSI-C quoting', () => {
+    const vectors = [
+      "cat '.en'v",
+      'cat .e"nv"',
+      'cat .en?',
+      'cat .env*',
+      'cat .e*',
+      'cat {.env,a.txt}',
+      'cat {a.txt,.env}',
+      "cat $'\\x2eenv'",
+      'for f in .*; do cat "$f"; done',
+      'cat *.key',
+      'cat id_*',
+    ];
+    for (const script of vectors) {
+      for (const profile of ['strict', 'permissive']) {
+        const assessment = base(script, profile);
+        assert.strictEqual(assessment.risky, true, `${profile}: ${script}`);
+        assert.ok(assessment.flags.length > 0, `${profile}: ${script}`);
+      }
+    }
+  });
+
+  it('keeps ordinary globs and searches allowed', () => {
+    for (const script of ['ls *.txt', 'cat *.log', 'grep -r TODO .', 'cat a.txt', 'wc -l *.txt']) {
+      assert.strictEqual(base(script, 'strict').risky, false, script);
+    }
+  });
+
+  it('documents the residual glob limit: output redaction covers it', () => {
+    // `sec*` expands to `secret.key`, but the literal name is absent and no
+    // generic glob is denied (that would block ordinary `ls *.txt`). The
+    // exec/chain boundary masks the file values in the output instead.
+    for (const script of ['cat sec*', 'cat *']) {
+      assert.strictEqual(base(script, 'strict').risky, false, script);
+    }
+  });
+});

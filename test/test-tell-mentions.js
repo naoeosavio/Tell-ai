@@ -677,6 +677,64 @@ async function test_cli_directory_mention_lists_tree() {
 // Runner
 // ---------------------------------------------------------------------
 
+async function test_sensitive_file_mention_denied_without_tty() {
+  if (process.stdin.isTTY) return;
+  const dir = make_work_dir();
+  try {
+    fs.writeFileSync(path.join(dir, '.env'), 'CANARY55=super-secret-55\n', 'utf8');
+    const guard = silence_stderr();
+    try {
+      const out = await mentions.expand_mentions('leia @.env por favor', dir);
+      assert_includes(out, '@.env');
+      assert_not_includes(out, 'File: .env');
+      assert_not_includes(out, 'super-secret-55');
+      assert_includes(guard.captured(), 'sensitive file');
+    } finally {
+      guard.restore();
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+async function test_sensitive_symlink_mention_denied_without_tty() {
+  if (process.stdin.isTTY) return;
+  const dir = make_work_dir();
+  try {
+    fs.writeFileSync(path.join(dir, '.env'), 'CANARY55=super-secret-55\n', 'utf8');
+    fs.symlinkSync(path.join(dir, '.env'), path.join(dir, 'safe-name.txt'));
+    const guard = silence_stderr();
+    try {
+      const out = await mentions.expand_mentions('leia @safe-name.txt', dir);
+      assert_includes(out, '@safe-name.txt');
+      assert_not_includes(out, 'super-secret-55');
+      assert_includes(guard.captured(), 'sensitive file');
+    } finally {
+      guard.restore();
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+async function test_env_example_mention_stays_allowed() {
+  const dir = make_work_dir();
+  try {
+    fs.writeFileSync(path.join(dir, '.env.example'), 'ALLOWED=1\n', 'utf8');
+    const guard = silence_stderr();
+    try {
+      const out = await mentions.expand_mentions('leia @.env.example', dir);
+      assert_includes(out, 'File: .env.example');
+      assert_includes(out, 'ALLOWED=1');
+      assert_not_includes(guard.captured(), 'sensitive file');
+    } finally {
+      guard.restore();
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 const TESTS = [
   test_file_mention_injects_content_block,
   test_mention_at_string_start_has_no_leading_space_bug,
@@ -694,6 +752,9 @@ const TESTS = [
   test_symlink_inside_pointing_outside_counts_as_outside,
   test_absolute_outside_path_denied_without_tty,
   test_fifo_is_not_read,
+  test_sensitive_file_mention_denied_without_tty,
+  test_sensitive_symlink_mention_denied_without_tty,
+  test_env_example_mention_stays_allowed,
   test_cli_file_mention_reaches_model_log_and_context,
   test_cli_missing_mention_warns_but_prompt_continues,
   test_cli_outside_cwd_denied_even_with_yes,

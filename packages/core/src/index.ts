@@ -42,6 +42,7 @@ export {
 export type { NodeExecutorDefaults } from './exec';
 export {
   collect_exec_secrets,
+  collect_sensitive_file_secrets,
   create_node_executor,
   create_secret_redactor,
   EXEC_CANCELLED_EXIT_CODE,
@@ -55,6 +56,9 @@ export {
   resolve_exec_cwd,
   SENSITIVE_ENV_NAMES,
   SENSITIVE_ENV_SUFFIX,
+  SENSITIVE_SCAN_MAX_BYTES,
+  SENSITIVE_SCAN_MAX_DEPTH,
+  SENSITIVE_SCAN_MAX_FILES,
   sanitize_exec_env,
 } from './exec';
 export type { CoreLoopOptions } from './loop';

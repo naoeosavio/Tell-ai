@@ -99,7 +99,7 @@ function loadAbsoluteModule(absPath) {
   return require(file);
 }
 
-const { parseCliArgs, printHelp } = loadModule('src/server/cli-args.ts');
+const { parseCliArgs, printHelp, resolveAssetMode } = loadModule('src/server/cli-args.ts');
 const {
   isSensitiveRelPath,
   isHighRiskScript,
@@ -192,6 +192,13 @@ test('cli: --port parses numeric values only', () => {
   assert.strictEqual(parseCliArgs(['--port', '4000'], '/tmp').port, 4000);
   assert.strictEqual(parseCliArgs(['--port', '--chain'], '/tmp').port, undefined);
   assert.strictEqual(parseCliArgs(['--port', 'abc'], '/tmp').port, undefined);
+});
+
+test('cli: asset mode defaults to static when dist/index.html exists', () => {
+  assert.strictEqual(resolveAssetMode({ distIndexExists: true }), 'static');
+  assert.strictEqual(resolveAssetMode({ distIndexExists: true, nodeEnv: 'development' }), 'vite');
+  assert.strictEqual(resolveAssetMode({ distIndexExists: false }), 'vite');
+  assert.strictEqual(resolveAssetMode({ distIndexExists: false, nodeEnv: 'production' }), 'static');
 });
 
 test('cli: --help/-h is detected', () => {

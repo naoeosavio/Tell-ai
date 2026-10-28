@@ -182,6 +182,26 @@ describe('web sandbox: server guards', () => {
       }
       assert.strictEqual(isHighRiskScript('cat .env.example'), false);
     });
+
+    it('blocks quoting/brace/glob/ANSI-C obfuscations of the credential name (LOG-TASK-55)', () => {
+      const vectors = [
+        "cat '.en'v",
+        'cat .e"nv"',
+        'cat .en?',
+        'cat .env*',
+        'cat {a.txt,.env}',
+        "cat $'\\x2eenv'",
+        'for f in .*; do cat "$f"; done',
+        'cat *.key',
+        'cat id_*',
+      ];
+      for (const script of vectors) {
+        assert.strictEqual(isHighRiskScript(script), true, script);
+      }
+      for (const script of ['ls *.txt', 'cat *.log', 'grep -r TODO .']) {
+        assert.strictEqual(isHighRiskScript(script), false, script);
+      }
+    });
   });
 
   describe('isSensitiveRelPath (.env.example is not a secret)', () => {
@@ -1895,6 +1915,7 @@ describe('web sandbox: api routes', () => {
     spawnSync('mkfifo', [path.join(dir, 'blocked.pipe')]);
     fs.writeFileSync(path.join(dir, '.env'), 'SECRET=1\n');
     fs.writeFileSync(path.join(dir, '.env.example'), 'PORT="3000"\n');
+    fs.writeFileSync(path.join(dir, 'secret.key'), 'key-canary-55\n');
     fs.writeFileSync(path.join(dir, 'hello.txt'), 'hi\n');
     const env = {
       ...process.env,
@@ -2116,6 +2137,25 @@ describe('web sandbox: api routes', () => {
         body: JSON.stringify({ command: 'ls .env.example' }),
       });
       assert.strictEqual(template.status, 200);
+      for (const command of ['cat .en?', 'cat .e"nv"', "cat $'\\x2eenv'", 'for f in .*; do cat "$f"; done']) {
+        const obfuscated = await fetch(`${base}/api/execute`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ command }),
+        });
+        assert.strictEqual(obfuscated.status, 400, command);
+      }
+      // A glob the classifier cannot resolve still executes, but the output
+      // crosses the workspace-secret redactor (LOG-TASK-55 live finding).
+      const globbed = await fetch(`${base}/api/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: 'cat sec*' }),
+      });
+      assert.strictEqual(globbed.status, 200);
+      const globBody = await globbed.json();
+      assert.strictEqual(globBody.output, '[redacted]\n');
+      assert.doesNotMatch(globBody.output, /key-canary-55/);
     });
 
     it('/risk-check flags risky commands without executing', async () => {
@@ -2457,7 +2497,11 @@ describe('web sandbox: chain routes', () => {
           const content = typeof last?.content === 'string' ? last.content : '';
           const done =
             content.startsWith('Executed command:') || content.startsWith('Skipped by user:');
-          const reply = done ? FINAL_REPLY : RISKY_REPLY;
+          const reply = done
+            ? FINAL_REPLY
+            : content.includes('read the key glob')
+              ? 'Reading keys.\n<RUN>cat sec*</RUN>'
+              : RISKY_REPLY;
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(
             JSON.stringify({
@@ -2479,6 +2523,7 @@ describe('web sandbox: chain routes', () => {
     function bootRisky(extraArgs = []) {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-web-chain-risk-'));
       fs.writeFileSync(path.join(dir, '.env'), `CANARY=${CANARY}\n`);
+      fs.writeFileSync(path.join(dir, 'secret.key'), 'key-canary-55\n');
       const env = {
         ...process.env,
         PORT: '0',
@@ -2553,6 +2598,28 @@ describe('web sandbox: chain routes', () => {
         assert.strictEqual(skipped.status, 'completed');
         assert.ok(skipped.events.some((e) => e.type === 'skipped'));
         assert.ok(!skipped.events.some((e) => e.type === 'executed'));
+      });
+    });
+
+    describe('with -y auto-run', () => {
+      let handle;
+      let base;
+
+      before(async () => {
+        handle = bootRisky(['-y']);
+        base = await handle.basePromise;
+      });
+
+      after(() => shutdown(handle));
+
+      it('auto-runs the glob it cannot classify but redacts the key value', async () => {
+        const run = await (await createRun(base, 'read the key glob')).json();
+        assert.strictEqual(run.status, 'completed');
+        const executed = run.events.filter((e) => e.type === 'executed');
+        assert.strictEqual(executed.length, 1);
+        assert.strictEqual(executed[0].script, 'cat sec*');
+        assert.strictEqual(executed[0].output, '[redacted]\n');
+        assert.ok(!JSON.stringify(run).includes('key-canary-55'));
       });
     });
 

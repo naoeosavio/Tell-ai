@@ -20,6 +20,11 @@ export type RiskRule = {
   flags: string[];
   /** Pattern tested against the compacted script. */
   pattern: RegExp;
+  /**
+   * When true the pattern is tested against the dequoted compacted script
+   * (shell quote splicing, e.g. `cat '.en'v` reads `.env`).
+   */
+  dequoted?: boolean;
   /** When true the rule only applies to the strict (Web) profile. */
   strict_only?: boolean;
   /** When true the rule only applies to the permissive (CLI) profile. */
@@ -287,9 +292,46 @@ const BASE_RISK_RULES: readonly RiskRule[] = [
     // provider: the file API and delegated research already deny these.
     // `.env.example` is a committed template and stays allowed. Common to
     // both profiles: the CLI prompts (or denies non-TTY) instead of
-    // auto-running, the Web blocks outright.
+    // auto-running, the Web blocks outright. Tested against the dequoted
+    // copy so shell concatenation cannot hide the name.
+    dequoted: true,
     pattern:
-      /(?:^|[\s"'=:;|&<>()/])(?:\.env(?!\.example)(?:\.[\w.-]+)?|id_(?:rsa|dsa|ecdsa|ed25519)|[\w.-]+\.(?:key|pem|p12)|\.git\/[\w./-]+|\.tell\/[\w./-]+|\.aws\/credentials|\.config\/[\w.-]*\.token)(?=$|[\s"'=:;|&<>()/])/i,
+      /(?:^|[\s"'=:;|&<>(){}\[\],/])(?:\.env(?!\.example)(?:\.[\w.-]+)?|id_(?:rsa|dsa|ecdsa|ed25519)|[\w.-]+\.(?:key|pem|p12)|\.git\/[\w./-]+|\.tell\/[\w./-]+|\.aws\/credentials|\.config\/[\w.-]*\.token)(?=$|[\s"'=:;|&<>(){}\[\],/])/i,
+  },
+  {
+    id: 'sensitive-dotfile-glob',
+    category: 'data-exfiltration',
+    severity: 'high',
+    reason: 'dotfile glob can read credentials (.env/.git/.tell)',
+    flags: ['sensitive-file', 'sensitive-glob'],
+    // `.*`, `.e*`, `.en?`, `.env*` and the `for f in .*` loop all expand to
+    // `.env` in bash. Any dotfile pattern with a glob metachar is treated as
+    // a potential credential read; `ls .*` asks too (names can expose the
+    // layout, contents are the real risk).
+    dequoted: true,
+    pattern: /(?:^|[\s=:;|&<>(){}\[\],/])\.[^\s=:;|&<>(){}]*[*?\[]/,
+  },
+  {
+    id: 'sensitive-key-glob',
+    category: 'data-exfiltration',
+    severity: 'high',
+    reason: 'glob can read a credential file (keys/tokens/id_*)',
+    flags: ['sensitive-file', 'sensitive-glob'],
+    // `*.key`, `id_*`, `*.pem`, `*.token` are reads of credential files even
+    // though the literal name is not in the script.
+    dequoted: true,
+    pattern:
+      /(?:^|[\s=:;|&<>(){}\[\],/])(?=[^\s=:;|&<>(){}]*[*?\[])[^\s=:;|&<>(){}]*(?:id_|\.key\b|\.pem\b|\.p12\b|\.pfx\b|\.token\b|credentials)[^\s=:;|&<>(){}]*/i,
+  },
+  {
+    id: 'ansi-c-quote',
+    category: 'payload-decode',
+    severity: 'medium',
+    reason: "ANSI-C quoted string ($'...') obfuscation",
+    flags: ['ansi-c-quote'],
+    // `$'\x2eenv'` is `.env`; the literal name never appears. Legitimate
+    // uses (dialects, control characters) are rare enough to ask/block.
+    pattern: /\$'[^']*'/,
   },
   {
     id: 'shell-backtick-pipe',
@@ -310,6 +352,20 @@ const BASE_RISK_RULES: readonly RiskRule[] = [
  */
 function compact_script(script: string): string {
   return script.replace(/\\\n/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Removes shell quote characters from a compacted script.
+ *
+ * Quoting is shell syntax, not part of the file name: `cat '.en'v` and
+ * `cat .e"nv"` both read `.env`. Rules marked `dequoted` run against this
+ * copy; the script itself is never modified.
+ *
+ * @param compact - Compacted script.
+ * @returns The same script without single/double quotes.
+ */
+function dequote_script(compact: string): string {
+  return compact.replace(/['"]/g, '');
 }
 
 /**
@@ -345,6 +401,7 @@ function severity_rank(severity: RiskSeverity): number {
  */
 export function assess_base_risk(script: string, profile: RiskProfile = DEFAULT_RISK_PROFILE): RiskAssessment {
   const compact = compact_script(script);
+  const dequoted = dequote_script(compact);
   const reasons: string[] = [];
   const flags: string[] = [];
   let severity: RiskSeverity = 'low';
@@ -354,7 +411,7 @@ export function assess_base_risk(script: string, profile: RiskProfile = DEFAULT_
   for (const rule of BASE_RISK_RULES) {
     if (rule.strict_only === true && profile !== 'strict') {
     } else if (rule.permissive_only === true && profile !== 'permissive') {
-    } else if (rule.pattern.test(compact)) {
+    } else if (rule.pattern.test(rule.dequoted === true ? dequoted : compact)) {
       matched = true;
       reasons.push(rule.reason);
       for (const flag of rule.flags) {
