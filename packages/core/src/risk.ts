@@ -296,7 +296,7 @@ const BASE_RISK_RULES: readonly RiskRule[] = [
     // copy so shell concatenation cannot hide the name.
     dequoted: true,
     pattern:
-      /(?:^|[\s"'=:;|&<>(){}\[\],/])(?:\.env(?!\.example)(?:\.[\w.-]+)?|id_(?:rsa|dsa|ecdsa|ed25519)|[\w.-]+\.(?:key|pem|p12)|\.git\/[\w./-]+|\.tell\/[\w./-]+|\.aws\/credentials|\.config\/[\w.-]*\.token)(?=$|[\s"'=:;|&<>(){}\[\],/])/i,
+      /(?:^|[\s"'=:;|&<>(){},/])(?:\.env(?!\.example)(?:\.[\w.-]+)?|id_(?:rsa|dsa|ecdsa|ed25519)|[\w.-]+\.(?:key|pem|p12)|\.git\/[\w./-]+|\.tell\/[\w./-]+|\.aws\/credentials|\.config\/[\w.-]*\.token)(?=$|[\s"'=:;|&<>(){},/])/i,
   },
   {
     id: 'sensitive-dotfile-glob',
@@ -309,7 +309,7 @@ const BASE_RISK_RULES: readonly RiskRule[] = [
     // a potential credential read; `ls .*` asks too (names can expose the
     // layout, contents are the real risk).
     dequoted: true,
-    pattern: /(?:^|[\s=:;|&<>(){}\[\],/])\.[^\s=:;|&<>(){}]*[*?\[]/,
+    pattern: /(?:^|[\s=:;|&<>(){},/])\.[^\s=:;|&<>(){}]*[*?[]/,
   },
   {
     id: 'sensitive-key-glob',
@@ -321,7 +321,7 @@ const BASE_RISK_RULES: readonly RiskRule[] = [
     // though the literal name is not in the script.
     dequoted: true,
     pattern:
-      /(?:^|[\s=:;|&<>(){}\[\],/])(?=[^\s=:;|&<>(){}]*[*?\[])[^\s=:;|&<>(){}]*(?:id_|\.key\b|\.pem\b|\.p12\b|\.pfx\b|\.token\b|credentials)[^\s=:;|&<>(){}]*/i,
+      /(?:^|[\s=:;|&<>(){},/])(?=[^\s=:;|&<>(){}]*[*?[])[^\s=:;|&<>(){}]*(?:id_|\.key\b|\.pem\b|\.p12\b|\.pfx\b|\.token\b|credentials)[^\s=:;|&<>(){}]*/i,
   },
   {
     id: 'ansi-c-quote',
@@ -404,6 +404,7 @@ export function assess_base_risk(script: string, profile: RiskProfile = DEFAULT_
   const dequoted = dequote_script(compact);
   const reasons: string[] = [];
   const flags: string[] = [];
+  const rules: string[] = [];
   let severity: RiskSeverity = 'low';
   let category: RiskCategory = 'general';
   let matched = false;
@@ -414,6 +415,7 @@ export function assess_base_risk(script: string, profile: RiskProfile = DEFAULT_
     } else if (rule.pattern.test(rule.dequoted === true ? dequoted : compact)) {
       matched = true;
       reasons.push(rule.reason);
+      rules.push(rule.id);
       for (const flag of rule.flags) {
         if (flags.includes(flag)) {
         } else {
@@ -433,9 +435,9 @@ export function assess_base_risk(script: string, profile: RiskProfile = DEFAULT_
 
   if (matched) {
     const first_reason = reasons[0] ?? 'matched base risk rule';
-    return { risky: true, reason: first_reason, severity, category, reasons, flags };
+    return { risky: true, reason: first_reason, severity, category, reasons, flags, rules };
   } else {
-    return { risky: false, severity: 'low', category: 'general', reasons: [], flags: [] };
+    return { risky: false, severity: 'low', category: 'general', reasons: [], flags: [], rules: [] };
   }
 }
 

@@ -15,6 +15,13 @@ export const COMMAND_FEEDBACK_INSTRUCTION =
 export const COMMAND_FEEDBACK_FAILED_PREAMBLE =
   'The command above FAILED. Analyze the error output and try a corrected approach.';
 
+/** Preamble of the denied-command feedback (child retry protocol). */
+export const COMMAND_DENIED_PREAMBLE = 'The policy denied the command above. Request a different command.';
+
+/** Rule reminder appended to the denied-command feedback. */
+export const COMMAND_DENIED_INSTRUCTION =
+  'Use one simple command without `;`, `&&`, `|`, redirections, `cd`, or secret paths.';
+
 /** Kind of command outcome a feedback text describes. */
 export type CommandFeedbackKind = 'executed' | 'failed' | 'skipped' | 'cancelled';
 
@@ -168,15 +175,32 @@ export function format_subtask_result(summary: string, stats?: string, status?: 
  * Formats a non-execution status marker for one requested script.
  *
  * Approval/denial/no-executor states carry a `Command <status>:` header with no
- * output — the same wording vocabulary the hosts render. Keeping it here means
- * one module owns every header a timeline can contain.
+ * output — the same wording vocabulary the hosts render. A denial adds a
+ * `Reason:` line when the classifier named the matched rule. Keeping it here
+ * means one module owns every header a timeline can contain.
  *
  * @param status - Command status (`denied`, `awaiting_approval`, `requested`, `skipped`).
  * @param script - Script that was not executed.
+ * @param reason - Optional denial reason (stable rule id).
  * @returns The status marker text.
  */
-export function format_command_status(status: string, script: string): string {
-  return `Command ${status}:\n${script}`;
+export function format_command_status(status: string, script: string, reason?: string): string {
+  const record = `Command ${status}:\n${script}`;
+  return reason === undefined || reason.trim() === '' ? record : `${record}\nReason: ${reason.trim()}`;
+}
+
+/**
+ * Formats the follow-up prompt for one denied command round.
+ *
+ * The child reads the denial and the rule reminder. The round is retried
+ * inside a delegated child only; every other host stops on the denial.
+ *
+ * @param script - Script the policy denied.
+ * @param reason - Optional denial reason (stable rule id).
+ * @returns The feedback text.
+ */
+export function format_denied_feedback(script: string, reason?: string): string {
+  return `${format_command_status('denied', script, reason)}\n\n${COMMAND_DENIED_PREAMBLE}\n${COMMAND_DENIED_INSTRUCTION}`;
 }
 
 /**

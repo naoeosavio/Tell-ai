@@ -263,7 +263,7 @@ function extract_file_secret_values(text: string): string[] {
   for (const raw_line of text.split(/\r?\n/)) {
     const line = raw_line.trim();
     if (line === '' || line.startsWith('#')) {
-      continue;
+      // Blank line or comment — no candidate value.
     } else {
       const equals = line.indexOf('=');
       if (equals !== -1) {

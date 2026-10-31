@@ -1,6 +1,7 @@
-import { COMMAND_FEEDBACK_INSTRUCTION, format_command_feedback } from './loop-feedback';
+import { delegation_budget_notice } from './delegation-status';
+import { COMMAND_FEEDBACK_INSTRUCTION, format_command_feedback, format_denied_feedback } from './loop-feedback';
 import type { CancellationToken, RuntimeCommand, TellResult, TellRuntime, TellRuntimeOptions } from './runtime-api';
-import { DEFAULT_MAX_CHAIN_STEPS } from './runtime-limits';
+import { DEFAULT_MAX_CHAIN_STEPS, DELEGATION_MAX_DELEGATIONS } from './runtime-limits';
 
 /** Default model→command rounds per run (owned by `./runtime-limits`). */
 export const LOOP_MAX_ROUNDS = DEFAULT_MAX_CHAIN_STEPS;
@@ -24,6 +25,10 @@ export function chain_limit_notice(max_rounds: number): string {
 /** Follow-up instruction for rounds that may still request a command (owned by `./loop-feedback`). */
 export const CONTINUE_INSTRUCTION = COMMAND_FEEDBACK_INSTRUCTION;
 
+/** Follow-up message that asks for the final answer after a refused delegation tag. */
+export const DELEGATION_REFUSED_FOLLOW_UP =
+  'Delegation budget exceeded. Answer now in plain text, without <RUN>, <DELEGATE> or <SUBTASK> tags.';
+
 /** Options for `run_primitive_loop` (ports arrive inside the injected runner). */
 export type CoreLoopOptions = {
   /**
@@ -44,9 +49,33 @@ export type CoreLoopOptions = {
    * host owns the wiring (including the SDK main entry on Node).
    */
   single_turn: TellRuntime;
-  /** Round cap (defaults to `LOOP_MAX_ROUNDS`, minimum 1). */
+  /** Round cap for command rounds (defaults to `LOOP_MAX_ROUNDS`, minimum 1). */
   max_rounds?: number;
+  /** Delegation rounds the loop accepts (defaults to `DELEGATION_MAX_DELEGATIONS`). */
+  max_delegations?: number;
+  /** Whether a denied command feeds back to the model instead of ending the loop. */
+  retry_denied?: boolean;
 };
+
+/**
+ * Normalizes the round cap of one run.
+ *
+ * @param value - Requested cap.
+ * @returns A finite cap of at least one.
+ */
+function normalize_max_rounds(value: number | undefined): number {
+  return value !== undefined && Number.isFinite(value) ? Math.max(1, Math.floor(value)) : LOOP_MAX_ROUNDS;
+}
+
+/**
+ * Normalizes the delegation cap of one run.
+ *
+ * @param value - Requested cap.
+ * @returns A finite cap of at least zero.
+ */
+function normalize_max_delegations(value: number | undefined): number {
+  return value !== undefined && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : DELEGATION_MAX_DELEGATIONS;
+}
 
 /**
  * Builds the self-healing follow-up prompt from a round command result.
@@ -84,18 +113,23 @@ function merge_timeline(aggregated: string[], round_timeline: string[], first_ro
 }
 
 /**
- * Runs the single primitive exec/loop: at most eight model→command rounds.
+ * Runs the single primitive exec/loop: at most `max_rounds` command rounds.
  *
  * Each round delegates to the SDK single-turn wiring (storage, thinking/text
  * callbacks, approval, executor, redaction boundary), so the core never
  * duplicates turn logic and the SDK never grows a second loop. The loop only
- * iterates: it feeds redacted command output + exit code back until the
- * model answers without a script, a command is not executed
- * (`denied`/`skipped`/`awaiting_approval`/`cancelled`), cancellation fires,
- * or the round cap is hit. Executor failures self-heal through the FAILED
+ * iterates: it feeds redacted command output + exit code back until the model
+ * answers without a script, a command is not executed
+ * (`denied`/`skipped`/`awaiting_approval`/`cancelled`), cancellation fires, or
+ * the command-round cap is hit. Executor failures self-heal through the FAILED
  * feedback variant. No `PolicyDecision` is fabricated here: without an
- * explicit approval the SDK wiring already fails closed, and the loop stops
- * on whatever non-executed status it reports.
+ * explicit approval the SDK wiring already fails closed, and the loop stops on
+ * whatever non-executed status it reports.
+ *
+ * A delegation round never spends a command round: the child pays with its own
+ * round cap, and the record becomes the next parent message. A denied command
+ * feeds back to the model only when `retry_denied` is set (delegated children);
+ * every other host keeps the fail-closed stop.
  *
  * Cancellation travels with the runner: the token from `runtime_options` is
  * checked at every round boundary *and* forwarded to the single turn, so a
@@ -103,16 +137,14 @@ function merge_timeline(aggregated: string[], round_timeline: string[], first_ro
  * runner owns the executor boundary, the loop owns the round boundary).
  *
  * @param message - Initial user message.
- * @param options - Injected single-turn runner plus the round cap.
+ * @param options - Injected single-turn runner plus the round caps.
  * @returns The aggregated `TellResult` (contract type reused from the SDK).
  */
 export async function run_primitive_loop(message: string, options: CoreLoopOptions): Promise<TellResult> {
   const runtime_options = options.runtime_options;
   const single_turn = options.single_turn;
-  const max_rounds =
-    options.max_rounds !== undefined && Number.isFinite(options.max_rounds)
-      ? Math.max(1, Math.floor(options.max_rounds))
-      : LOOP_MAX_ROUNDS;
+  const max_rounds = normalize_max_rounds(options.max_rounds);
+  const max_delegations = normalize_max_delegations(options.max_delegations);
   const token: CancellationToken | undefined = runtime_options.cancellation;
 
   const timeline: string[] = [];
@@ -120,8 +152,12 @@ export async function run_primitive_loop(message: string, options: CoreLoopOptio
   let text = '';
   let first_round = true;
   let current_message = message;
+  // Command rounds spend the parent cap; delegation rounds do not.
+  let rounds_used = 0;
+  let delegations_used = 0;
+  let asked_final_answer = false;
 
-  for (let round = 1; round <= max_rounds; round += 1) {
+  while (rounds_used < max_rounds) {
     if (token?.cancelled) {
       return { status: 'cancelled', text, timeline, commands };
     } else {
@@ -147,27 +183,54 @@ export async function run_primitive_loop(message: string, options: CoreLoopOptio
     } else {
       // Completed or failed-with-command — inspect the command below.
     }
-    const last = round_result.commands[round_result.commands.length - 1];
+
     if (round_result.delegation !== undefined) {
-      // Delegation consumed one parent round: the record becomes the next
-      // message (same shape as command feedback), unless the budget ran out
-      // or cancellation fired.
+      // Delegation never spends a parent round: the record becomes the next
+      // message (same shape as command feedback). The cap only guards a runner
+      // without its own budget.
       if (token?.cancelled) {
         return { status: 'cancelled', text, timeline, commands };
-      } else if (round === max_rounds) {
-        timeline.push(chain_limit_notice(max_rounds));
+      } else if (delegations_used >= max_delegations) {
+        timeline.push(delegation_budget_notice(max_delegations));
         return { status: 'completed', text, timeline, commands };
       } else {
+        delegations_used += 1;
         current_message = round_result.delegation.record;
+        continue;
       }
-    } else if (last === undefined) {
+    }
+
+    if (round_result.delegation_refused === true) {
+      // The budget is spent: ask once for the final visible answer instead of
+      // ending the run with the stripped tag text.
+      if (asked_final_answer) {
+        return { status: 'completed', text, timeline, commands };
+      } else {
+        asked_final_answer = true;
+        current_message = DELEGATION_REFUSED_FOLLOW_UP;
+        continue;
+      }
+    }
+
+    const last = round_result.commands[round_result.commands.length - 1];
+    if (last === undefined) {
       return { status: 'completed', text, timeline, commands };
     } else if (last.status === 'executed' || last.status === 'failed') {
-      if (round === max_rounds) {
+      rounds_used += 1;
+      if (rounds_used >= max_rounds) {
         timeline.push(chain_limit_notice(max_rounds));
         return { status: 'completed', text, timeline, commands };
       } else {
         current_message = build_loop_feedback(last.script, last.output ?? '', last.exit_code ?? 1);
+      }
+    } else if (last.status === 'denied' && options.retry_denied === true && last.reason !== 'disabled') {
+      // A policy denial is self-healable inside a child run; `--no-exec` is not.
+      rounds_used += 1;
+      if (rounds_used >= max_rounds) {
+        timeline.push(chain_limit_notice(max_rounds));
+        return { status: 'completed', text, timeline, commands };
+      } else {
+        current_message = format_denied_feedback(last.script, last.reason);
       }
     } else {
       // Confirm pauses, deny ends: non-executed commands stop the loop and

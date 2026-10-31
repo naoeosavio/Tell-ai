@@ -10,6 +10,7 @@ export {
 export { CUSTOM_SYSTEM_PREFIX, compose_custom_system } from './custom-system';
 export type {
   DelegationChildEnv,
+  DelegationChildEvent,
   DelegationOutcome,
   DelegationRefusalReason,
   DelegationRequest,
@@ -66,6 +67,7 @@ export {
   CHAIN_LIMIT_NOTICE,
   CONTINUE_INSTRUCTION,
   chain_limit_notice,
+  DELEGATION_REFUSED_FOLLOW_UP,
   LOOP_MAX_ROUNDS,
   run_primitive_loop,
 } from './loop';
@@ -76,6 +78,8 @@ export type {
 } from './loop-feedback';
 export {
   CANCELLED_HEADER,
+  COMMAND_DENIED_INSTRUCTION,
+  COMMAND_DENIED_PREAMBLE,
   COMMAND_FEEDBACK_FAILED_PREAMBLE,
   COMMAND_FEEDBACK_INSTRUCTION,
   EXECUTED_HEADER,
@@ -83,6 +87,7 @@ export {
   format_command_feedback,
   format_command_result,
   format_command_skipped,
+  format_denied_feedback,
   format_executed_command,
   format_failed_command,
   format_research_result,
