@@ -257,6 +257,35 @@ describe('core primitive loop', () => {
     assert.ok(result.timeline.some((line) => line.includes('Chain limit reached (8)')));
   });
 
+  it('counts the final answer turn without a limit notice', async () => {
+    // Command + closing answer fill a 2-turn budget: the final answer spends
+    // its own turn but completes normally instead of recording a limit.
+    const capped_model = script_model(['run it\n<RUN>\necho one\n</RUN>', 'done.']);
+    const capped_executor = sequence_executor([{ stdout: 'one', stderr: '', exit_code: 0 }]);
+    const capped = core.create_core_runtime({
+      config: core_config(),
+      model: capped_model,
+      executor: (options) => capped_executor.run(options),
+      approval: async () => 'approved',
+      max_rounds: 2,
+    });
+    const capped_result = await capped.run('hi');
+    assert.strictEqual(capped_model.calls(), 2, 'command turn + final-answer turn');
+    assert.strictEqual(capped_result.commands.length, 1);
+    assert.strictEqual(capped_result.status, 'completed');
+    assert.ok(!capped_result.timeline.some((line) => line.includes('Chain limit reached')));
+    // A pure answer with a 1-turn budget is one turn, still no notice.
+    const single_model = script_model(['plain answer']);
+    const single = core.create_core_runtime({
+      config: core_config(),
+      model: single_model,
+      max_rounds: 1,
+    });
+    const single_result = await single.run('hi');
+    assert.strictEqual(single_model.calls(), 1);
+    assert.ok(!single_result.timeline.some((line) => line.includes('Chain limit reached')));
+  });
+
   it('emits request/start/output callbacks in order per round', async () => {
     const events = [];
     const runtime = core.create_core_runtime({

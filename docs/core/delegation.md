@@ -56,8 +56,7 @@ flowchart TD
 4. The child runs with the system prompt (rules + `cwd`/`platform`/`task`), the
    objective and the context. Its storage is bounded at 64k and it gets at most
    32 rounds (adjustable `0..128`) — whichever comes first stops it at a round boundary.
-5. A delegation round never spends a parent round: the parent cap counts
-   command rounds only. The child pays with its own round cap.
+5. A delegation turn spends one parent round like any other model turn. The child pays with its own round cap on top.
 6. The child retries a denied command: the loop feeds `Command denied:` plus a
    rule reminder back to the child, which continues until its own cap. A
    command denied by `--no-exec` still stops the child.
@@ -83,8 +82,7 @@ flowchart TD
   chain has fewer than 2 rounds. `--max-delegations 0..2` is the explicit exit;
   a resumed task gets a fresh per-invocation budget.
 - A status never consumes budget; only an actual child run does.
-- A delegation never consumes a parent round. The parent cap counts command
-  rounds only, so `--max-chain N` still buys N commands after a child run.
+- A delegation turn spends one parent round like any other model turn. The child pays with its own round cap on top, so `--max-chain N` buys N turns (commands, delegations and final answers combined).
 - The third tag is inert with a warning: the runtime owns the counter, and the
   runner returns the reason (`budget` / `empty_objective`) so the host can say
   why. The loop then asks the parent for the final answer, so the run never

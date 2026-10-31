@@ -818,32 +818,88 @@ describe('parent seam (runtime-api + loop)', () => {
     assert.strictEqual(core.DELEGATION_REFUSED_FOLLOW_UP.includes('without <RUN>'), true);
   });
 
-  it('a delegation round does not spend a command round', async () => {
+  it('every model turn spends the round budget', async () => {
     const answers = ['<DELEGATE>\nlist files\n</DELEGATE>', '<RUN>\nls\n</RUN>', 'done'];
+    function parent_with_budget() {
+      let calls = 0;
+      let executed = 0;
+      const parent = core.createTellRuntime({
+        model: { ask: async () => answers[Math.min(calls++, answers.length - 1)] },
+        exec: true,
+        executor: async () => {
+          executed += 1;
+          return { stdout: 'f\n', stderr: '', exit_code: 0 };
+        },
+        approval: async () => 'approved',
+        delegation: core.create_delegation_runner({
+          model: { ask: async () => 'child findings' },
+          exec_enabled: true,
+        }),
+        max_delegations: 2,
+      });
+      return {
+        parent,
+        calls: () => calls,
+        executed: () => executed,
+      };
+    }
+    // One turn: the delegation spends the only round, so no command runs.
+    {
+      const harness = parent_with_budget();
+      const result = await core.run_primitive_loop('goal', {
+        runtime_options: {},
+        single_turn: harness.parent,
+        max_rounds: 1,
+      });
+      assert.strictEqual(harness.calls(), 1, 'one model turn ran');
+      assert.strictEqual(harness.executed(), 0, 'the delegation spent the single round');
+      assert.strictEqual(result.commands.length, 0);
+      assert.ok(result.timeline.some((line) => line.includes('Chain limit reached (1)')));
+    }
+    // Two turns: delegation + command fill the budget, then the notice fires.
+    {
+      const harness = parent_with_budget();
+      const result = await core.run_primitive_loop('goal', {
+        runtime_options: {},
+        single_turn: harness.parent,
+        max_rounds: 2,
+      });
+      assert.strictEqual(harness.calls(), 2, 'delegation turn + command turn');
+      assert.strictEqual(harness.executed(), 1);
+      assert.strictEqual(result.commands.length, 1);
+      assert.ok(result.timeline.some((line) => line.includes('Chain limit reached (2)')));
+    }
+  });
+
+  it('caps a model that only delegates instead of looping forever', async () => {
     let calls = 0;
-    let executed = 0;
     const parent = core.createTellRuntime({
-      model: { ask: async () => answers[Math.min(calls++, answers.length - 1)] },
-      exec: true,
-      executor: async () => {
-        executed += 1;
-        return { stdout: 'f\n', stderr: '', exit_code: 0 };
+      model: {
+        ask: async () => {
+          calls += 1;
+          return '<DELEGATE>\nkeep looking\n</DELEGATE>';
+        },
       },
+      exec: true,
+      executor: async () => ({ stdout: 'f\n', stderr: '', exit_code: 0 }),
       approval: async () => 'approved',
       delegation: core.create_delegation_runner({
         model: { ask: async () => 'child findings' },
         exec_enabled: true,
       }),
-      max_delegations: 2,
+      max_delegations: 8,
     });
+    // Delegation budget (8) is larger than the turn cap (3) on purpose: the
+    // turn cap must win, otherwise the model spins until the budget runs out.
     const result = await core.run_primitive_loop('goal', {
       runtime_options: {},
       single_turn: parent,
-      max_rounds: 1,
+      max_rounds: 3,
+      max_delegations: 8,
     });
-    assert.strictEqual(executed, 1, 'the command round still runs after the delegation');
-    assert.strictEqual(result.commands.length, 1);
-    assert.ok(result.timeline.some((line) => line.includes('Chain limit reached (1)')));
+    assert.strictEqual(calls, 3, 'the turn cap stops the thought loop');
+    assert.ok(result.timeline.some((line) => line.includes('Chain limit reached (3)')));
+    assert.ok(!result.timeline.some((line) => line.includes('Delegation budget exceeded')));
   });
 
   it('no-exec blocks the child', async () => {

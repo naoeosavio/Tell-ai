@@ -228,7 +228,16 @@ async function main() {
     assert.strictEqual(typeof ns.run_primitive_loop, 'function');
     assert.strictEqual(typeof ns.LOOP_MAX_ROUNDS, 'number');
     assert.strictEqual(typeof ns.chain_limit_notice, 'function');
+    assert.strictEqual(ns.DEFAULT_STORAGE_KEY, 'tell-runtime');
     assert.ok(!('create_node_executor' in ns), 'the Node executor stays out');
+  });
+
+  await check('browser storage key matches Node and seeds the default adapter', async () => {
+    const node_core = require(NODE_CJS);
+    assert.strictEqual(ns.DEFAULT_STORAGE_KEY, node_core.DEFAULT_STORAGE_KEY);
+    const port = new ns.MemoryStorageAdapter();
+    await port.save(ns.DEFAULT_STORAGE_KEY, 'hello');
+    assert.strictEqual(await port.load('tell-runtime'), 'hello');
   });
 
   await check('create_core_runtime runs in the browser (commands reported, never executed)', async () => {

@@ -261,6 +261,9 @@ async function check_browser_functional(failures) {
       failures.push(`BLOCKED: dist/browser.js missing export "${name}"`);
     }
   }
+  if (mod.DEFAULT_STORAGE_KEY !== 'tell-runtime') {
+    failures.push('BLOCKED: dist/browser.js missing export "DEFAULT_STORAGE_KEY"');
+  }
   for (const name of ['create_node_executor', 'canonical_path', 'build_project_context', 'build_sdk_config_from_env']) {
     if (name in mod) {
       failures.push(`BLOCKED: dist/browser.js leaks Node-only export "${name}"`);

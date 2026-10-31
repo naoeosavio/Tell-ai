@@ -1,6 +1,6 @@
 # Primitive loop + executable runtime
 
-One loop, owned once. `run_primitive_loop` (`src/loop.ts`) iterates model→command rounds; `create_core_runtime` (`src/runtime.ts`) injects the resolved config into the SDK ports and runs that loop. Hosts never write their own loop — the CLI chain (`--chain`) and the Web server chain both call into these.
+One loop, owned once. `run_primitive_loop` (`src/loop.ts`) iterates model turns; `create_core_runtime` (`src/runtime.ts`) injects the resolved config into the SDK ports and runs that loop. Hosts never write their own loop — the CLI chain (`--chain`) and the Web server chain both call into these.
 
 ## `run_primitive_loop` (`src/loop.ts`)
 
@@ -11,11 +11,11 @@ const runtime = create_core_runtime({ config, model, executor, approval, risk })
 const result = await runtime.run('fix the failing test');
 ```
 
-* Round cap: `LOOP_MAX_ROUNDS` (alias of `DEFAULT_MAX_CHAIN_STEPS`, 8). `max_rounds` overrides per run, minimum 1 — the loop enforces no upper clamp; hosts clamp (CLI accepts up to 128, the Web sandbox clamps to 8). Only command rounds spend the cap: an executed or failed `<RUN>` round counts one. A delegation round never does — the child pays with its own cap.
+* Round cap: `LOOP_MAX_ROUNDS` (alias of `DEFAULT_MAX_CHAIN_STEPS`, 8). `max_rounds` overrides per run, minimum 1 — the loop enforces no upper clamp; hosts clamp (CLI accepts up to 128, the Web sandbox clamps to 8). Every model turn spends one round — command, delegation and final-answer turns alike — so a model that keeps thinking without deciding stops at the cap instead of spinning. The child pays with its own cap on top of the parent turn it cost.
 * Delegation: the loop accepts at most `max_delegations` rounds (`DELEGATION_MAX_DELEGATIONS` when absent) and feeds the record back as the next message. A tag the runtime refused (`delegation_refused`) gets one final-answer round (`DELEGATION_REFUSED_FOLLOW_UP`), so the run never ends with empty text.
 * Denied commands: a child run sets `retry_denied` and receives `format_denied_feedback` as the next message; the child keeps its own cap. A command denied by `--no-exec` (`reason: 'disabled'`) still stops the loop. Every other host stops on any non-executed status.
 * Each round delegates to the single-turn wiring (`createTellRuntime`): storage, thinking/text callbacks, approval, executor, redaction boundary. The loop only iterates — it never duplicates turn logic.
-* Stop conditions: the model answers without a `<RUN>` script; a command is not executed (`denied` / `skipped` / `awaiting_approval` / `cancelled`); the token is cancelled; the command-round cap is hit (records `CHAIN_LIMIT_NOTICE`, then returns).
+* Stop conditions: the model answers without a `<RUN>` script; a command is not executed (`denied` / `skipped` / `awaiting_approval` / `cancelled`); the token is cancelled; the model-turn cap is hit (records `CHAIN_LIMIT_NOTICE`, then returns).
 * Feedback between rounds is built by `format_command_feedback` (see [loop-feedback.md](loop-feedback.md)): `Executed command:` header (or the `Command failed` variant with the `FAILED` self-healing preamble) plus the continuation instruction. History itself travels through the storage port, so only the new feedback becomes the next message. Raw output never reaches here — the redaction boundary already ran.
 * Executor failures self-heal through the `FAILED` feedback variant. No `PolicyDecision` is fabricated: without an explicit approval the single-turn wiring already fails closed (`awaiting_approval`) and the loop stops on that status.
 * Timeline merge: round timelines append; only round one keeps its `User:` line.
