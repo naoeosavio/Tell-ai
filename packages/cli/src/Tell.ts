@@ -1099,8 +1099,12 @@ function print_child_event(event: DelegationChildEvent): void {
     // Show the real status (`denied`, `skipped`) and the rule id when present.
     const reason = event.reason !== undefined && event.reason.trim() !== '' ? ` (${event.reason.trim()})` : '';
     process.stderr.write(`\x1b[2m  │ ${event.status}${reason}: ${event.script}\x1b[0m\n`);
-  } else {
+  } else if (event.type === 'error') {
     process.stderr.write(`\x1b[2m  │ error: ${event.script}: ${event.error}\x1b[0m\n`);
+  } else if (event.type === 'approval_request') {
+    process.stderr.write(`\x1b[2m  │ waiting approval: ${event.script}\x1b[0m\n`);
+  } else {
+    process.stderr.write(`\x1b[2m  │ approval ${event.verdict}: ${event.script}\x1b[0m\n`);
   }
 }
 
@@ -1187,6 +1191,11 @@ async function run_response_loop(
   // leaves `text` empty, so the legacy commands-only final-answer check
   // below would miss it and stdout would stay empty.
   let did_delegate = false;
+  // Parent turns spent against the chain budget. Every model turn spends one
+  // round — command, delegation and final-answer turns alike, exactly like
+  // the core loop counts it — so a delegation turn with no commands must
+  // still shrink the resume budget below.
+  let parent_turns = 0;
   let warned_budget = false;
   function warn_delegation_budget_once(timeline: string[]): void {
     if (warned_budget) {
@@ -1202,7 +1211,7 @@ async function run_response_loop(
       }
     }
   }
-  const model = create_cli_model(ai, {
+  const base_model = create_cli_model(ai, {
     stream: state.stream,
     think: state.think,
     hide_tags: !state.showTags,
@@ -1211,6 +1220,16 @@ async function run_response_loop(
       last_raw = response;
     },
   });
+  // Count the turns on the port itself: resumed runs below share this port,
+  // so the tally spans the whole invocation without trusting any single
+  // result shape.
+  const model = {
+    ...base_model,
+    async ask(message: string, options: { system: string; stream: false }): Promise<string> {
+      parent_turns += 1;
+      return base_model.ask(message, options);
+    },
+  };
   // The child is silent, so the wrapper prints a transient line while it
   // works. The child can ask for approval mid-run: clear the line before
   // every prompt, or the prompt text lands on the indicator line.
@@ -1365,9 +1384,9 @@ async function run_response_loop(
       if (state.saveContext) save_incremental_context(contextPath, previousContext, state);
     },
   };
-  // One runtime per budget: resumed runs get only the rounds the legacy
-  // 8-command counter still allows, so chained declines can never overshoot
-  // the cap the way a fresh full-budget run would.
+  // One runtime per budget: resumed runs get only the rounds the parent
+  // has not spent yet, so chained declines can never overshoot the cap
+  // the way a fresh full-budget run would.
   function create_runtime(rounds: number) {
     return create_core_runtime({
       config: state.coreConfig,
@@ -1395,18 +1414,18 @@ async function run_response_loop(
   warn_delegation_budget_once(result.timeline);
   // Chain mode resumes after declined commands with the legacy feedback
   // (conversation plus instruction); executed/failed rounds already iterate
-  // inside the core loop. The total stays capped like the legacy counter.
-  // The resume check reads the latest run only: a clean follow-up must stop
-  // even when an earlier round declined.
+  // inside the core loop. The total stays capped on turns, not commands:
+  // the resume check reads the latest run only, so a clean follow-up must
+  // stop even when an earlier round declined.
   let latest = result;
-  while (state.autoContinue && result.commands.length < chain_budget && should_resume_after_decline(latest)) {
+  while (state.autoContinue && parent_turns < chain_budget && should_resume_after_decline(latest)) {
     const feedback = `${strip_think_tags(conversation_text(state))}\n\n${RESUME_INSTRUCTION}`;
-    runtime = create_runtime(chain_budget - result.commands.length);
+    runtime = create_runtime(chain_budget - parent_turns);
     latest = await runtime.run(feedback);
     warn_delegation_budget_once(latest.timeline);
     result = merge_run_result(result, latest);
   }
-  if (state.autoContinue && result.commands.length >= chain_budget) {
+  if (state.autoContinue && parent_turns >= chain_budget) {
     process.stderr.write(`\x1b[33mChain limit reached (${chain_budget}); asking for final answer.\x1b[0m\n`);
     process.stderr.write(
       `\x1b[33mChain limit reached (${chain_budget}); ignoring further requested commands.\x1b[0m\n`,

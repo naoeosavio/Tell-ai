@@ -1010,3 +1010,51 @@ describe('parent seam (runtime-api + loop)', () => {
     void child_model;
   });
 });
+
+describe('pending approvals (v2 lifecycle)', () => {
+  it('parks until confirm, replays the same verdict', async () => {
+    const pending = core.create_pending_approvals();
+    const asked = pending.approval({ script: 'echo hi' });
+    const open = pending.pending();
+    assert.strictEqual(open.length, 1);
+    assert.strictEqual(open[0].script, 'echo hi');
+    assert.deepStrictEqual(pending.confirm(open[0].decision_id, 'approved'), { ok: true, replay: false });
+    assert.strictEqual(await asked, 'approved');
+    assert.deepStrictEqual(pending.confirm(open[0].decision_id, 'approved'), { ok: true, replay: true });
+  });
+
+  it('conflicts on a different verdict and rejects unknown ids', async () => {
+    const pending = core.create_pending_approvals();
+    const asked = pending.approval({ script: 'echo hi' });
+    const id = pending.pending()[0].decision_id;
+    assert.deepStrictEqual(pending.confirm(id, 'denied'), { ok: true, replay: false });
+    assert.strictEqual(await asked, 'denied');
+    assert.deepStrictEqual(pending.confirm(id, 'approved'), { ok: false, reason: 'conflict' });
+    assert.deepStrictEqual(pending.confirm('missing', 'approved'), { ok: false, reason: 'unknown' });
+  });
+
+  it('cancel_all denies outstanding waits fail-closed', async () => {
+    const pending = core.create_pending_approvals();
+    const asked = pending.approval({ script: 'echo hi' });
+    pending.cancel_all();
+    assert.strictEqual(await asked, 'denied');
+    assert.strictEqual(pending.pending().length, 0);
+  });
+
+  it('emits approval_request/resolved around the child approval', async () => {
+    const seen = [];
+    const runner = core.create_delegation_runner({
+      model: { ask: async () => '<RUN>\ncat f\n</RUN>' },
+      executor: async () => ({ stdout: 'out', stderr: '', exit_code: 0 }),
+      approval: async () => 'approved',
+      exec_enabled: true,
+      max_rounds: 1,
+      on_child_event: (event) => seen.push(event),
+    });
+    await runner({ kind: 'build', objective: 'read f' });
+    const request = seen.find((event) => event.type === 'approval_request');
+    const resolved = seen.find((event) => event.type === 'approval_resolved');
+    assert.ok(request !== undefined && request.script === 'cat f');
+    assert.ok(resolved !== undefined && resolved.verdict === 'approved');
+  });
+});

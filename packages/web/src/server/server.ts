@@ -14,6 +14,7 @@ import {
   create_cancellation_token,
   create_delegation_runner,
   create_node_executor,
+  create_pending_approvals,
   compose_custom_system,
   create_secret_redactor,
   DEFAULT_CONTEXT_MAX_CHARS,
@@ -41,6 +42,7 @@ import {
   truncate_output,
   type CancellationToken,
   type DelegationRunner,
+  type PendingApprovals,
   validate_chain_decision_payload,
 } from '@tell-ai/core';
 import { create_ask_ai, extract_runs, get_model, MODELS, resolve_model_spec, strip_think_tags } from '@tell-ai/sdk';
@@ -484,7 +486,7 @@ type DelegateDecisionResult = { status: 'awaiting_approval'; decisionId: string;
 type DelegateTask = {
   delegationId: string;
   createdAt: number;
-  waiter: { decisionId: string; script: string; resolve: (verdict: 'approved' | 'denied' | 'skipped') => void } | null;
+  approvals: PendingApprovals;
   decided: Map<string, { verdict: 'approve' | 'skip'; inFlight: boolean; result: DelegateDecisionResult | null }>;
   done: boolean;
   record: string | null;
@@ -540,12 +542,10 @@ function pruneDelegateTasks(): void {
   const at = Date.now();
   for (const [delegationId, task] of [...delegateTasks]) {
     if (at - task.createdAt > CHAIN_TTL_MS) {
-      if (task.waiter !== null) {
-        const waiter = task.waiter;
-        task.waiter = null;
-        delegateDecisionToTask.delete(waiter.decisionId);
-        waiter.resolve('denied');
+      for (const open of task.approvals.pending()) {
+        delegateDecisionToTask.delete(open.decision_id);
       }
+      task.approvals.cancel_all();
       task.cancel();
       delegateTasks.delete(delegationId);
       for (const [decisionId, owner] of [...delegateDecisionToTask]) {
@@ -1148,10 +1148,17 @@ app.post('/api/delegate', async (req, res) => {
   } else {
     // v2 nested build without -y: park on awaiting, resume via confirm.
     const delegationId = crypto.randomUUID();
-    const task: DelegateTask = {
+    let task: DelegateTask;
+    const approvals = create_pending_approvals({
+      on_request: (event) => {
+        delegateDecisionToTask.set(event.decision_id, delegationId);
+        delegate_task_notify(task);
+      },
+    });
+    task = {
       delegationId,
       createdAt: Date.now(),
-      waiter: null,
+      approvals,
       decided: new Map(),
       done: false,
       record: null,
@@ -1181,13 +1188,7 @@ app.post('/api/delegate', async (req, res) => {
         } else if (isHighRiskScript(request.script)) {
           return 'denied';
         } else {
-          const decisionId = crypto.randomUUID();
-          const verdict = await new Promise<'approved' | 'denied' | 'skipped'>((resolve) => {
-            task.waiter = { decisionId, script: request.script, resolve };
-            delegateDecisionToTask.set(decisionId, delegationId);
-            delegate_task_notify(task);
-          });
-          return verdict;
+          return approvals.approval(request);
         }
       },
       redact: serverRedact,
@@ -1217,14 +1218,12 @@ app.post('/api/delegate', async (req, res) => {
       delegate_task_notify(task);
     });
     for (;;) {
-      while (task.waiter === null && !task.done) {
+      while (approvals.pending().length === 0 && !task.done) {
         await delegate_task_wait(task);
       }
-      if (task.waiter !== null) {
-        const waiter = task.waiter;
-        return res
-          .status(202)
-          .json({ status: 'awaiting_approval', decisionId: waiter.decisionId, script: waiter.script });
+      const open = approvals.pending()[0];
+      if (open !== undefined) {
+        return res.status(202).json({ status: 'awaiting_approval', decisionId: open.decision_id, script: open.script });
       } else if (task.record !== null) {
         return res.json({ record: task.record });
       } else {
@@ -1267,8 +1266,8 @@ app.post('/api/delegate/:decisionId/confirm', async (req, res) => {
       return res.status(409).json({ error: 'conflicting_decision' });
     }
   }
-  const waiter = task.waiter;
-  if (waiter === null || waiter.decisionId !== decisionId) {
+  const waiter = task.approvals.pending().find((open) => open.decision_id === decisionId);
+  if (waiter === undefined) {
     return res.status(409).json({ error: 'no_pending_approval' });
   }
   if (decision === 'approve' && activeExecutions >= EXEC_MAX_CONCURRENCY) {
@@ -1286,28 +1285,25 @@ app.post('/api/delegate/:decisionId/confirm', async (req, res) => {
   });
   if (NO_EXEC) {
     task.decided.set(decisionId, { verdict: decision, inFlight: false, result: null });
-    task.waiter = null;
-    waiter.resolve('denied');
+    task.approvals.confirm(decisionId, 'denied');
     delegate_task_notify(task);
     return res.status(403).json({ error: 'disabled' });
   } else if (isHighRiskScript(waiter.script)) {
     task.decided.set(decisionId, { verdict: decision, inFlight: false, result: null });
-    task.waiter = null;
-    waiter.resolve('denied');
+    task.approvals.confirm(decisionId, 'denied');
     delegate_task_notify(task);
     return res.status(403).json({ error: 'high-risk script blocked without execution' });
   } else {
-    task.waiter = null;
-    waiter.resolve(decision === 'approve' ? 'approved' : 'skipped');
+    task.approvals.confirm(decisionId, decision === 'approve' ? 'approved' : 'skipped');
     delegate_task_notify(task);
   }
   for (;;) {
-    while (task.waiter === null && !task.done) {
+    while (task.approvals.pending().length === 0 && !task.done) {
       await delegate_task_wait(task);
     }
-    if (task.waiter !== null) {
-      const next = task.waiter;
-      const result = { status: 'awaiting_approval' as const, decisionId: next.decisionId, script: next.script };
+    const next = task.approvals.pending()[0];
+    if (next !== undefined) {
+      const result = { status: 'awaiting_approval' as const, decisionId: next.decision_id, script: next.script };
       task.decided.set(decisionId, { verdict: decision, inFlight: false, result });
       settled = true;
       return res.status(202).json(result);
