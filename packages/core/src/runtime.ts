@@ -48,7 +48,7 @@ export type CoreRuntimeInput = {
   redact?: Redactor;
   /** Observer/authorizer callbacks (they never drive the loop). */
   callbacks?: RuntimeCallbacks;
-  /** Primitive-loop round cap (defaults to `LOOP_MAX_ROUNDS`). */
+  /** Primitive-loop model-turn cap (defaults to `LOOP_MAX_ROUNDS`). */
   max_rounds?: number;
   /** Whether a denied command feeds back to the model instead of ending the loop. */
   retry_denied?: boolean;

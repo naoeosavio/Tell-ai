@@ -117,6 +117,7 @@ export {
   cancelled_token,
   create_cancellation_token,
   createTellRuntime,
+  DEFAULT_STORAGE_KEY,
   MemoryStorageAdapter,
   never_cancelled,
   type RuntimeCommand,

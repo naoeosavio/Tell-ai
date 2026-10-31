@@ -135,6 +135,7 @@ export {
   cancelled_token,
   create_cancellation_token,
   createTellRuntime,
+  DEFAULT_STORAGE_KEY,
   type DelegationRecord,
   type ExecutorOptions,
   type ExecutorResult,
