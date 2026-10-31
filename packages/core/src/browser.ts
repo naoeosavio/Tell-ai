@@ -83,6 +83,13 @@ export {
   SKIPPED_HEADER,
   SUBTASK_HEADER,
 } from './loop-feedback';
+export type {
+  PendingApproval,
+  PendingApprovals,
+  PendingApprovalsOptions,
+  PendingConfirmResult,
+} from './pending-approvals';
+export { create_pending_approvals } from './pending-approvals';
 export {
   create_read_only_approval,
   is_read_only_script,

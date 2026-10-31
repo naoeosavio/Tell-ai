@@ -105,6 +105,13 @@ export {
   has_lexical_target,
   is_path_inside_base,
 } from './paths';
+export type {
+  PendingApproval,
+  PendingApprovals,
+  PendingApprovalsOptions,
+  PendingConfirmResult,
+} from './pending-approvals';
+export { create_pending_approvals } from './pending-approvals';
 export type { ProjectContext } from './project-context';
 export {
   build_project_context,

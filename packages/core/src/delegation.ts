@@ -89,7 +89,9 @@ export type DelegationChildEvent =
   | { type: 'text'; text: string }
   | { type: 'command'; script: string; status: 'executed' | 'failed'; output: string; exit_code: number }
   | { type: 'skipped'; script: string; status: string; reason?: string }
-  | { type: 'error'; script: string; error: string };
+  | { type: 'error'; script: string; error: string }
+  | { type: 'approval_request'; script: string }
+  | { type: 'approval_resolved'; script: string; verdict: 'approved' | 'denied' | 'skipped' };
 
 /** Options to build a delegation runner (ports inherited from the parent). */
 export type DelegationRunnerOptions = {
@@ -295,8 +297,20 @@ export function create_delegation_runner(options: DelegationRunnerOptions): Dele
     const raw_context = request.context ?? options.context ?? '';
     const context = sanitize_briefing_context(raw_context, redact);
     const exec_enabled = options.exec_enabled ?? true;
-    const child_approval =
+    const base_approval =
       request.kind === 'research' ? create_read_only_approval(options.approval, options.cwd) : options.approval;
+    const emit_child = options.on_child_event;
+    // Approval stays host-owned; the core only narrates the park so every
+    // host renders the same waiting line without sniffing the port.
+    const child_approval =
+      emit_child === undefined || base_approval === undefined
+        ? base_approval
+        : async (ask: { script: string }): Promise<'approved' | 'denied' | 'skipped'> => {
+            emit_child({ type: 'approval_request', script: ask.script });
+            const verdict = await base_approval(ask);
+            emit_child({ type: 'approval_resolved', script: ask.script, verdict });
+            return verdict;
+          };
     const seed = context.slice(-DELEGATION_CONTEXT_MAX_CHARS);
     const storage = create_bounded_storage(seed);
     let rounds = 0;
@@ -326,7 +340,6 @@ export function create_delegation_runner(options: DelegationRunnerOptions): Dele
       options.max_rounds !== undefined && Number.isFinite(options.max_rounds)
         ? Math.max(1, Math.floor(options.max_rounds))
         : DELEGATION_MAX_ROUNDS;
-    const emit_child = options.on_child_event;
     const child_callbacks =
       emit_child === undefined
         ? undefined
