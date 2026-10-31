@@ -72,6 +72,11 @@ export type TellResult = {
   timeline: string[];
   commands: RuntimeCommand[];
   delegation?: DelegationRecord;
+  /**
+   * True when the runtime stripped a delegation tag because the budget is
+   * spent. The loop answers it with one final-answer round instead of ending.
+   */
+  delegation_refused?: boolean;
 };
 
 /**
@@ -184,8 +189,8 @@ export type RiskCategory =
  * Advisory risk classification, composed later by the policy engine.
  *
  * Only observable facts: whether any base rule matched, the highest
- * severity, the category of that match, human-readable reasons and stable
- * machine flags. It never carries an action verdict.
+ * severity, the category of that match, human-readable reasons, stable
+ * machine flags and the matched rule ids. It never carries an action verdict.
  */
 export type RiskAssessment = {
   risky: boolean;
@@ -194,6 +199,8 @@ export type RiskAssessment = {
   category?: RiskCategory;
   reasons?: string[];
   flags?: string[];
+  /** Ids of the base rules that matched (stable, e.g. `shell-process-substitution`). */
+  rules?: string[];
 };
 
 /** Classifies one script. The runtime observes it; policy decides. */
@@ -555,7 +562,7 @@ export function createTellRuntime(options: TellRuntimeOptions): TellRuntime {
         if (runtime_budget !== undefined && delegation_used >= runtime_budget) {
           timeline.push(delegation_budget_notice(runtime_budget));
           await save_turn(message, text);
-          return { status: 'completed', text, timeline, commands: [] };
+          return { status: 'completed', text, timeline, commands: [], delegation_refused: true };
         }
         const delegation_result: DelegationResult | null = await options.delegation({
           kind: delegation_request.kind,
@@ -567,7 +574,8 @@ export function createTellRuntime(options: TellRuntimeOptions): TellRuntime {
           await save_turn(message, text);
           return { status: 'completed', text, timeline, commands: [] };
         } else if ('refused' in delegation_result) {
-          if (delegation_result.refused === 'budget') {
+          const refused_for_budget = delegation_result.refused === 'budget';
+          if (refused_for_budget) {
             timeline.push(
               runtime_budget !== undefined
                 ? delegation_budget_notice(runtime_budget)
@@ -577,7 +585,11 @@ export function createTellRuntime(options: TellRuntimeOptions): TellRuntime {
             // Empty objective — silent, the tag stays stripped.
           }
           await save_turn(message, text);
-          return { status: 'completed', text, timeline, commands: [] };
+          if (refused_for_budget) {
+            return { status: 'completed', text, timeline, commands: [], delegation_refused: true };
+          } else {
+            return { status: 'completed', text, timeline, commands: [] };
+          }
         }
         const outcome = delegation_result.outcome;
         delegation_used += 1;
@@ -661,7 +673,7 @@ export function createTellRuntime(options: TellRuntimeOptions): TellRuntime {
       } else {
         // No skip observer — the status is still recorded below.
       }
-      timeline.push(format_command_status(status, script));
+      timeline.push(format_command_status(status, script, reason));
       await save_turn(message, text);
       return { status: 'completed', text, timeline, commands: [command] };
     }
@@ -694,7 +706,9 @@ export function createTellRuntime(options: TellRuntimeOptions): TellRuntime {
     if (verdict === 'approved') {
       // Falls through to execution below.
     } else if (verdict === 'denied') {
-      return skip_command('denied');
+      // Name the classifier rule that matched, so the denial record says why.
+      const rule = risk?.rules?.[0] ?? risk?.flags?.[0];
+      return skip_command('denied', rule);
     } else {
       return skip_command('skipped');
     }
