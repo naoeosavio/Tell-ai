@@ -283,9 +283,12 @@ function test_limits_validated() {
 function test_limits_delegate_to_runtime_limits() {
   assert.deepStrictEqual(runtime_limits.TELLRC_LIMIT_KEYS.slice().sort(), [
     'context_chars',
+    'delegation_max_rounds',
+    'delegation_repost_chars',
     'exec_timeout_ms',
     'max_buffer_bytes',
     'max_chain_steps',
+    'max_delegations',
     'output_max_bytes',
     'stdin_max_bytes',
     'stdin_timeout_ms',
@@ -299,6 +302,9 @@ function test_limits_delegate_to_runtime_limits() {
     max_chain_steps: runtime_limits.DEFAULT_MAX_CHAIN_STEPS,
     max_buffer_bytes: runtime_limits.DEFAULT_MAX_BUFFER_BYTES,
     output_max_bytes: runtime_limits.DEFAULT_OUTPUT_MAX_BYTES,
+    max_delegations: runtime_limits.DELEGATION_MAX_DELEGATIONS,
+    delegation_repost_chars: runtime_limits.DELEGATION_SUMMARY_MAX_CHARS,
+    delegation_max_rounds: runtime_limits.DELEGATION_MAX_ROUNDS,
   };
   for (const key of runtime_limits.TELLRC_LIMIT_KEYS) {
     assert.strictEqual(runtime_limits.validate_tellrc_limit_value(key, valid_by_key[key]), valid_by_key[key]);

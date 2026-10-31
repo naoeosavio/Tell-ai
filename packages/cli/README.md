@@ -94,6 +94,8 @@ Multi-step chain mode — the assistant can run a command, see its output, and c
 tell --chain "find out why the build is failing and fix it"
 ```
 
+With `--task`/`-t` (task mode) the model can also delegate: `<DELEGATE>` (read-only research, never writes) and `<SUBTASK>` (build with normal approval). One tag per answer at most; the parent only receives the `Research result (STATUS):` / `Task result (STATUS):` record (repost target 2 KiB via `--delegation-repost`, summary wins only when shorter), never raw child output. Fixed budget of 2 per run (`--max-delegations 0..2`, `0` disables; chain `< 2` always 0). Without `-t` the chain keeps the baseline prompt (no tag, no child). Details: `docs/cli/chain-mode.md`, `docs/cli/execution.md`.
+
 Stream the answer as it is generated (each chain round also streams):
 
 ```bash
@@ -104,6 +106,21 @@ tell --stream --think "why does this race condition happen?"  # reasoning on std
 `--think` also works without `--stream`: the reasoning is printed dimmed on
 stderr once the response arrives. Streaming never changes what is logged or
 saved to the context.
+
+By default the live output is quiet: `<RUN>`/`<DELEGATE>`/`<SUBTASK>` blocks,
+executed-command output and the child's activity/result are hidden (the saved
+log/context and execution are unchanged). The minimal `Delegando …` indicator
+remains, like `Thinking...`. Opt in per surface, like `--think`:
+
+```bash
+tell --stream --tags "..."        # show the protocol markup
+tell --stream --output "..."      # show executed command output
+tell -t --delegation "..."        # show the child acting live + result record
+tell -t -y "..."                  # auto-run safe commands (task mode asks by default)
+```
+
+Approval prompts and the task announcement still go to stderr; a security gate
+cannot be hidden.
 
 Include piped input with a prompt:
 
@@ -178,7 +195,7 @@ New flags: `--profile`, `--system`, `--system-file`, `--temperature` (0..2).
 
 ### Runtime limits
 
-Operational caps live in `@tell-ai/core` (`src/runtime-limits.ts` — single owner of `parse_runtime_limits`, `truncate_context`, `RuntimeLimits`, `ExecutionOptions`); the CLI only adds `StdinLimitError` and the process exit-status family: context 64 Ki (`--context-max-chars` / `TELL_CONTEXT_MAX_CHARS`), stdin 30 s (`--stdin-timeout` / `--no-stdin-timeout` / `TELL_STDIN_TIMEOUT_MS`) and 1 MiB (`--stdin-max-bytes` / `TELL_STDIN_MAX_BYTES`), exec 120 s (`--exec-timeout` / `TELL_EXEC_TIMEOUT_MS`), 8 chain rounds by default (`--max-chain` / `TELL_MAX_CHAIN_STEPS`, range `1..128`), 32 Mi buffer (`--max-buffer` / `TELL_MAX_BUFFER_BYTES`), 200 Ki delivered output (`--output-max-bytes` / `TELL_OUTPUT_MAX_BYTES`). Precedence `flag > env > project .tellrc > user ~/.tellrc > default`; bad flag/env fails with exit `2` before any model call, stdin timeout is `124`, overflow is `125`. Context is cut by whole turns with balanced `<think>`/`<RUN>` blocks — no tokenizer, no stdout monkey-patch. Covered by `bun run test:runtime`.
+Operational caps live in `@tell-ai/core` (`src/runtime-limits.ts` — single owner of `parse_runtime_limits`, `truncate_context`, `RuntimeLimits`, `ExecutionOptions`); the CLI only adds `StdinLimitError` and the process exit-status family: context 64 Ki (`--context-max-chars` / `TELL_CONTEXT_MAX_CHARS`), stdin 30 s (`--stdin-timeout` / `--no-stdin-timeout` / `TELL_STDIN_TIMEOUT_MS`) and 1 MiB (`--stdin-max-bytes` / `TELL_STDIN_MAX_BYTES`), exec 120 s (`--exec-timeout` / `TELL_EXEC_TIMEOUT_MS`), 8 chain rounds by default (`--max-chain` / `TELL_MAX_CHAIN_STEPS`, range `1..128`), 32 Mi buffer (`--max-buffer` / `TELL_MAX_BUFFER_BYTES`), 200 Ki delivered output (`--output-max-bytes` / `TELL_OUTPUT_MAX_BYTES`), delegation budget 2 (`--max-delegations` / `TELL_MAX_DELEGATIONS`, `0..2`) and repost target 2 Ki (`--delegation-repost` / `TELL_DELEGATION_REPOST_CHARS`, `512..8192`). Precedence `flag > env > project .tellrc > user ~/.tellrc > default`; bad flag/env fails with exit `2` before any model call, stdin timeout is `124`, overflow is `125`. Context is cut by whole turns with balanced `<think>`/`<RUN>` blocks — no tokenizer, no stdout monkey-patch. Covered by `bun run test:runtime`.
 
 ### Flag interactions
 

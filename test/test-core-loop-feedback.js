@@ -49,6 +49,17 @@ describe('format_command_result', () => {
   });
 });
 
+describe('format_denied_feedback', () => {
+  it('names the denial reason and leaves skipped unchanged', () => {
+    assert.strictEqual(
+      core.format_denied_feedback('bash <(ls)', 'shell-process-substitution'),
+      `Command denied:\nbash <(ls)\nReason: shell-process-substitution\n\n${core.COMMAND_DENIED_PREAMBLE}\n${core.COMMAND_DENIED_INSTRUCTION}`,
+    );
+    assert.ok(!core.format_denied_feedback('bash <(ls)').includes('Reason:'), 'no reason, no line');
+    assert.strictEqual(core.format_command_skipped('bash <(ls)'), 'Skipped by user:\nbash <(ls)');
+  });
+});
+
 describe('format_command_skipped', () => {
   it('reports a user-declined command', () => {
     assert.strictEqual(core.format_command_skipped('rm -rf build'), 'Skipped by user:\nrm -rf build');

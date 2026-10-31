@@ -11,7 +11,7 @@ The model proposes commands by wrapping them in `<RUN>…</RUN>` tags. The core 
 5. `onCommandOutput`/`onCommandSkip` → legacy result lines (`Executed command:` / `Command failed:` / `Skipped by user:` / `Command execution disabled — not run:`) appended to the log, mirrored to the timeline, optional context save.
 6. Non-chain (`max_rounds: 1`): commands ran but visible text is empty → one more model call with tags stripped, break. Chain (`max_rounds: 8`): declined commands resume with conversation-plus-instruction feedback until clean, skipped, or capped.
 
-`visible` is printed to stdout; command output is echoed to stderr (dimmed when TTY) and embedded in the feedback string, never printed to stdout directly.
+`visible` is printed to stdout (protocol tag blocks are filtered by default; `--tags` shows them). Command output is embedded in the feedback string — never printed to stdout directly — and is echoed to stderr only with `--output` (dimmed when TTY); it stays in the log/context either way.
 
 ## Per-command outcomes (mirrored from runtime callbacks)
 
@@ -51,5 +51,13 @@ Deliberately allowed: local-only interpreter one-liners such as `node -e "consol
 * One command per round (first `<RUN>` block only).
 * Each command: 120s timeout, 32MiB output cap.
 * Chain mode: at most 8 command rounds per invocation (see [chain-mode.md](chain-mode.md)).
+
+## Delegation precedence (`<DELEGATE>` / `<SUBTASK>` win over `<RUN>`)
+
+Task-only (`-t`, `--task`): the parent prompt gains the core-owned delegation section (appended after the SDK prompt) only in task mode. Without `-t`, the prompt keeps the baseline of commit `09269bb` and an emitted tag is inert text. At most one delegation tag per answer: the first runs, and an extra tag prints a warning. Tags inside a literal `<think>` block are inert. When a delegation tag and `<RUN>` appear together, the delegation wins and the `<RUN>` is recorded `Skipped by user:`, never executed.
+
+* `<DELEGATE>` (research) is read-only: `create_read_only_approval` denies sensitive paths first (`.env*`, `.tell/**`, `.git/**`, `*.key`, `*.pem`, `id_rsa` family — checked on path-like tokens in the command text, so `git show HEAD:.env` denies), then metacharacters/write rules (`>`, `|`, `;`, `&&`, `$(`, backticks, `find -delete/-exec`, `git checkout`), then the host approval. Deny-by-default, with or without `-y`. Two precision rules (live 2026-10-24): fd duplication (`2>&1`, `>&2`) is not a file redirect and stays allowed — every other `>`/`&` still denies; absolute tokens lexically inside the host cwd are left to the allowlist + the host realpath gate (models are told the absolute cwd and emit it), absolute outside stays denied, and without a cwd every absolute token still denies.
+* `<SUBTASK>` (build) inherits the host approval (`--no-exec` wins everywhere, `-y` auto-executes safe builds, high-risk still asks, outside-cwd still gates). Without `-y` the Web parks the child script on a nested approval (server chain `childPending`, stateless delegate `202 awaiting_approval` + confirm) instead of denying; `denied` with motive (never `skipped`) now only covers `--no-exec`, high-risk, concurrency/budget exhaustion and TTL/restart expiry.
+* The parent only receives `Research result (STATUS):` / `Task result (STATUS):` (repost target 2 Ki, `--delegation-repost` adjustable; summary wins only when shorter, else the redacted original climbs) plus one host-assembled stats line. Child caps: up to 32 rounds (`TELL_DELEGATION_MAX_ROUNDS`/tellrc `delegation_max_rounds`, `0..128`), ≤8 KiB per command, 64 Ki storage, ≤4 KiB objective, 2 Ki briefing context. Parent budget: fixed 2 whenever the chain has `>= 2` rounds, else 0 (`--max-chain 1` → 0, tag stays inert; `--max-delegations 0..2` overrides, `0` disables). Status is host-assigned (`DONE` / `IN PROGRESS` / `BLOCKED`); the spent tag warns deterministically. Delegation does not wait for `PolicyDecision` (policy-sandbox exception, revocable).
 
 Sources: `packages/cli/src/core-adapters.ts`, `packages/cli/src/Tell.ts` (`run_response_loop`), `packages/core/src/loop.ts`. Core reference: [../core/exec.md](../core/exec.md), [../core/risk.md](../core/risk.md), [../core/loop.md](../core/loop.md).

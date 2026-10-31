@@ -102,8 +102,8 @@ const models = await list_custom_models({ keys: { custom: key }, urls: { custom:
 |---|---|
 | `strip_markdown_code_blocks(text)` | Removes ``` fenced code blocks (so `<RUN>` tags hidden inside them are never parsed). |
 | `strip_think_tags(text)` | Removes ` thinking…</think>` blocks and trims. |
-| `strip_run_tags(text)` | Removes `<RUN>…</RUN>` blocks and trims. |
-| `extract_runs(text)` | `{ scripts, visible }`: strips code blocks first, extracts **every** `<RUN>` script (a block ends at the last closing tag before the next opening tag, so a command containing `</RUN>` is not truncated), and returns visible text with every run block removed. |
+| `strip_run_tags(text)` | Removes `<RUN>…</RUN>` blocks and trims. The matcher accepts spaces inside the tag (`< RUN >`, `</ RUN >`). |
+| `extract_runs(text)` | `{ scripts, visible }`: strips code blocks first, extracts **every** `<RUN>` script (a block ends at the last closing tag before the next opening tag, so a command containing `</RUN>` is not truncated), and returns visible text with every run block removed. The opener and closer accept spaces around the word `RUN`. |
 | `sanitize_reasoning(text)` | Neutralizes angle brackets in model reasoning so it cannot forge `<think>`/`<RUN>` boundaries. |
 
 ## `summarize_context(ai, text)` → `Promise<string>`

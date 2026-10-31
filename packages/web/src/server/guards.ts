@@ -7,6 +7,7 @@
 
 import {
   assess_base_risk,
+  is_sensitive_rel_path,
   PAYLOAD_MAX_CONTENT_CHARS,
   PAYLOAD_MAX_MESSAGES,
   PAYLOAD_MAX_SYSTEM_CHARS,
@@ -19,20 +20,12 @@ import {
 /**
  * True when a workspace-relative path points at secrets we never expose:
  * `.env*`, `.tell/**` (session persistence), `*.key`, `*.pem`, `.git/**`.
+ *
+ * Owned by `@tell-ai/core` (`is_sensitive_rel_path`); re-exported here under
+ * the pinned public name so both hosts share one predicate.
  */
 export function isSensitiveRelPath(relPath: string): boolean {
-  const normalized = relPath.replace(/\\/g, '/').toLowerCase();
-  if (normalized.startsWith('/') || normalized.includes('\0')) return true;
-  const segments = normalized.split('/');
-  for (const segment of segments) {
-    // `.env.example` is a committed template, not a secret — never block it.
-    if (segment === '.env.example') continue;
-    if (segment === '.env' || segment.startsWith('.env.')) return true;
-    if (segment === '.tell' || segment === '.git') return true;
-  }
-  const base = segments[segments.length - 1] ?? '';
-  if (base.endsWith('.key') || base.endsWith('.pem')) return true;
-  return false;
+  return is_sensitive_rel_path(relPath);
 }
 
 // ---------------------------------------------------------------------------
@@ -271,8 +264,9 @@ export function resolveStreamMode(requestValue: unknown, serverDefault: boolean)
  *
  * The sandbox uses the core owner (`assess_base_risk(script, 'strict')`) —
  * the Web profile is the strict one (any interpreter eval, bare `env`,
- * `base64 -d`, shell expansions), so the rules live in a single place and
- * can never drift from the CLI's matrix.
+ * `base64 -d`, shell expansions, credential-file reads — the last one now
+ * shared with the CLI, which prompts instead of blocking), so the rules
+ * live in a single place and can never drift from the CLI's matrix.
  *
  * @param script - Command script to classify.
  * @returns Whether the script must be blocked.

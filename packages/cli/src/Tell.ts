@@ -6,6 +6,11 @@ import * as path from 'path';
 import * as readline from 'readline';
 import {
   build_execution_options,
+  collect_exec_secrets,
+  collect_sensitive_file_secrets,
+  create_delegation_runner,
+  type DelegationChildEvent,
+  create_secret_redactor,
   DEFAULT_CONTEXT_MAX_CHARS,
   DEFAULT_EXEC_TIMEOUT_MS,
   DEFAULT_MAX_BUFFER_BYTES,
@@ -13,6 +18,12 @@ import {
   DEFAULT_OUTPUT_MAX_BYTES,
   DEFAULT_STDIN_MAX_BYTES,
   DEFAULT_STDIN_TIMEOUT_MS,
+  DELEGATION_MAX_DELEGATIONS,
+  DELEGATION_RECORD_CONTEXT_MAX_CHARS,
+  DELEGATION_SUMMARY_MAX_CHARS,
+  type DelegationOutcome,
+  type DelegationRequest,
+  type DelegationResult,
   EXIT_CONFIG_ERROR,
   EXIT_LIMIT,
   EXIT_MODEL_ERROR,
@@ -20,11 +31,18 @@ import {
   format_command_result,
   HOST_DEFAULT_MODEL,
   format_command_skipped,
+  is_task_id,
   MAX_CHAIN_STEPS,
+  delegation_prompt_section,
   parse_runtime_limits,
+  type Redactor,
+  resolve_max_delegations,
+  resolve_task_id,
   type RuntimeLimits,
   runtime_env_from_process,
   StdinLimitError,
+  strip_delegation_tags,
+  task_name_from_ref,
   truncate_context,
   truncate_output,
 } from '@tell-ai/core';
@@ -94,6 +112,7 @@ type CliOptions = {
   context?: boolean;
   ctx?: boolean | string;
   name?: boolean;
+  task?: boolean | string;
   history?: boolean | string;
   yes?: boolean;
   chain?: boolean;
@@ -102,6 +121,9 @@ type CliOptions = {
   web?: boolean;
   stream?: boolean;
   think?: boolean;
+  tags?: boolean;
+  output?: boolean;
+  delegation?: boolean;
   cwd?: string;
   models?: boolean;
   requireApproval?: boolean;
@@ -117,6 +139,8 @@ type CliOptions = {
   maxChain?: string;
   maxBuffer?: string;
   outputMaxBytes?: string;
+  maxDelegations?: string;
+  delegationRepost?: string;
 };
 
 type ParsedInput = { model: string; parts: string[]; readStdin: boolean };
@@ -136,6 +160,43 @@ type ContextPlan =
   | { $: 'existing'; file: string; label: string; promptFromRef?: string }
   | { $: 'create'; file: string; label: string; promptFromRef?: string };
 
+// The resolved plan for one task-mode invocation. The id is `task-NNN-name`;
+// `main.txt` inside its directory is the context file that `--ctx` would use.
+// `reset` starts empty (`-n`) without deleting the child records.
+type TaskPlan = {
+  id: string;
+  dir: string;
+  file: string;
+  resumed: boolean;
+  reset: boolean;
+  prompt: string;
+};
+
+/**
+ * Releases a task directory claimed by a run that never persisted `main.txt`.
+ *
+ * The number is claimed with `mkdir` before the model is called, so every
+ * failure path (bad model spec, provider error, a crash before the first
+ * save) must give it back; otherwise an invisible empty task consumes the
+ * number forever. Resumed tasks keep their directory, and a task whose
+ * `main.txt` exists was persisted, so neither is removed.
+ *
+ * @param task - Resolved task plan for this invocation, if any.
+ */
+function discard_unused_task(task: TaskPlan | undefined): void {
+  if (task === undefined || task.resumed) {
+    return;
+  } else if (fs.existsSync(task.file)) {
+    return;
+  } else {
+    try {
+      fs.rmdirSync(task.dir);
+    } catch {
+      // The directory is gone or not empty — nothing to clean.
+    }
+  }
+}
+
 // Effective execution mode lives in `./core-adapters` (single owner shared
 // with the approval port); the readline prompt below only renders it.
 
@@ -147,10 +208,14 @@ type ConversationState = {
   saveContext: boolean;
   stream: boolean;
   think: boolean;
+  showTags: boolean;
+  showOutput: boolean;
+  showDelegation: boolean;
   coreConfig: CoreConfig;
   customSystemText?: string;
   temperature?: number;
   limits: RuntimeLimits;
+  task?: TaskPlan;
 };
 
 const CREATED_DIRS = new Set<string>();
@@ -304,11 +369,21 @@ function history_dir(): string {
   return path.join(os.homedir(), '.ai', 'tell_history');
 }
 
-function log_file(): string {
+// The conversation log is a convenience store: a read-only or full `~/.ai`
+// must never abort the run (and must never be reported as a model error).
+// A missing log returns null and every append becomes a no-op.
+function log_file(): string | null {
   const dir = history_dir();
-  ensure_dir(dir);
-  const timestamp = new Date().toISOString().replace(/:/g, '-');
-  return path.join(dir, `conversation_${timestamp}.txt`);
+  try {
+    ensure_dir(dir);
+    const timestamp = new Date().toISOString().replace(/:/g, '-');
+    return path.join(dir, `conversation_${timestamp}.txt`);
+  } catch (error) {
+    process.stderr.write(
+      `\x1b[33mWarning: conversation log disabled: ${error instanceof Error ? error.message : String(error)}\x1b[0m\n`,
+    );
+    return null;
+  }
 }
 
 function context_dir(): string {
@@ -328,22 +403,78 @@ function named_context_file(name: string): string {
   return path.join(context_dir(), `${name}.txt`);
 }
 
-// Every saved context file, newest first (index 0 == `@0`,
-// mirroring `git stash@{0}`).
-function list_context_entries(): ContextEntry[] {
-  let names: string[] = [];
+// The context file of a task: `task-NNN-name/main.txt`. The directory also
+// holds the child records (`delegate-NNN.txt` / `subtask-NNN.txt`).
+function task_context_file(id: string): string {
+  return path.join(context_dir(), id, 'main.txt');
+}
+
+// Task ids that exist on disk. A directory counts even before `main.txt`
+// exists: another run may have claimed the number and still be in flight.
+function list_task_ids(): string[] {
+  let dirents: fs.Dirent[] = [];
   try {
-    names = fs.readdirSync(context_dir()).filter((name) => name.endsWith('.txt'));
+    dirents = fs.readdirSync(context_dir(), { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return dirents.filter((dirent) => dirent.isDirectory() && is_task_id(dirent.name)).map((dirent) => dirent.name);
+}
+
+// Claims a task directory atomically. `mkdir` without `recursive` fails with
+// EEXIST when a concurrent run took the number first; retry with fresh ids so
+// two runs can never share a number.
+function reserve_task_dir(raw_ref: string | null, name: string): { id: string; resumed: boolean } {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const resolved = resolve_task_id(raw_ref, name, list_task_ids());
+    if (resolved.resumed) {
+      return resolved;
+    } else {
+      ensure_dir(context_dir());
+      try {
+        fs.mkdirSync(path.join(context_dir(), resolved.id));
+        return resolved;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+          // Another run claimed the number between the listing and the mkdir.
+        } else {
+          throw error;
+        }
+      }
+    }
+  }
+  throw new Error('Could not allocate a task number — retry the run');
+}
+
+// Every saved context file, newest first (index 0 == `@0`,
+// mirroring `git stash@{0}`). A task is a directory (`task-NNN-name/`) and its
+// id is the directory name; `main.txt` provides the preview and the mtime.
+function list_context_entries(): ContextEntry[] {
+  let dirents: fs.Dirent[] = [];
+  try {
+    dirents = fs.readdirSync(context_dir(), { withFileTypes: true });
   } catch {
     return [];
   }
   const entries: ContextEntry[] = [];
-  for (const name of names) {
-    const file = path.join(context_dir(), name);
-    try {
-      entries.push({ file, id: name.slice(0, -'.txt'.length), mtimeMs: fs.statSync(file).mtimeMs });
-    } catch {
-      // Entry vanished between readdir and stat (or is unreadable) — skip it.
+  for (const dirent of dirents) {
+    if (dirent.isDirectory()) {
+      if (!is_task_id(dirent.name)) continue;
+      const file = task_context_file(dirent.name);
+      try {
+        entries.push({ file, id: dirent.name, mtimeMs: fs.statSync(file).mtimeMs });
+      } catch {
+        // A task directory without main.txt is not a saved context yet.
+      }
+    } else if (dirent.name.endsWith('.txt')) {
+      const file = path.join(context_dir(), dirent.name);
+      try {
+        entries.push({ file, id: dirent.name.slice(0, -'.txt'.length), mtimeMs: fs.statSync(file).mtimeMs });
+      } catch {
+        // Entry vanished between readdir and stat (or is unreadable) — skip it.
+      }
+    } else {
+      // Neither a task directory nor a context file.
     }
   }
   entries.sort((a, b) => b.mtimeMs - a.mtimeMs || b.file.localeCompare(a.file));
@@ -513,6 +644,150 @@ function plan_prompt_from_ref(plan: ContextPlan): string {
   return plan.$ !== 'none' && plan.promptFromRef ? plan.promptFromRef : '';
 }
 
+// First user turn of a resumed task that arrived without a prompt.
+const TASK_RESUME_INSTRUCTION = 'Continue the task from the saved context. Take the next step toward the objective.';
+
+// Resolves the `-t/--task` invocation into a task plan. A `%ref` resumes a
+// saved task (by exact id or by name) or creates `task-NNN-name`; a prompt
+// without a ref creates `task-NNN-<hash8>`. A new task needs an objective; a
+// resume without a prompt continues from the saved context.
+function build_task_plan(opts: CliOptions, prompt: string, reserve = true): TaskPlan {
+  const { first, rest } = split_ctx_value(typeof opts.task === 'string' ? opts.task : '');
+  const raw_ref = first.startsWith('%') ? first.slice(1) : null;
+  if (raw_ref !== null && sanitize_context_name(raw_ref) === null) {
+    throw new Error(`Invalid task reference "${sanitize_label(first)}" — use % followed by a task id`);
+  }
+  const task_prompt = [rest, prompt].filter(Boolean).join(' ').trim();
+  const reset = Boolean(opts.name);
+  if (reset && raw_ref === null) {
+    throw new Error('-n/--name requires a task id in task mode: --task %<id> -n');
+  }
+  const name =
+    raw_ref !== null
+      ? task_name_from_ref(raw_ref)
+      : createHash('sha256').update(`${process.cwd()}\n${task_prompt}`).digest('hex').slice(0, 8);
+  if (name === '') {
+    throw new Error('Invalid task name — use letters, digits and dashes');
+  } else {
+    // The name is usable; resolve it below.
+  }
+  // The prompt check runs before any directory claim, so a create that can
+  // never run leaves nothing behind. Web mode never claims here: the child
+  // host resolves (and creates) the task from the same raw value and cwd.
+  const probe = resolve_task_id(raw_ref, name, list_task_ids());
+  if (!probe.resumed && task_prompt === '') {
+    throw new Error('error: missing prompt — a new task needs an objective');
+  } else {
+    // The task can run; claim its number below.
+  }
+  const resolved = reserve ? reserve_task_dir(raw_ref, name) : probe;
+  if (!resolved.resumed && task_prompt === '') {
+    // A concurrent run could claim the id between the probe and the claim.
+    throw new Error('error: missing prompt — a new task needs an objective');
+  } else {
+    // A resume without a prompt continues from the saved context.
+  }
+  const effective_prompt = task_prompt === '' ? TASK_RESUME_INSTRUCTION : task_prompt;
+  const file = task_context_file(resolved.id);
+  return {
+    id: resolved.id,
+    dir: path.dirname(file),
+    file,
+    resumed: resolved.resumed,
+    reset,
+    prompt: effective_prompt,
+  };
+}
+
+// Short host-owned block appended after the SDK prompt in task mode. The SDK
+// stays leaf: it never learns that a task exists.
+function task_prompt_section(id: string, can_delegate: boolean): string {
+  const delegation = can_delegate ? ' Delegate research and builds to keep this context small.' : '';
+  return `\nTask mode (${id}): this run is one turn of a saved task context. Keep the answer focused on the next step.${delegation}`;
+}
+
+// Full-wipe reset for task mode (`--task %id -n`): removes `main.txt` and
+// every child record, keeps the directory (the NNN anchor), then writes an
+// empty `main.txt` so the task stays visible in `-l`. History is kept.
+function wipe_task_dir(dir: string): void {
+  let names: string[] = [];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (name === 'main.txt' || /^(delegate|subtask)-\d+\.txt$/.test(name)) {
+      try {
+        fs.unlinkSync(path.join(dir, name));
+      } catch {
+        // Best effort — a missing file races nothing.
+      }
+    } else {
+      // Other files stay.
+    }
+  }
+  try {
+    ensure_dir(dir);
+    fs.writeFileSync(path.join(dir, 'main.txt'), '', { encoding: 'utf8', mode: 0o600 });
+    tighten_permissions(path.join(dir, 'main.txt'), 0o600);
+  } catch (error) {
+    process.stderr.write(
+      `\x1b[33mWarning: failed to reset ${dir}: ${error instanceof Error ? error.message : String(error)}\x1b[0m\n`,
+    );
+  }
+}
+
+// Writes one child record (`delegate-NNN.txt` / `subtask-NNN.txt`) beside
+// `main.txt`. The number is the highest present plus one, so a reset never
+// overwrites an old record.
+function write_delegation_record(
+  task: TaskPlan,
+  request: DelegationRequest,
+  outcome: DelegationOutcome,
+  context: string,
+  redact?: Redactor,
+): void {
+  const prefix = request.kind === 'research' ? 'delegate' : 'subtask';
+  const pattern = new RegExp(`^${prefix}-(\\d{3,})\\.txt$`);
+  let highest = 0;
+  try {
+    for (const name of fs.readdirSync(task.dir)) {
+      const match = pattern.exec(name);
+      if (match?.[1] !== undefined) {
+        highest = Math.max(highest, Number(match[1]));
+      } else {
+        // Not a child record of this kind.
+      }
+    }
+  } catch {
+    // The directory does not exist yet: the first record is number 001.
+  }
+  const mask = (value: string): string => (redact === undefined ? value : redact(value));
+  const body = [
+    'Objective:',
+    mask(request.objective),
+    '',
+    'Context-at-delegation:',
+    truncate_context(mask(context), DELEGATION_RECORD_CONTEXT_MAX_CHARS),
+    '',
+    `Status: ${outcome.status}`,
+    '',
+    'Result:',
+    outcome.record,
+  ].join('\n');
+  const file = path.join(task.dir, `${prefix}-${String(highest + 1).padStart(3, '0')}.txt`);
+  try {
+    ensure_dir(task.dir);
+    fs.writeFileSync(file, `${body}\n`, { encoding: 'utf8', mode: 0o600 });
+    tighten_permissions(file, 0o600);
+  } catch (error) {
+    process.stderr.write(
+      `\x1b[33mWarning: failed to save ${path.basename(file)}: ${error instanceof Error ? error.message : String(error)}\x1b[0m\n`,
+    );
+  }
+}
+
 // Builds the effective context plan for this invocation from the parsed
 // `-c`/`--ctx`/`-n` options. `--ctx %id -n` is an explicit reset: starts
 // empty even when the id exists. `-n` requires `%id` — bare tokens are prompt
@@ -538,10 +813,27 @@ function build_context_plan(
   return { $: 'none' };
 }
 
-function append_log(file: string, text: string): void {
-  ensure_dir(path.dirname(file));
-  fs.appendFileSync(file, `${text}\n`, { encoding: 'utf8', mode: 0o600 });
-  tighten_permissions(file, 0o600);
+let LOG_WRITE_FAILED = false;
+
+function append_log(file: string | null, text: string): void {
+  if (file === null) {
+    return;
+  } else {
+    try {
+      ensure_dir(path.dirname(file));
+      fs.appendFileSync(file, `${text}\n`, { encoding: 'utf8', mode: 0o600 });
+      tighten_permissions(file, 0o600);
+    } catch (error) {
+      if (!LOG_WRITE_FAILED) {
+        LOG_WRITE_FAILED = true;
+        process.stderr.write(
+          `\x1b[33mWarning: conversation log disabled: ${error instanceof Error ? error.message : String(error)}\x1b[0m\n`,
+        );
+      } else {
+        // The warning was already printed once for this run.
+      }
+    }
+  }
 }
 
 function read_text(file: string): string {
@@ -556,10 +848,16 @@ function limit_context(text: string, max_chars: number = MAX_CONTEXT_CHARS): str
   return truncate_context(text, max_chars);
 }
 
+// shortcut: two runs on the same task keep the last writer's turns (no run
+// lock); add a lock when concurrent editing of one task matters.
 function write_context(file: string, content: string, max_chars: number = MAX_CONTEXT_CHARS): void {
   ensure_dir(path.dirname(file));
-  fs.writeFileSync(file, `${limit_context(content, max_chars).trim()}\n`, { encoding: 'utf8', mode: 0o600 });
-  tighten_permissions(file, 0o600);
+  // Write beside the target and rename: a crash or a concurrent reader never
+  // sees a half-written context file.
+  const temp = `${file}.tmp-${process.pid}`;
+  fs.writeFileSync(temp, `${limit_context(content, max_chars).trim()}\n`, { encoding: 'utf8', mode: 0o600 });
+  tighten_permissions(temp, 0o600);
+  fs.renameSync(temp, file);
 }
 
 function save_incremental_context(contextPath: string, previousContext: string, state: ConversationState): void {
@@ -668,6 +966,23 @@ function wants_model_help(argv: string[]): boolean {
   return argv.some((arg, index) => (arg === '-m' || arg === '--model') && argv[index + 1] === '--help');
 }
 
+// `-t/--task` is extracted before commander: an optional value would swallow
+// the first prompt word (`tell -t fix the build`). Only a `%ref` token is a
+// value; every other token stays prompt text.
+function extract_task_flag(argv: string[]): { argv: string[]; task?: boolean | string } {
+  const index = argv.findIndex((arg) => arg === '-t' || arg === '--task');
+  if (index === -1) {
+    return { argv };
+  } else {
+    const next = argv[index + 1];
+    if (typeof next === 'string' && next.startsWith('%')) {
+      return { argv: [...argv.slice(0, index), ...argv.slice(index + 2)], task: next };
+    } else {
+      return { argv: [...argv.slice(0, index), ...argv.slice(index + 1)], task: true };
+    }
+  }
+}
+
 function build_program(argv: string[]): Command {
   return new Command()
     .name('tell')
@@ -679,7 +994,11 @@ function build_program(argv: string[]): Command {
       '--ctx [ref]',
       'context ref (@N recency, %id use-or-create) + prompt, or prompt text alone (default context)',
     )
-    .option('-n, --name', 'reset a context (--ctx %id -n; starts empty, even if it exists)')
+    .option(
+      '-t, --task [ref]',
+      'run one task (%id resume/create, else a prompt): forces --chain --stream --require-approval; add -y to auto-run safe commands',
+    )
+    .option('-n, --name', 'reset a context (--ctx %id -n) or a task (--task %id -n): starts empty')
     .option('-l, --history [ref]', 'list contexts + conversations; @N/%N show an entry; any other value searches both')
     .option('--models', 'list the models the custom endpoint exposes (CUSTOM_BASE_URL)')
     .option('-y, --yes', 'execute requested commands without confirmation')
@@ -687,6 +1006,9 @@ function build_program(argv: string[]): Command {
     .option('--chain', 'continue after command output until the assistant gives a final answer')
     .option('--stream', 'stream the response as it is generated')
     .option('--think', 'show the model reasoning on stderr (works with and without --stream)')
+    .option('--tags', 'show <RUN>/<DELEGATE>/<SUBTASK> tag text on stdout (hidden by default)')
+    .option('--output', 'show the output of executed commands (hidden by default)')
+    .option('--delegation', 'show delegation indicators and result records (hidden by default)')
     .option('-i, --input', 'read stdin and include it with the prompt')
     .option('-w, --web', 'launch the interactive Tell Web sandbox')
     .option('--cwd <path>', 'working directory for the sandbox (created if missing)')
@@ -702,6 +1024,14 @@ function build_program(argv: string[]): Command {
     .option('--max-chain <n>', `max chain rounds 1..${MAX_CHAIN_STEPS} (default ${DEFAULT_MAX_CHAIN_STEPS})`)
     .option('--max-buffer <n>', `internal exec buffer bytes (default ${DEFAULT_MAX_BUFFER_BYTES})`)
     .option('--output-max-bytes <n>', `delivered output cap bytes (default ${DEFAULT_OUTPUT_MAX_BYTES})`)
+    .option(
+      '--max-delegations <n>',
+      `max delegations per run 0..${DELEGATION_MAX_DELEGATIONS} (default ${DELEGATION_MAX_DELEGATIONS})`,
+    )
+    .option(
+      '--delegation-repost <n>',
+      `delegation repost target chars 512..8192 (default ${DELEGATION_SUMMARY_MAX_CHARS})`,
+    )
     .option('--no-exec', 'do not execute requested commands')
     .parse(argv);
 }
@@ -710,13 +1040,26 @@ function format_missing_prompt_error(program: Command): string {
   return `error: missing prompt\n\n${program.helpInformation().trimEnd()}`;
 }
 
-function remember_assistant(state: ConversationState, log: string, response: string): void {
-  append_log(log, `Assistant:\n${response}`);
-  state.timeline.push(`Assistant:\n${response}`);
+function remember_assistant(state: ConversationState, log: string | null, response: string): void {
+  const cleaned = strip_delegation_tags(response);
+  if (cleaned.trim() === '') {
+    // Empty model replies (a bare resume continuation, a killed
+    // mid-delegation turn) carry no content: saving `Assistant:\n` would
+    // bloat the context with an empty turn the next resume cannot use.
+    return;
+  } else {
+    append_log(log, `Assistant:\n${cleaned}`);
+    state.timeline.push(`Assistant:\n${cleaned}`);
+  }
 }
 
 function remember_command_result(state: ConversationState, result: string): void {
   state.timeline.push(result);
+}
+
+function remember_delegation(state: ConversationState, log: string | null, record: string): void {
+  append_log(log, record);
+  state.timeline.push(record);
 }
 
 // Prints trimmed command output dimmed on TTY, plain otherwise (legacy
@@ -731,9 +1074,42 @@ function print_command_output(output: string): void {
   }
 }
 
+// Prints one live child event when `--delegation` is active (never by default).
+function print_child_event(event: DelegationChildEvent): void {
+  if (event.type === 'text') {
+    const text = event.text.trim();
+    if (text !== '') {
+      const indented = text
+        .split('\n')
+        .map((line) => `  │ ${line}`)
+        .join('\n');
+      process.stderr.write(`\x1b[2m${indented}\x1b[0m\n`);
+    }
+  } else if (event.type === 'command') {
+    process.stderr.write(`\x1b[2m  │ $ ${event.script}\x1b[0m\n`);
+    const output = event.output.trim();
+    if (output !== '') {
+      const indented = output
+        .split('\n')
+        .map((line) => `  │ ${line}`)
+        .join('\n');
+      process.stderr.write(`\x1b[2m${indented}\x1b[0m\n`);
+    }
+  } else if (event.type === 'skipped') {
+    // Show the real status (`denied`, `skipped`) and the rule id when present.
+    const reason = event.reason !== undefined && event.reason.trim() !== '' ? ` (${event.reason.trim()})` : '';
+    process.stderr.write(`\x1b[2m  │ ${event.status}${reason}: ${event.script}\x1b[0m\n`);
+  } else {
+    process.stderr.write(`\x1b[2m  │ error: ${event.script}: ${event.error}\x1b[0m\n`);
+  }
+}
+
 // Follow-up instruction for resumed chain rounds (legacy wording, kept
 // verbatim: the pinned suites match on it and forbid `Conversation so far:`).
-const RESUME_INSTRUCTION = 'Request another command with <RUN> tags if needed; otherwise answer without <RUN> tags.';
+// A resume only happens after a declined command, so name the ban: the model
+// else spends the next round requesting the same script.
+const RESUME_INSTRUCTION =
+  'Request another command with <RUN> tags if needed; otherwise answer without <RUN> tags. Do not request the command above again.';
 
 // True when a finished run paused on a declined command and chain mode must
 // resume it: the core loop stops on non-executed commands (confirm pauses,
@@ -767,52 +1143,203 @@ function merge_run_result(aggregated: TellResult, next: TellResult): TellResult 
 async function run_response_loop(
   ai: AskInstance,
   state: ConversationState,
-  log: string,
+  log: string | null,
   contextPath: string,
   previousContext: string,
+  redact?: Redactor,
 ): Promise<void> {
+  // The execution contract is built once from the resolved limits (single
+  // owner in `@tell-ai/core`): timeout/buffer flow to the injected
+  // executor, the output cap to delivered text, rounds to the loop budget.
+  const exec_options = build_execution_options(state.limits);
+  const chain_budget = exec_options.max_rounds;
+  // Delegation budget scales with `--max-chain` (0 with 1 round: the tag
+  // could never be consumed, so the prompt must not teach it — otherwise a
+  // tag-only answer strips to empty text and stdout stays empty). The
+  // counter lives in the runtime (the runner keeps a defensive ceiling).
+  // Task mode is the only host that teaches the tags: without `-t` the run
+  // keeps the baseline prompt.
+  const delegation_budget =
+    state.task !== undefined && state.autoContinue
+      ? resolve_max_delegations(chain_budget, state.limits.max_delegations)
+      : 0;
   // The system prompt is fixed for the run (legacy round-one wording for
   // both modes; feedback rounds only exist in chain mode, where it matches).
   // Tellrc custom instructions prepend context only — safety stays last and
   // config can never replace <RUN>, approval, injection or deny rules.
+  // The delegation and task sections are core/host-owned and appended after
+  // the SDK prompt.
   const system = compose_system_prompt(
-    get_system_prompt({ chain: state.autoContinue, cwd: process.cwd(), platform: `${os.platform()} ${os.release()}` }),
+    `${get_system_prompt({
+      chain: state.autoContinue,
+      cwd: process.cwd(),
+      platform: `${os.platform()} ${os.release()}`,
+    })}${delegation_budget > 0 ? delegation_prompt_section('both') : ''}${
+      state.task !== undefined ? task_prompt_section(state.task.id, delegation_budget > 0) : ''
+    }`,
     state.customSystemText,
   );
   // The raw response of the in-flight round (captured by the model port for
   // the log/timeline mirror below; the core wiring only forwards stripped
   // text to its callbacks).
   let last_raw = '';
+  // Whether any delegation record climbed this run: a tag-only parent answer
+  // leaves `text` empty, so the legacy commands-only final-answer check
+  // below would miss it and stdout would stay empty.
+  let did_delegate = false;
+  let warned_budget = false;
+  function warn_delegation_budget_once(timeline: string[]): void {
+    if (warned_budget) {
+      return;
+    } else {
+      const notice = timeline.find((line) => line.includes('Delegation budget exceeded'));
+      if (notice === undefined) {
+        return;
+      } else {
+        warned_budget = true;
+        process.stderr.write(`\x1b[33m${notice}\x1b[0m\n`);
+        append_log(log, notice);
+      }
+    }
+  }
   const model = create_cli_model(ai, {
     stream: state.stream,
     think: state.think,
+    hide_tags: !state.showTags,
     ...(state.temperature !== undefined ? { temperature: state.temperature } : {}),
     on_raw: (response) => {
       last_raw = response;
     },
   });
-  const approval = create_cli_approval(state.execMode, (pending) => confirm_command(pending, state.execMode));
+  // The child is silent, so the wrapper prints a transient line while it
+  // works. The child can ask for approval mid-run: clear the line before
+  // every prompt, or the prompt text lands on the indicator line.
+  let is_delegation_line_active = false;
+  function clear_delegation_line(): void {
+    if (is_delegation_line_active) {
+      process.stderr.write('\r\x1b[K');
+      is_delegation_line_active = false;
+    } else {
+      // No delegation line on screen.
+    }
+  }
+  const approval = create_cli_approval(state.execMode, (pending) => {
+    clear_delegation_line();
+    return confirm_command(pending, state.execMode);
+  });
   // Shared ports across runs: storage accumulates the conversation so resumed
   // runs compose follow-ups continuously; everything else is stateless.
   const storage = create_cli_memory_storage(previousContext);
-  // The execution contract is built once from the resolved limits (single
-  // owner in `@tell-ai/core`): timeout/buffer flow to the injected
-  // executor, the output cap to delivered text, rounds to the loop budget.
-  const exec_options = build_execution_options(state.limits);
   const executor = create_cli_executor({
     timeout_ms: exec_options.timeout_ms,
     max_output_bytes: exec_options.max_buffer_bytes,
   });
-  const chain_budget = exec_options.max_rounds;
+  const child_model = create_cli_model(ai, {
+    stream: false,
+    think: false,
+    silent: true,
+    ...(state.temperature !== undefined ? { temperature: state.temperature } : {}),
+  });
+  const delegation_runner =
+    delegation_budget > 0
+      ? create_delegation_runner({
+          model: child_model,
+          executor,
+          approval,
+          risk: cli_risk_port(),
+          ...(state.showDelegation ? { on_child_event: print_child_event } : {}),
+          ...(redact !== undefined ? { redact } : {}),
+          cwd: process.cwd(),
+          platform: `${os.platform()} ${os.release()}`,
+          ...(state.task !== undefined ? { taskId: state.task.id } : {}),
+          exec_enabled: state.coreConfig.exec_enabled,
+          timeout_ms: exec_options.timeout_ms,
+          max_delegations: delegation_budget,
+          repost_chars: state.limits.delegation_repost_chars,
+          max_rounds: state.limits.delegation_max_rounds,
+        })
+      : undefined;
+  // UX line for the silent child (the child never writes): a transient line
+  // that clears itself before an approval prompt and when the child finishes.
+  // Child commands are audited to the run log (marked, never the parent
+  // timeline) so a delegation stays debuggable.
+  const delegation_with_indicator =
+    delegation_runner === undefined
+      ? undefined
+      : async (request: { kind: 'research' | 'build'; objective: string }): Promise<DelegationResult> => {
+          const label = request.kind === 'research' ? 'Delegando pesquisa…' : 'Delegando sub-tarefa…';
+          const objective = request.objective.replace(/\s+/g, ' ').trim();
+          const short = objective.length > 20 ? `${objective.slice(0, 20)}…` : objective;
+          if (state.showDelegation) {
+            process.stderr.write(`\x1b[2m${label} (${request.kind}: ${short})\x1b[0m\n`);
+          } else {
+            process.stderr.write(`\x1b[2m${label} (${request.kind}: ${short})\x1b[0m`);
+            is_delegation_line_active = true;
+          }
+          try {
+            const delegation_result: DelegationResult = await delegation_runner({
+              ...request,
+              ...(last_raw.trim() !== '' ? { context: last_raw } : {}),
+            });
+            clear_delegation_line();
+            if ('outcome' in delegation_result) {
+              const outcome: DelegationOutcome = delegation_result.outcome;
+              for (const command of outcome.commands) {
+                append_log(log, `Child command (${command.status}):\n${command.script}`);
+                if (
+                  state.showOutput &&
+                  !state.showDelegation &&
+                  typeof command.output === 'string' &&
+                  command.output.trim() !== ''
+                ) {
+                  process.stderr.write(`\x1b[2m[${request.kind}:${command.status}] ${command.script}\x1b[0m\n`);
+                  print_command_output(command.output);
+                }
+              }
+              if (state.task !== undefined) {
+                write_delegation_record(state.task, request, outcome, conversation_text(state), redact);
+              } else {
+                // Task mode is the only host with an on-disk child record.
+              }
+            } else if (delegation_result.refused === 'budget') {
+              const warning = `Delegation budget exceeded (${delegation_budget}); ignoring delegation tag.`;
+              process.stderr.write(`\x1b[33m${warning}\x1b[0m\n`);
+              append_log(log, warning);
+            } else {
+              // Empty objective — silent, the tag stays stripped.
+            }
+            return delegation_result;
+          } finally {
+            clear_delegation_line();
+          }
+        };
   const runtime_callbacks: RuntimeCallbacks = {
     onText: () => {
       remember_assistant(state, log, last_raw);
       if (state.saveContext) save_incremental_context(contextPath, previousContext, state);
     },
+    onDelegation: (event) => {
+      did_delegate = true;
+      if (event.extras > 0) {
+        const warning = `Only the first delegation tag runs; ${event.extras} extra tag${event.extras === 1 ? '' : 's'} ignored.`;
+        process.stderr.write(`\x1b[33m${warning}\x1b[0m\n`);
+        append_log(log, warning);
+      } else {
+        // Every tag was consumed.
+      }
+      if (state.showDelegation) {
+        process.stderr.write(`\x1b[2m${event.record}\x1b[0m\n`);
+      }
+      remember_delegation(state, log, event.record);
+      if (state.saveContext) save_incremental_context(contextPath, previousContext, state);
+    },
     onCommandOutput: (event) => {
       const capped = truncate_output(event.output, exec_options.max_output_bytes);
       const result_text = format_command_result(event.script, capped, event.exit_code);
-      print_command_output(capped);
+      if (state.showOutput) {
+        print_command_output(capped);
+      }
+
       append_log(log, result_text);
       remember_command_result(state, result_text);
       if (state.saveContext) save_incremental_context(contextPath, previousContext, state);
@@ -856,10 +1383,16 @@ async function run_response_loop(
       // forwards it per call, so it must carry the resolved limit (not the
       // core default) or `--max-buffer` would never apply.
       max_output_bytes: exec_options.max_buffer_bytes,
+      ...(redact !== undefined ? { redact } : {}),
+      ...(delegation_with_indicator !== undefined ? { delegation: delegation_with_indicator } : {}),
+      ...(delegation_budget > 0 ? { max_delegations: delegation_budget } : {}),
     });
   }
   let runtime = create_runtime(state.autoContinue ? chain_budget : 1);
   let result = await runtime.run(state.firstPrompt);
+  // Surface the runtime-owned budget warning once (the runner-owned path
+  // already warned inside the wrapper above; this covers the runtime block).
+  warn_delegation_budget_once(result.timeline);
   // Chain mode resumes after declined commands with the legacy feedback
   // (conversation plus instruction); executed/failed rounds already iterate
   // inside the core loop. The total stays capped like the legacy counter.
@@ -870,6 +1403,7 @@ async function run_response_loop(
     const feedback = `${strip_think_tags(conversation_text(state))}\n\n${RESUME_INSTRUCTION}`;
     runtime = create_runtime(chain_budget - result.commands.length);
     latest = await runtime.run(feedback);
+    warn_delegation_budget_once(latest.timeline);
     result = merge_run_result(result, latest);
   }
   if (state.autoContinue && result.commands.length >= chain_budget) {
@@ -882,11 +1416,13 @@ async function run_response_loop(
   }
   // Final answer (legacy `handle_final_answer`): commands ran but the visible
   // answer is empty — ask once more without `<RUN>`. Chain mode asks too, so
-  // a run that ends at the round cap never leaves stdout empty.
-  if (result.commands.length > 0 && !result.text) {
-    const final_prompt = `${strip_think_tags(conversation_text(state))}`;
+  // a run that ends at the round cap never leaves stdout empty. Delegation
+  // counts the same as commands: a tag-only parent answer strips to empty
+  // text with no commands, and without this the run would print nothing.
+  if ((result.commands.length > 0 || did_delegate) && !result.text) {
+    const final_prompt = `${strip_think_tags(conversation_text(state))}\n\nProvide the final visible answer now in plain text, without <RUN>, <DELEGATE> or <SUBTASK> tags.`;
     const final_response = await model.ask(final_prompt, { system, stream: false });
-    const final_text = strip_run_tags(strip_think_tags(final_response));
+    const final_text = strip_delegation_tags(strip_run_tags(strip_think_tags(final_response)));
     if (final_text && !state.stream) console.log(final_text);
   } else if (result.text && !state.stream) {
     console.log(result.text);
@@ -904,11 +1440,22 @@ async function maybe_summarize_context(
   try {
     const turn = strip_think_tags(conversation_text(state));
     if (previousContext && previousContext.length + turn.length > state.limits.context_max_chars) {
-      try {
-        const summary = await summarize_context(ai, previousContext);
-        write_context(contextPath, `${summary}\n${turn}`, state.limits.context_max_chars);
-      } catch {
+      if (turn.length >= state.limits.context_max_chars) {
+        // The newest turn alone overflows: truncation keeps it and drops the
+        // summary, so the extra model call would be wasted.
         write_context(contextPath, `${previousContext}\n${turn}`, state.limits.context_max_chars);
+      } else {
+        // One extra model call: say so, or the process looks hung after the
+        // task/context line already printed.
+        process.stderr.write('\x1b[2mResumindo contexto...\x1b[0m');
+        try {
+          const summary = await summarize_context(ai, previousContext);
+          write_context(contextPath, `${summary}\n${turn}`, state.limits.context_max_chars);
+        } catch {
+          write_context(contextPath, `${previousContext}\n${turn}`, state.limits.context_max_chars);
+        } finally {
+          process.stderr.write('\r\x1b[K');
+        }
       }
     }
   } catch (error) {
@@ -940,6 +1487,11 @@ async function launch_web(opts: {
   contextChars?: number | undefined;
   stdinTimeoutMs?: number | undefined;
   execTimeout?: number | undefined;
+  maxDelegations?: number | undefined;
+  delegationRepostChars?: number | undefined;
+  delegationMaxRounds?: number | undefined;
+  task?: boolean | string | undefined;
+  taskReset?: boolean | undefined;
 }): Promise<void> {
   let cwd = process.cwd();
   if (opts.cwd) {
@@ -994,6 +1546,20 @@ async function launch_web(opts: {
     if (opts.contextChars !== undefined) child_args.push('--context-chars', String(opts.contextChars));
     if (opts.stdinTimeoutMs !== undefined) child_args.push('--stdin-timeout-ms', String(opts.stdinTimeoutMs));
     if (opts.execTimeout !== undefined) child_args.push('--exec-timeout', String(opts.execTimeout));
+    if (opts.maxDelegations !== undefined) child_args.push('--max-delegations', String(opts.maxDelegations));
+    if (opts.delegationRepostChars !== undefined)
+      child_args.push('--delegation-repost', String(opts.delegationRepostChars));
+    if (opts.delegationMaxRounds !== undefined)
+      child_args.push('--delegation-max-rounds', String(opts.delegationMaxRounds));
+    // Task mode forwards the same raw value the CLI received, so `tell-web`
+    // resolves the identical id from the identical prompt and cwd.
+    if (opts.task !== undefined) {
+      child_args.push('--task');
+      if (typeof opts.task === 'string') child_args.push(opts.task);
+      if (opts.taskReset) child_args.push('--task-reset');
+    } else {
+      // No task mode to forward.
+    }
 
     const child = spawn('tell-web', child_args, {
       stdio: 'inherit',
@@ -1101,6 +1667,8 @@ function resolve_runtime_limits(opts: CliOptions, cwd: string): RuntimeLimits {
       ...(opts.maxChain !== undefined ? { max_chain_steps: opts.maxChain } : {}),
       ...(opts.maxBuffer !== undefined ? { max_buffer_bytes: opts.maxBuffer } : {}),
       ...(opts.outputMaxBytes !== undefined ? { output_max_bytes: opts.outputMaxBytes } : {}),
+      ...(opts.maxDelegations !== undefined ? { max_delegations: opts.maxDelegations } : {}),
+      ...(opts.delegationRepost !== undefined ? { delegation_repost_chars: opts.delegationRepost } : {}),
     },
     env: runtime_env_from_process(process.env),
     ...(project ? { project: { source: project.source, limits: project.limits } } : {}),
@@ -1149,6 +1717,7 @@ async function run_tell(
   prompt: string,
   opts: CliOptions,
   has_positional_prompt: boolean,
+  task?: TaskPlan,
 ): Promise<void> {
   // Tellrc resolution (files + env + flags): aliases resolve without
   // mutating MODELS; temperature and custom system flow into the run;
@@ -1169,15 +1738,29 @@ async function run_tell(
   let plan: ContextPlan;
   try {
     label = model_label(effective_model);
-    const entries = typeof opts.ctx === 'string' ? list_context_entries() : [];
-    plan = build_context_plan(opts, effective_model, entries, has_positional_prompt);
+    if (task !== undefined) {
+      // Task mode owns its own context plan: `main.txt` is the file, and the
+      // id is the label (`-n` still starts empty).
+      plan = task.resumed
+        ? { $: 'existing', file: task.file, label: task.id }
+        : { $: 'create', file: task.file, label: task.id };
+    } else {
+      const entries = typeof opts.ctx === 'string' ? list_context_entries() : [];
+      plan = build_context_plan(opts, effective_model, entries, has_positional_prompt);
+    }
   } catch (error) {
     console.error('\x1b[31m%s\x1b[0m', error instanceof Error ? error.message : String(error));
     process.exitCode = EXIT_MODEL_ERROR;
     return;
   }
 
-  if (plan.$ === 'create') {
+  // The task announcement waits for a successful run: a model failure
+  // before the first save would otherwise report a task that was never
+  // persisted (a retry reuses the same id, so the early message also lied twice).
+  let task_verb: string | null = null;
+  if (task !== undefined) {
+    task_verb = `${task.resumed ? 'Using task' : 'Created task'}: ${sanitize_label(task.id)}${task.reset ? ' (reset)' : ''}`;
+  } else if (plan.$ === 'create') {
     process.stderr.write(`\x1b[2mCreated context: ${sanitize_label(plan.label)}\x1b[0m\n`);
   } else if (plan.$ === 'existing') {
     process.stderr.write(`\x1b[2mUsing context: ${sanitize_label(plan.label)}\x1b[0m\n`);
@@ -1191,23 +1774,40 @@ async function run_tell(
   const ctx_prompt = plan_prompt_from_ref(plan);
   const raw_prompt = [ctx_prompt, prompt].filter(Boolean).join(' ').trim();
   // `@path` mentions resolve against the working directory; the expanded
-  // text is what reaches the log, the timeline, and the saved context.
-  const full_prompt = await expand_mentions(raw_prompt, process.cwd(), { yes: Boolean(opts.yes) });
+  // text is what reaches the log, the timeline, and the saved context. The
+  // mention read gate ignores `-y` and task mode: outside-cwd and
+  // credential-named targets ask on a TTY and are denied without one.
+  const full_prompt = await expand_mentions(raw_prompt, process.cwd(), {
+    yes: Boolean(opts.yes),
+  });
   const save_context = plan.$ !== 'none';
   // Core config resolved once per invocation (exec/chain only — provider
   // keys and URLs stay in `./env` until the explicit tellkey handoff).
   // `--no-exec` wins over everything; `-y` enables the risk-gated auto mode.
   // `--require-approval` is declarative in the CLI (high-risk always asks even
   // with -y, which is already `auto-risk` behavior) and is forwarded to -w.
-  const core_config = resolve_cli_core_config({
-    exec: opts.exec,
-    chain: opts.chain,
-    exec_timeout_ms: limits.exec_timeout_ms,
-  });
+  // Task mode forces chain + auto-risk; `--no-exec` never reaches this point.
+  const core_config =
+    task !== undefined
+      ? resolve_cli_core_config({ exec: true, chain: true, exec_timeout_ms: limits.exec_timeout_ms })
+      : resolve_cli_core_config({ exec: opts.exec, chain: opts.chain, exec_timeout_ms: limits.exec_timeout_ms });
   const exec_mode: ExecMode = core_config.exec_enabled === false ? 'no-exec' : opts.yes ? 'auto-risk' : 'confirm-all';
   // 'create' always starts empty, even if it reuses an existing name (an explicit reset).
-  const context_path = plan.$ === 'none' ? context_file(effective_model) : plan.file;
-  const previous_context = plan.$ === 'default' || plan.$ === 'existing' ? read_text(plan.file) : '';
+  const active_task = task;
+  if (active_task?.reset === true) {
+    wipe_task_dir(active_task.dir);
+  } else {
+    // No reset — existing records stay.
+  }
+  const context_path = task !== undefined ? task.file : plan.$ === 'none' ? context_file(effective_model) : plan.file;
+  const previous_context =
+    task !== undefined
+      ? task.reset
+        ? ''
+        : read_text(task.file)
+      : plan.$ === 'default' || plan.$ === 'existing'
+        ? read_text(plan.file)
+        : '';
   // Tellrc system-file (64 KB cap, regular file, project gate) plus inline
   // system and profile data compose as custom instructions before safety.
   // Profile system-file follows the same gates; its origin decides the gate.
@@ -1241,15 +1841,19 @@ async function run_tell(
   const state: ConversationState = {
     firstPrompt: full_prompt,
     timeline: [`User:\n${full_prompt}`],
-    autoContinue: core_config.chain,
+    autoContinue: task !== undefined ? true : core_config.chain,
     execMode: exec_mode,
     saveContext: save_context,
-    stream: Boolean(opts.stream),
+    stream: task !== undefined ? true : Boolean(opts.stream),
     think: Boolean(opts.think),
+    showTags: Boolean(opts.tags),
+    showOutput: Boolean(opts.output),
+    showDelegation: Boolean(opts.delegation),
     coreConfig: core_config,
     limits,
     ...(custom_system_text ? { customSystemText: custom_system_text } : {}),
     ...(tellrc.temperature !== undefined ? { temperature: tellrc.temperature } : {}),
+    ...(task !== undefined ? { task } : {}),
   };
   if (plan.$ === 'none') fs.rmSync(context_path, { force: true });
   const log = log_file();
@@ -1259,9 +1863,33 @@ async function run_tell(
   try {
     const config = await load_sdk_config();
     ai = await create_ask_ai(effective_model, config);
+    // Collect process secrets before the lock scrubs them; the redactor masks
+    // them in delegation summaries (the child env is already sanitized).
+    const key_values: string[] = [];
+    for (const value of Object.values(config.keys ?? {})) {
+      if (typeof value === 'string' && value.length > 0) {
+        key_values.push(value);
+      }
+    }
+    const secret_values = [
+      ...collect_exec_secrets(process.env),
+      ...key_values,
+      // Credential-named workspace files: shell globs/loops can read them even
+      // when the literal name never reaches the risk classifier. Mask their
+      // values in command output before it reaches feedback/log/context.
+      ...collect_sensitive_file_secrets(process.cwd()),
+    ];
+    const redact = create_secret_redactor(secret_values);
     lock_process_environment();
-    await run_response_loop(ai, state, log, context_path, previous_context);
+    await run_response_loop(ai, state, log, context_path, previous_context, redact);
+    if (task_verb !== null) {
+      process.stderr.write(`\x1b[2m${task_verb}\x1b[0m\n`);
+    } else {
+      // Legacy context paths announce themselves before the run.
+    }
   } catch (error) {
+    // A run that never persisted its context must not keep the claimed number.
+    discard_unused_task(task);
     console.error('\x1b[31m%s\x1b[0m', format_model_error(error));
     process.exitCode = EXIT_MODEL_ERROR;
     return;
@@ -1279,8 +1907,12 @@ async function main() {
     return;
   }
 
-  const program = build_program(process.argv);
-  const opts = program.opts<CliOptions>();
+  const task_flag = extract_task_flag(process.argv);
+  const program = build_program(task_flag.argv);
+  const opts = {
+    ...program.opts<CliOptions>(),
+    ...(task_flag.task !== undefined ? { task: task_flag.task } : {}),
+  };
 
   if (opts.history !== undefined) {
     run_history_dispatch(opts.history);
@@ -1290,6 +1922,20 @@ async function main() {
   if (opts.models) {
     await print_custom_models();
     return;
+  }
+
+  if (opts.task !== undefined) {
+    if (opts.exec === false) {
+      console.error('\x1b[31merror: --task cannot be combined with --no-exec\x1b[0m');
+      process.exitCode = EXIT_CONFIG_ERROR;
+      return;
+    } else if (opts.ctx !== undefined || opts.context) {
+      console.error('\x1b[31merror: --task cannot be combined with --ctx/-c\x1b[0m');
+      process.exitCode = EXIT_CONFIG_ERROR;
+      return;
+    } else {
+      // Task mode owns the context, the chain and the execution flags.
+    }
   }
 
   const positional_args = program.args;
@@ -1340,6 +1986,33 @@ async function main() {
     // No piped input — nothing to read.
   }
   const prompt = format_prompt(input.parts.join(' '), stdin_text, opts);
+  // Task mode resolves before the web branch: the child host gets the same
+  // prompt and the same raw `-t` value, so both hosts compute the same id.
+  let task: TaskPlan | undefined;
+  let final_prompt = prompt;
+  if (opts.task !== undefined) {
+    const { first, rest } = split_ctx_value(typeof opts.task === 'string' ? opts.task : '');
+    const has_ref = first.startsWith('%');
+    const task_prompt = [rest, prompt].filter(Boolean).join(' ').trim();
+    if (task_prompt === '' && !has_ref) {
+      console.error(format_missing_prompt_error(program));
+      process.exitCode = EXIT_MODEL_ERROR;
+      return;
+    } else {
+      try {
+        task = build_task_plan(opts, prompt, opts.web !== true);
+        // Web mode forwards the raw prompt: the child host resolves the same
+        // id from it, and a resume keeps the chat inbox empty.
+        final_prompt = opts.web === true ? prompt : task.prompt;
+      } catch (error) {
+        console.error('\x1b[31m%s\x1b[0m', error instanceof Error ? error.message : String(error));
+        process.exitCode = EXIT_MODEL_ERROR;
+        return;
+      }
+    }
+  } else {
+    // Not task mode: the legacy prompt rules apply.
+  }
   if (opts.web) {
     const web_system_file = opts.systemFile ?? early_tellrc.system_file;
     const web_system_text = opts.system ?? early_tellrc.system;
@@ -1360,7 +2033,7 @@ async function main() {
       : early_tellrc.limits.stdin_timeout_ms;
     await launch_web({
       model: effective_model,
-      prompt,
+      prompt: final_prompt,
       cwd: opts.cwd,
       noExec: opts.exec === false,
       requireApproval: opts.requireApproval,
@@ -1392,12 +2065,26 @@ async function main() {
         opts.execTimeout !== undefined || web_env.TELL_EXEC_TIMEOUT_MS !== undefined
           ? early_limits.exec_timeout_ms
           : early_tellrc.limits.exec_timeout_ms,
+      maxDelegations:
+        opts.maxDelegations !== undefined || web_env.TELL_MAX_DELEGATIONS !== undefined
+          ? early_limits.max_delegations
+          : early_tellrc.limits.max_delegations,
+      delegationRepostChars:
+        opts.delegationRepost !== undefined || web_env.TELL_DELEGATION_REPOST_CHARS !== undefined
+          ? early_limits.delegation_repost_chars
+          : early_tellrc.limits.delegation_repost_chars,
+      delegationMaxRounds:
+        web_env.TELL_DELEGATION_MAX_ROUNDS !== undefined
+          ? early_limits.delegation_max_rounds
+          : early_tellrc.limits.delegation_max_rounds,
       temperature: early_tellrc.temperature,
+      task: opts.task,
+      taskReset: Boolean(opts.name),
     });
     return;
   }
   const ctx_has_prompt = typeof opts.ctx === 'string' && ctx_value_has_prompt(opts.ctx);
-  if (!prompt && !ctx_has_prompt) {
+  if (task === undefined && !final_prompt && !ctx_has_prompt) {
     console.error(format_missing_prompt_error(program));
     process.exitCode = EXIT_MODEL_ERROR;
     return;
@@ -1406,7 +2093,18 @@ async function main() {
   // stripped, so a positional model (`tell g --ctx ola`) does not count as a
   // prompt. A bare `--ctx` token (no `%`/`@`) is prompt text only when there
   // is no positional prompt; naming a context requires `%`.
-  await run_tell(effective_model, prompt, opts, input.parts.length > 0);
+  try {
+    await run_tell(effective_model, final_prompt, opts, input.parts.length > 0, task);
+  } catch (error) {
+    // Unexpected throws bypass the internal cleanup; release the claim here.
+    discard_unused_task(task);
+    throw error;
+  }
+  // `run_tell` reports most failures by setting `process.exitCode`, and every
+  // early return after the claim must release it too.
+  if (process.exitCode !== undefined && process.exitCode !== 0) {
+    discard_unused_task(task);
+  }
 }
 
 main().catch((error: unknown) => {

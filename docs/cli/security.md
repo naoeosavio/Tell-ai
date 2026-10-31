@@ -4,7 +4,7 @@ Threat model: the model output, piped stdin, and stored context are all untruste
 
 ## High-risk guard (`is_high_risk_script` → core `assess_base_risk`)
 
-The guard is a thin CLI boolean (`is_high_risk_script` in `src/core-adapters.ts`) over the core base classifier (`assess_base_risk`, permissive profile — see [../core/risk.md](../core/risk.md)). Input is normalized (`\\\n` → space, runs of whitespace → single space) into `compact`; every pattern below is tested against it. Match → high-risk: `-y` does not approve, TTY confirmation is still required, non-TTY auto-rejects.
+The guard is a thin CLI boolean (`is_high_risk_script` in `src/core-adapters.ts`) over the core base classifier (`assess_base_risk`, permissive profile — see [../core/risk.md](../core/risk.md)). Input is normalized (`\\\n` → space, runs of whitespace → single space) into `compact`; every pattern below is tested against it. Match → high-risk: `-y` does not approve, TTY confirmation is still required, non-TTY auto-rejects. Credential-file reads (row 16) are high-risk in both profiles: the CLI prompts even with `-y --require-approval` instead of auto-running; the Web blocks outright.
 
 | # | Pattern (summary) | Example blocked |
 |---|-------------------|-----------------|
@@ -24,16 +24,21 @@ The guard is a thin CLI boolean (`is_high_risk_script` in `src/core-adapters.ts`
 | 13 | `sed -i… privileged_path` | `sed -i 's/root/pwned/' /etc/passwd` |
 | 14 | `tee … privileged_path` | `echo pwned ¦ tee /etc/hosts` |
 | 15 | `\d*(>>?¦>\|¦&>) privileged_path` | `echo pwned > /etc/profile`, `bad-command 2> /etc/hosts` |
+| 16 | credential-file name (both profiles, `data-exfiltration`) | `cat .env`, `cat ~/.config/openrouter.token`, `cat id_rsa`, `git show HEAD:.env`; quoted/braced/globbed/ANSI-C spellings (`cat '.en'v`, `cat {a.txt,.env}`, `cat .en?`, `cat *.key`, `cat $'\x2eenv'`) (`.env.example` stays allowed) |
 
 `privileged_path` (`PRIVILEGED_PATH` in `packages/core/src/risk.ts`): `/(etc|boot|dev|proc|sys|usr|bin|sbin|lib|lib64)(/¦\b)`, `/var/spool/cron`, `/var/cron`, `/etc/cron[.d|daily|…]`, `~/.config/autostart`, `~/.config/systemd/user`, `~/.local/share/systemd/user` (with `$HOME` variants).
 
-Deliberately allowed: local-only one-liners like `node -e "require('fs').writeFileSync('pwned','1')"` — the `-e` rule fires only with a network/decode token. This is asserted, not accidental (`test-tell-security.js:179-183`).
+Since Phase 5 every interpreter one-liner needs confirmation, even local-only ones like `node -e "require('fs').writeFileSync('pwned','1')"` — the `-e` rule fires with or without a network/decode token. This is asserted, not accidental (`test-tell-security.js:333-337` expects the run skipped under `--yes` without a TTY).
 
 ## Outside-cwd command gate (`script_touches_outside_cwd`, `Tell.ts`)
 
 Independent of the pattern table: with `-y`, any command referencing a path that resolves outside the working directory requires confirmation — reads included (`cat /etc/os-release`, `cat ~/.ssh/id_rsa`, `rm ../outside-file`, `ls --output=/tmp/out`), mirroring the `@path` mention read gate in `mentions.ts`. Path tokens are matched in absolute, home (`~/`, `$HOME`), traversal (`../`, `./`, bare `..`/`~`), after-`=` and quoted forms, then resolved via `is_outside_cwd` (lexical + symlink/realpath — a symlink inside `cwd` pointing outside counts as outside). When cwd IS `$HOME`, `~/x` resolves inside and stays allowed. Non-TTY stdin rejects (fail-closed), same as the high-risk guard.
 
 Guard limits: regex heuristics, not a sandbox. Do not rely on it in production/trusted hosts without a container/VM. `--no-exec` always wins over `-y`.
+
+Credential reads that the classifier cannot resolve (`cat sec*`, `cat *`, recursive `grep -r`) still execute, but command output crosses the redaction boundary: the CLI and Web scan credential-named workspace files (`.env*`, keys, `id_*`, bounded) and mask their values (`[redacted]`) before feedback, log, context and the model turn. The same scan masks provider keys. In the CLI an approval authorizes **execution**, not exfiltration: even an approved high-risk read stays redacted (the Web chain's explicit approval is the documented exception — the confirm card shows the server-kept script and its risk, so its output is shown as executed). Encoding/transforming the value (e.g. `base64` without `-d`, which is itself high-risk) is the remaining documented gap — the deny-list is a speed bump, not a sandbox.
+
+The CLI `@path` mention read gate applies the same sensitive-name predicate (see `docs/cli/mentions.md`): `@.env` asks on a TTY and is denied without one, while `@.env.example` stays allowed.
 
 ## File-mention read gate (`mentions.ts:39-58`, `Tell.ts:845`)
 
@@ -60,7 +65,7 @@ Consequences, all covered by tests:
 | Concern | Test |
 |---------|------|
 | 30+ risky scripts skipped under `--yes` | `test-tell-security.js:143-190` |
-| Local one-liner still runs | `test-tell-security.js:179-183` |
+| Interpreter one-liner now asks (no local-only pass) | `test-tell-security.js:333-337` |
 | Injection policy in system prompt | `assertPromptInjectionPolicy` |
 | Literal user `<RUN>` not executed | `USER_PROMPT_PWN` case |
 | `--no-exec` wins | `test_no_exec_overrides_yes_flag` (both suites) |

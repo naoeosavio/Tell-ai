@@ -99,7 +99,7 @@ function loadAbsoluteModule(absPath) {
   return require(file);
 }
 
-const { parseCliArgs, printHelp } = loadModule('src/server/cli-args.ts');
+const { parseCliArgs, printHelp, resolveAssetMode } = loadModule('src/server/cli-args.ts');
 const {
   isSensitiveRelPath,
   isHighRiskScript,
@@ -144,10 +144,11 @@ const { createChainStore, hashChainScript, CHAIN_TTL_MS, CHAIN_MAX_ROUNDS } = lo
 const { validate_chain_decision_payload } = loadAbsoluteModule(
   path.join(__dirname, '..', 'packages', 'core', 'src', 'chain-decision.ts'),
 );
-// The limits owner has no imports, so it loads straight from source (no core
-// build needed) — used to pin the sandbox's chain cap against the real owner.
-const { DEFAULT_MAX_CHAIN_STEPS } = loadAbsoluteModule(
-  path.join(__dirname, '..', 'packages', 'core', 'src', 'runtime-limits.ts'),
+// The limits owner is loaded through the source compiler (it imports the
+// loop-feedback headers, so the bare `loadAbsoluteModule` would miss the
+// relative require). Pinned against the real owner.
+const { DEFAULT_MAX_CHAIN_STEPS } = require(
+  compileSourceModule(path.join(__dirname, '..', 'packages', 'core', 'src', 'runtime-limits.ts')),
 );
 
 let failures = 0;
@@ -193,6 +194,13 @@ test('cli: --port parses numeric values only', () => {
   assert.strictEqual(parseCliArgs(['--port', 'abc'], '/tmp').port, undefined);
 });
 
+test('cli: asset mode defaults to static when dist/index.html exists', () => {
+  assert.strictEqual(resolveAssetMode({ distIndexExists: true }), 'static');
+  assert.strictEqual(resolveAssetMode({ distIndexExists: true, nodeEnv: 'development' }), 'vite');
+  assert.strictEqual(resolveAssetMode({ distIndexExists: false }), 'vite');
+  assert.strictEqual(resolveAssetMode({ distIndexExists: false, nodeEnv: 'production' }), 'static');
+});
+
 test('cli: --help/-h is detected', () => {
   assert.strictEqual(parseCliArgs(['--help'], '/tmp').help, true);
   assert.strictEqual(parseCliArgs(['-h'], '/tmp').help, true);
@@ -215,8 +223,42 @@ test('cli: --stream/--think default off and are detected independently', () => {
   assert.strictEqual(both.chain, true);
 });
 
-test('cli: printHelp runs without throwing', () => {
-  printHelp();
+test('cli: printHelp documents the task flags', () => {
+  const lines = [];
+  const original = console.log;
+  console.log = (...args) => lines.push(args.join(' '));
+  try {
+    printHelp();
+  } finally {
+    console.log = original;
+  }
+  const help = lines.join('\n');
+  assert.ok(help.includes('-t, --task'), 'the help lists the task flag');
+  assert.ok(help.includes('--task-reset'), 'the help lists the reset flag');
+  assert.ok(help.includes('server-enforced'), 'the help documents --require-approval as server-enforced');
+});
+
+test('cli: --task forces the chain contract and rejects --no-exec', () => {
+  const task = parseCliArgs(['--task', '%Feature'], '/tmp');
+  assert.strictEqual(task.task, '%Feature');
+  assert.strictEqual(task.taskReset, false);
+  assert.strictEqual(task.chain, true);
+  assert.strictEqual(task.yes, true);
+  assert.strictEqual(task.requireApproval, true);
+  assert.strictEqual(task.stream, true);
+  assert.strictEqual(task.autoExecute, true);
+  assert.strictEqual(task.error, undefined);
+  const bare = parseCliArgs(['-t', '--prompt', 'goal'], '/tmp');
+  assert.strictEqual(bare.task, '');
+  assert.strictEqual(bare.initialPrompt, 'goal');
+  const reset = parseCliArgs(['--task', '%x', '--task-reset'], '/tmp');
+  assert.strictEqual(reset.taskReset, true);
+  const conflict = parseCliArgs(['-t', '%x', '--no-exec'], '/tmp');
+  assert.strictEqual(conflict.noExec, true);
+  assert.match(conflict.error, /--task cannot be combined with --no-exec/);
+  const off = parseCliArgs([], '/tmp');
+  assert.strictEqual(off.task, undefined);
+  assert.strictEqual(off.taskReset, false);
 });
 
 test('cli: --require-approval is detected, default off, never a value', () => {
@@ -419,6 +461,12 @@ test('guards: sensitive paths are blocked', () => {
 test('guards: .env.example template is not sensitive', () => {
   assert.strictEqual(isSensitiveRelPath('.env.example'), false);
   assert.strictEqual(isSensitiveRelPath('config/.env.example'), false);
+});
+
+test('guards: private-key filenames are sensitive (core-owned predicate)', () => {
+  assert.strictEqual(isSensitiveRelPath('id_rsa'), true);
+  assert.strictEqual(isSensitiveRelPath('keys/id_ed25519'), true);
+  assert.strictEqual(isSensitiveRelPath('cert.p12'), true);
 });
 
 test('guards: ordinary paths pass the sensitive guard', () => {
@@ -771,6 +819,28 @@ test('context: buildSystemPrompt composes the core owner context', () => {
   assert.ok(prompt.includes('be kind'));
 });
 
+test('context: delegation sections follow what the host can approve', () => {
+  const dir = tmpProject();
+  const research = buildSystemPrompt(dir, 'research');
+  assert.ok(research.includes('<DELEGATE>'), 'research describes DELEGATE');
+  assert.ok(!research.includes('<SUBTASK>'), 'research never describes SUBTASK');
+  const both = buildSystemPrompt(dir, 'both');
+  assert.ok(both.includes('<SUBTASK>'), 'both describes SUBTASK');
+  assert.ok(!buildSystemPrompt(dir).includes('<DELEGATE>'), 'no delegation without a host request');
+});
+
+test('context: server advertises both tags only in task mode', () => {
+  const source = fs.readFileSync(path.join(WEB_SRC, 'src', 'server', 'server.ts'), 'utf8');
+  assert.ok(source.includes("TASK === undefined ? undefined : 'both'"), 'delegation follows task mode');
+});
+
+test('chain: browser prefers the child card (v2 nested)', () => {
+  const source = fs.readFileSync(path.join(WEB_SRC, 'src', 'App.tsx'), 'utf8');
+  const childAt = source.indexOf('snapshot.childPending');
+  const parentAt = source.indexOf('else if (snapshot.pending)');
+  assert.ok(childAt !== -1 && parentAt !== -1 && childAt < parentAt, 'child wins the single card slot');
+});
+
 // ---------------------------------------------------------------------------
 // Build config: the AI stack must stay external to the server bundle
 // ---------------------------------------------------------------------------
@@ -893,6 +963,28 @@ test('chain: happy-path approve runs through the gate then finishes once', () =>
   });
   assert.strictEqual(done.status, 'running');
   assert.strictEqual(done.pending, null);
+});
+
+test('chain: pending carries the server-kept risk reason when provided', () => {
+  const store = createChainStore();
+  const created = store.createRun([{ role: 'user', content: 'hi' }]);
+  const pending = store.requestApproval(created.runId, 'cat .env', 'parent', 'credential file (data-exfiltration)');
+  assert.ok(pending);
+  assert.strictEqual(pending.risk, 'credential file (data-exfiltration)');
+  const snap = store.getRun(created.runId);
+  assert.strictEqual(snap.pending.script, 'cat .env');
+  assert.strictEqual(snap.pending.risk, 'credential file (data-exfiltration)');
+  // Without a reason the key is absent (cards render without the line).
+  const plain = store.createRun([{ role: 'user', content: 'hi' }]);
+  store.requestApproval(plain.runId, 'echo hi');
+  const plainSnap = store.getRun(plain.runId);
+  assert.strictEqual(plainSnap.pending.script, 'echo hi');
+  assert.ok(!('risk' in plainSnap.pending));
+  // The child slot behaves the same.
+  const nested = store.createRun([{ role: 'user', content: 'hi' }]);
+  store.requestApproval(nested.runId, 'cat .env', 'child', 'credential file (data-exfiltration)');
+  const nestedSnap = store.getRun(nested.runId);
+  assert.strictEqual(nestedSnap.childPending.risk, 'credential file (data-exfiltration)');
 });
 
 test('chain: retry of the same decision id is idempotent (no re-execution)', () => {
@@ -1087,6 +1179,104 @@ test('chain: script hash is stable and distinguishes scripts', () => {
   assert.notStrictEqual(hashChainScript('echo hi'), hashChainScript('echo bye'));
 });
 
+test('chain: nested child approval coexists with parent (v2 second slot)', () => {
+  const store = createChainStore();
+  const created = store.createRun([{ role: 'user', content: 'hi' }]);
+  assert.strictEqual(created.childPending, null);
+  const parent = store.requestApproval(created.runId, 'echo parent');
+  assert.ok(parent);
+  // Single-flight per level: second parent is rejected, child still fits.
+  assert.strictEqual(store.requestApproval(created.runId, 'echo parent-again'), null);
+  const child = store.requestApproval(created.runId, 'echo child', 'child');
+  assert.ok(child);
+  assert.notStrictEqual(child.decisionId, parent.decisionId);
+  const replay = store.getRun(created.runId);
+  assert.strictEqual(replay.status, 'awaiting_approval');
+  assert.strictEqual(replay.pending.script, 'echo parent');
+  assert.strictEqual(replay.childPending.script, 'echo child');
+  // Unknown id with pendings present is unknown_decision, not no_pending.
+  assert.deepStrictEqual(
+    store.tryBeginConfirm(created.runId, {
+      decision_id: '00000000-0000-0000-0000-000000000000',
+      expected_version: child.expectedVersion,
+      decision: 'approve',
+    }),
+    { ok: false, error: 'unknown_decision' },
+  );
+});
+
+test('chain: child confirm restores parent awaiting, parent confirm completes', () => {
+  const store = createChainStore();
+  const created = store.createRun([{ role: 'user', content: 'hi' }]);
+  const parent = store.requestApproval(created.runId, 'echo parent');
+  const child = store.requestApproval(created.runId, 'echo child', 'child');
+  assert.strictEqual(
+    store.tryBeginConfirm(created.runId, {
+      decision_id: child.decisionId,
+      expected_version: child.expectedVersion,
+      decision: 'approve',
+    }).ok,
+    true,
+  );
+  const afterChild = store.finishConfirm(created.runId, child.decisionId, {
+    type: 'executed',
+    script: 'echo child',
+    output: 'child',
+    exitCode: 0,
+    status: 'running',
+  });
+  assert.strictEqual(afterChild.childPending, null);
+  assert.strictEqual(afterChild.pending.script, 'echo parent');
+  assert.strictEqual(afterChild.status, 'awaiting_approval');
+  // Child stamps moved the version: the original parent version is stale.
+  assert.deepStrictEqual(
+    store.tryBeginConfirm(created.runId, {
+      decision_id: parent.decisionId,
+      expected_version: parent.expectedVersion,
+      decision: 'approve',
+    }),
+    { ok: false, error: 'stale_version' },
+  );
+  // Parent version moved after the child stamp: stale must fail, fresh passes.
+  const fresh = store.getRun(created.runId);
+  assert.strictEqual(
+    store.tryBeginConfirm(created.runId, {
+      decision_id: parent.decisionId,
+      expected_version: fresh.version,
+      decision: 'approve',
+    }).ok,
+    true,
+  );
+  const done = store.finishConfirm(created.runId, parent.decisionId, {
+    type: 'executed',
+    script: 'echo parent',
+    output: 'parent',
+    exitCode: 0,
+    status: 'completed',
+  });
+  assert.strictEqual(done.pending, null);
+  assert.strictEqual(done.childPending, null);
+  assert.strictEqual(done.status, 'completed');
+});
+
+test('chain: cancel and complete clear both slots', () => {
+  const store = createChainStore();
+  const created = store.createRun([{ role: 'user', content: 'hi' }]);
+  store.requestApproval(created.runId, 'echo parent');
+  store.requestApproval(created.runId, 'echo child', 'child');
+  const cancelled = store.cancelRun(created.runId);
+  assert.strictEqual(cancelled.pending, null);
+  assert.strictEqual(cancelled.childPending, null);
+  assert.strictEqual(cancelled.status, 'cancelled');
+  const second = createChainStore();
+  const run = second.createRun([{ role: 'user', content: 'hi' }]);
+  second.requestApproval(run.runId, 'echo parent');
+  second.requestApproval(run.runId, 'echo child', 'child');
+  const completed = second.completeRun(run.runId, 'done');
+  assert.strictEqual(completed.pending, null);
+  assert.strictEqual(completed.childPending, null);
+});
+
 test('chain: server keeps the script, validates the helper, and denies closed', () => {
   const source = fs.readFileSync(path.join(WEB_SRC, 'src', 'server', 'server.ts'), 'utf8');
   assert.ok(
@@ -1107,6 +1297,10 @@ test('chain: server keeps the script, validates the helper, and denies closed', 
     source.includes('chainContinuations.delete'),
     'per-run continuations are released on terminal snapshots (no unbounded growth)',
   );
+  for (const route of ['/api/delegate', '/api/delegate/:decisionId/confirm']) {
+    assert.ok(source.includes(route), `server must define the delegate ${route} route`);
+  }
+  assert.ok(source.includes('delegateDecisionToTask'), 'delegate waits are keyed by decision id (replayable)');
 });
 
 if (failures > 0) {
@@ -1156,6 +1350,23 @@ test('cli args: --output-max-bytes is parsed and forwarded', () => {
   assert.ok(printHelp.toString().length > 0);
   const help = printHelp.toString();
   assert.ok(help.includes('--output-max-bytes'), 'help must list the new flag');
+});
+
+test('cli args: --max-delegations and --delegation-repost parse with ranges', () => {
+  assert.strictEqual(parseCliArgs(['--max-delegations', '0'], '/tmp').maxDelegations, 0);
+  assert.strictEqual(parseCliArgs(['--max-delegations', '2'], '/tmp').maxDelegations, 2);
+  assert.strictEqual(parseCliArgs(['--max-delegations', '3'], '/tmp').maxDelegations, undefined);
+  assert.strictEqual(parseCliArgs(['--max-delegations', '-1'], '/tmp').maxDelegations, undefined);
+  assert.strictEqual(parseCliArgs([], '/tmp').maxDelegations, undefined);
+  assert.strictEqual(parseCliArgs(['--delegation-repost', '512'], '/tmp').delegationRepostChars, 512);
+  assert.strictEqual(parseCliArgs(['--delegation-repost', '8192'], '/tmp').delegationRepostChars, 8192);
+  assert.strictEqual(parseCliArgs(['--delegation-repost', '511'], '/tmp').delegationRepostChars, undefined);
+  assert.strictEqual(parseCliArgs([], '/tmp').delegationRepostChars, undefined);
+  assert.strictEqual(parseCliArgs(['--delegation-max-rounds', '0'], '/tmp').delegationMaxRounds, 0);
+  assert.strictEqual(parseCliArgs(['--delegation-max-rounds', '32'], '/tmp').delegationMaxRounds, 32);
+  assert.strictEqual(parseCliArgs(['--delegation-max-rounds', '128'], '/tmp').delegationMaxRounds, 128);
+  assert.strictEqual(parseCliArgs(['--delegation-max-rounds', '129'], '/tmp').delegationMaxRounds, undefined);
+  assert.strictEqual(parseCliArgs([], '/tmp').delegationMaxRounds, undefined);
 });
 
 test('delivered output cap uses the core marker once', () => {

@@ -896,6 +896,11 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
   assert.strictEqual(sdk.strip_think_tags('a<THINK>secret</THINK>b').trim(), 'ab');
   assert.strictEqual(sdk.strip_run_tags('a<RUN>x</RUN>b').trim(), 'ab');
   assert.strictEqual(sdk.strip_run_tags('a<run>x</run>b').trim(), 'ab');
+  // Real models emit spaces inside the tag. The command must stay visible.
+  assert.deepStrictEqual(sdk.extract_runs('< RUN >ls -la</ RUN >').scripts, ['ls -la']);
+  assert.deepStrictEqual(sdk.extract_runs('a<RUN >ls</RUN>b').scripts, ['ls']);
+  assert.strictEqual(sdk.strip_run_tags('a< RUN >x</RUN>b').trim(), 'ab');
+  assert.strictEqual(sdk.extract_runs('<RUNNING>not a tag</RUNNING>').scripts.length, 0);
   assert.strictEqual(sdk.strip_markdown_code_blocks('a```js\nx\n```b'), 'ab');
 
   console.log('sdk tests passed');

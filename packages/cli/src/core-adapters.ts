@@ -51,7 +51,9 @@ export type CliCoreConfigFlags = {
  *
  * Local interpreter one-liners stay allowed by design; only
  * network/decode-coupled eval is risky — the same matrix the CLI always
- * enforced, now owned by `@tell-ai/core`.
+ * enforced, now owned by `@tell-ai/core`. Credential-file reads are the
+ * exception: they are high-risk in both profiles, so `cat .env` needs
+ * explicit confirmation even with `-y`.
  *
  * @param script - Command script to classify.
  * @returns The base `RiskAssessment` (never an action verdict).
@@ -261,10 +263,14 @@ export type CliModelIO = {
   stream: boolean;
   /** Dim reasoning on stderr (mirrors `--think`). */
   think: boolean;
+  /** Hide `<RUN>`/`<DELEGATE>`/`<SUBTASK>` blocks from the live stream (default off = show). */
+  hide_tags?: boolean;
   /** Receives the full raw response of every round (feeds log/timeline). */
   on_raw?: (response: string) => void;
   /** Sampling temperature 0..2, forwarded only when present. */
   temperature?: number;
+  /** Silent port for delegation children (no stdout/stderr writes, no `on_raw`). */
+  silent?: boolean;
 };
 
 /**
@@ -318,7 +324,9 @@ function print_reasoning(reasoning: string): void {
  * @returns The raw model response (sanitized reasoning span).
  */
 async function ask_silently(ai: AskInstance, message: string, system: string, io: CliModelIO): Promise<string> {
-  process.stderr.write('\x1b[2mThinking...\x1b[0m');
+  if (io.silent !== true) {
+    process.stderr.write('\x1b[2mThinking...\x1b[0m');
+  }
   let response: string;
   try {
     response = await ai.ask(
@@ -326,9 +334,14 @@ async function ask_silently(ai: AskInstance, message: string, system: string, io
       io.temperature !== undefined ? { system, stream: false, temperature: io.temperature } : { system, stream: false },
     );
   } finally {
-    process.stderr.write('\r\x1b[K');
+    if (io.silent !== true) {
+      process.stderr.write('\r\x1b[K');
+    }
   }
   response = sanitize_wrapped_reasoning(response);
+  if (io.silent === true) {
+    return response;
+  }
   if (io.think) {
     print_reasoning(extract_think(response));
   } else {
@@ -336,6 +349,92 @@ async function ask_silently(ai: AskInstance, message: string, system: string, io
   }
   io.on_raw?.(response);
   return response;
+}
+
+/** Protocol tags whose live text is hidden by default (`--tags` shows them). */
+const HIDDEN_STREAM_TAGS = ['run', 'delegate', 'subtask'] as const;
+/** Longest opener (`<delegate>` / `<subtask>`), used for cross-chunk tails. */
+const MAX_STREAM_OPENER = Math.max(...HIDDEN_STREAM_TAGS.map((tag) => tag.length + 2));
+
+/** Streaming filter that drops protocol tag blocks while keeping prose. */
+type TagHider = {
+  /** Feeds a delta and returns the visible prefix. */
+  push(chunk: string): string;
+  /** Returns the remaining visible text (an unclosed tag is dropped). */
+  flush(): string;
+};
+
+/**
+ * Builds a stateful filter for the live stream.
+ *
+ * The model emits `<RUN>`, `<DELEGATE>` and `<SUBTASK>` blocks as protocol, not
+ * prose. Hiding them by default removes the duplicate command copy (the
+ * approval prompt keeps the script) and the delegation objective noise. The
+ * filter is deliberately simple: case-insensitive opener/closer pairs, a small
+ * tail buffer for tags split across deltas, and no markdown-fence awareness —
+ * a literal tag inside a fence is hidden too (use `--tags` to see it).
+ *
+ * @returns A push/flush filter.
+ */
+function create_tag_hider(): TagHider {
+  let buffer = '';
+  let closer: string | null = null;
+
+  const find_opener = (text: string): { at: number; length: number } | null => {
+    const lower = text.toLowerCase();
+    let best: { at: number; length: number } | null = null;
+    for (const tag of HIDDEN_STREAM_TAGS) {
+      const opener = `<${tag}>`;
+      const at = lower.indexOf(opener);
+      if (at !== -1 && (best === null || at < best.at)) {
+        best = { at, length: opener.length };
+      }
+    }
+    return best;
+  };
+
+  return {
+    push(chunk: string): string {
+      buffer += chunk;
+      let out = '';
+      for (;;) {
+        if (closer !== null) {
+          const at = buffer.toLowerCase().indexOf(closer);
+          if (at === -1) {
+            // Discard hidden content, keeping only a possible partial closer.
+            const keep = Math.max(0, closer.length - 1);
+            if (buffer.length > keep) {
+              buffer = buffer.slice(buffer.length - keep);
+            }
+            return out;
+          }
+          buffer = buffer.slice(at + closer.length);
+          closer = null;
+        } else {
+          const opener = find_opener(buffer);
+          if (opener === null) {
+            // Emit text but keep a tail that could start a split opener.
+            const keep = Math.max(0, MAX_STREAM_OPENER - 1);
+            if (buffer.length > keep) {
+              out += buffer.slice(0, buffer.length - keep);
+              buffer = buffer.slice(buffer.length - keep);
+            }
+            return out;
+          }
+          out += buffer.slice(0, opener.at);
+          const tag = buffer.slice(opener.at + 1, opener.at + opener.length - 1).toLowerCase();
+          buffer = buffer.slice(opener.at + opener.length);
+          closer = `</${tag}>`;
+        }
+      }
+    },
+    flush(): string {
+      const out = closer === null ? buffer : '';
+      buffer = '';
+      closer = null;
+      return out;
+    },
+  };
 }
 
 /**
@@ -357,7 +456,9 @@ async function ask_streaming(ai: AskInstance, message: string, system: string, i
   let is_indicator_active = true;
   let is_reasoning_open = false;
   let text = '';
+  let visible = '';
   let reasoning = '';
+  const hider = io.hide_tags === true ? create_tag_hider() : null;
 
   const clear_indicator = (): void => {
     if (!is_indicator_active) {
@@ -399,18 +500,30 @@ async function ask_streaming(ai: AskInstance, message: string, system: string, i
         clear_indicator();
         close_reasoning_line();
         text += event.text;
-        process.stdout.write(event.text);
+        const chunk = hider === null ? event.text : hider.push(event.text);
+        if (chunk !== '') {
+          visible += chunk;
+          process.stdout.write(chunk);
+        }
       } else {
         // reasoning_end: nothing to print, just close the dim block.
         close_reasoning_line();
       }
     }
   } finally {
+    if (hider !== null) {
+      const tail = hider.flush();
+      if (tail !== '') {
+        visible += tail;
+        process.stdout.write(tail);
+      }
+    }
     clear_indicator();
     close_reasoning_line();
   }
 
-  if (text && !text.endsWith('\n')) {
+  const printed = hider === null ? text : visible;
+  if (printed && !printed.endsWith('\n')) {
     process.stdout.write('\n');
   } else {
     // Already terminated (or empty) — no extra newline.
@@ -436,7 +549,9 @@ async function ask_streaming(ai: AskInstance, message: string, system: string, i
 export function create_cli_model(ai: AskInstance, io: CliModelIO): ModelPort {
   return {
     async ask(message: string, options: { system: string; stream: false }): Promise<string> {
-      if (io.stream) {
+      if (io.silent === true) {
+        return ask_silently(ai, message, options.system, io);
+      } else if (io.stream) {
         return ask_streaming(ai, message, options.system, io);
       } else {
         return ask_silently(ai, message, options.system, io);

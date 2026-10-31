@@ -4,6 +4,7 @@ import path from 'path';
 
 import type { CancellationToken, CommandExecutor, ExecutorOptions, ExecutorResult, Redactor } from './runtime-api';
 import { DEFAULT_EXEC_TIMEOUT_MS, DEFAULT_MAX_BUFFER_BYTES } from './runtime-limits';
+import { is_sensitive_rel_path } from './read-only';
 
 /** Explicit shell for every executed script (mirrors the CLI executor). */
 export const EXEC_SHELL = '/bin/bash';
@@ -228,6 +229,132 @@ export function collect_exec_secrets(env: Record<string, string | undefined>): s
     }
   }
   return secrets;
+}
+
+/** Max sensitive files scanned in the workspace for redaction sources. */
+export const SENSITIVE_SCAN_MAX_FILES = 64;
+/** Max bytes read from one sensitive file for redaction sources. */
+export const SENSITIVE_SCAN_MAX_BYTES = 64 * 1024;
+/** Max directory depth walked by the sensitive-file scan. */
+export const SENSITIVE_SCAN_MAX_DEPTH = 3;
+/** Directories never descended into by the sensitive-file scan. */
+const SENSITIVE_SCAN_SKIP_DIRS: ReadonlySet<string> = new Set(['node_modules', 'dist', '.git']);
+/** Longest single line kept as a secret candidate. */
+const SENSITIVE_SCAN_MAX_LINE = 512;
+/** Min length for a value whose key name does not look sensitive (avoid masking `true`/`3000`). */
+const SENSITIVE_SCAN_PLAIN_VALUE_MIN = 12;
+/** Min length for a standalone line in a key file (PEM body, raw key). */
+const SENSITIVE_SCAN_LINE_MIN = 8;
+
+/**
+ * Extracts the secret-looking values from one sensitive file's text.
+ *
+ * `KEY=value` lines contribute the value (quotes stripped) when the key name
+ * looks sensitive or the value is long; other lines contribute themselves
+ * when they look like payload (key material, tokens) and not like a PEM
+ * header or a comment. Values shorter than `EXEC_MIN_SECRET_LENGTH` are
+ * skipped by `create_secret_redactor`.
+ *
+ * @param text - File content (already byte-capped).
+ * @returns The candidate secret strings.
+ */
+function extract_file_secret_values(text: string): string[] {
+  const values: string[] = [];
+  for (const raw_line of text.split(/\r?\n/)) {
+    const line = raw_line.trim();
+    if (line === '' || line.startsWith('#')) {
+      // Blank line or comment — no candidate value.
+    } else {
+      const equals = line.indexOf('=');
+      if (equals !== -1) {
+        const key = line.slice(0, equals).trim();
+        const value = line
+          .slice(equals + 1)
+          .trim()
+          .replace(/^['"]|['"]$/g, '');
+        // A sensitive-named key (API_KEY, TOKEN, SECRET, PASSWORD, URL with
+        // inline credentials) keeps its short value; other keys need a
+        // long/unusual value before it is treated as a secret, so `true`,
+        // `development` or `3000` are not shredded out of every output.
+        if (value !== '' && (is_sensitive_env(key, value) || value.length >= SENSITIVE_SCAN_PLAIN_VALUE_MIN)) {
+          values.push(value);
+        }
+      } else if (
+        line.length >= SENSITIVE_SCAN_LINE_MIN &&
+        line.length <= SENSITIVE_SCAN_MAX_LINE &&
+        !line.startsWith('-----')
+      ) {
+        values.push(line);
+      }
+    }
+  }
+  return values;
+}
+
+/**
+ * Collects secrets from credential-named files under a workspace.
+ *
+ * A command can reach `.env`/keys through shell globs or recursive scans even
+ * when the literal name never appears in the script (the lexical rules are a
+ * speed bump). Masking the file contents in the output the model receives is
+ * the second line: the executor boundary redacts these values the same way it
+ * redacts provider keys. Bounded (depth 3, 64 files, 64 KiB each), skips
+ * symlinks and `node_modules`/`dist`/`.git`, and never follows the network.
+ *
+ * @param cwd - Workspace root to scan.
+ * @returns The candidate secret values (deduplicated).
+ */
+export function collect_sensitive_file_secrets(cwd: string): string[] {
+  const base = path.resolve(cwd);
+  const secrets = new Set<string>();
+  let files = 0;
+
+  const scan_dir = (dir: string, depth: number): void => {
+    if (depth > SENSITIVE_SCAN_MAX_DEPTH || files >= SENSITIVE_SCAN_MAX_FILES) {
+      return;
+    } else {
+      let entries: fs.Dirent[];
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (files >= SENSITIVE_SCAN_MAX_FILES) {
+          return;
+        } else if (entry.isSymbolicLink()) {
+          // Never follow links: the scan must not escape the workspace.
+        } else if (entry.isDirectory()) {
+          if (!SENSITIVE_SCAN_SKIP_DIRS.has(entry.name)) {
+            scan_dir(path.join(dir, entry.name), depth + 1);
+          }
+        } else if (entry.isFile()) {
+          const full = path.join(dir, entry.name);
+          const rel = path.relative(base, full);
+          if (is_sensitive_rel_path(rel)) {
+            try {
+              const fd = fs.openSync(full, 'r');
+              try {
+                const buffer = Buffer.alloc(SENSITIVE_SCAN_MAX_BYTES);
+                const read = fs.readSync(fd, buffer, 0, SENSITIVE_SCAN_MAX_BYTES, null);
+                for (const value of extract_file_secret_values(buffer.subarray(0, read).toString('utf8'))) {
+                  secrets.add(value);
+                }
+                files += 1;
+              } finally {
+                fs.closeSync(fd);
+              }
+            } catch {
+              // Unreadable file: skip it, the run continues.
+            }
+          }
+        }
+      }
+    }
+  };
+
+  scan_dir(base, 0);
+  return [...secrets];
 }
 
 /**

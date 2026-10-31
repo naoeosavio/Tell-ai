@@ -15,6 +15,13 @@ export const COMMAND_FEEDBACK_INSTRUCTION =
 export const COMMAND_FEEDBACK_FAILED_PREAMBLE =
   'The command above FAILED. Analyze the error output and try a corrected approach.';
 
+/** Preamble of the denied-command feedback (child retry protocol). */
+export const COMMAND_DENIED_PREAMBLE = 'The policy denied the command above. Request a different command.';
+
+/** Rule reminder appended to the denied-command feedback. */
+export const COMMAND_DENIED_INSTRUCTION =
+  'Use one simple command without `;`, `&&`, `|`, redirections, `cd`, or secret paths.';
+
 /** Kind of command outcome a feedback text describes. */
 export type CommandFeedbackKind = 'executed' | 'failed' | 'skipped' | 'cancelled';
 
@@ -40,6 +47,10 @@ export type CommandFeedbackOptions = {
 export const EXECUTED_HEADER = 'Executed command:';
 /** Header of the cancelled-command record. */
 export const CANCELLED_HEADER = 'Command cancelled:';
+/** Header of the research delegation record. */
+export const RESEARCH_HEADER = 'Research result:';
+/** Header of the build delegation record. */
+export const SUBTASK_HEADER = 'Task result:';
 /** Header of the skipped-command record. */
 export const SKIPPED_HEADER = 'Skipped by user:';
 /** Separator between the script and the output inside a record. */
@@ -122,18 +133,74 @@ export function format_cancelled_command(script: string): string {
 }
 
 /**
+ * Formats the record of one research delegation.
+ *
+ * The summary is host-assembled (never model-assembled stats beyond one line);
+ * callers must pass an already redacted and capped summary. The status is
+ * host-assigned (never model text): when present the header carries it as
+ * `Research result (STATUS):`, otherwise the legacy `Research result:`.
+ *
+ * @param summary - Redacted, capped research summary.
+ * @param stats - Optional single stats line (e.g. `3 commands, exit 0`).
+ * @param status - Optional host status (`DONE` / `IN PROGRESS` / `BLOCKED`).
+ * @returns The research record text.
+ */
+export function format_research_result(summary: string, stats?: string, status?: string): string {
+  const header = status === undefined || status.trim() === '' ? RESEARCH_HEADER : `Research result (${status.trim()}):`;
+  if (stats === undefined || stats.trim() === '') {
+    return `${header}\n${summary}`;
+  } else {
+    return `${header}\n${summary}\n(${stats.trim()})`;
+  }
+}
+
+/**
+ * Formats the record of one build delegation.
+ *
+ * @param summary - Redacted, capped task summary.
+ * @param stats - Optional single stats line.
+ * @param status - Optional host status (`DONE` / `IN PROGRESS` / `BLOCKED`).
+ * @returns The task record text.
+ */
+export function format_subtask_result(summary: string, stats?: string, status?: string): string {
+  const header = status === undefined || status.trim() === '' ? SUBTASK_HEADER : `Task result (${status.trim()}):`;
+  if (stats === undefined || stats.trim() === '') {
+    return `${header}\n${summary}`;
+  } else {
+    return `${header}\n${summary}\n(${stats.trim()})`;
+  }
+}
+
+/**
  * Formats a non-execution status marker for one requested script.
  *
  * Approval/denial/no-executor states carry a `Command <status>:` header with no
- * output — the same wording vocabulary the hosts render. Keeping it here means
- * one module owns every header a timeline can contain.
+ * output — the same wording vocabulary the hosts render. A denial adds a
+ * `Reason:` line when the classifier named the matched rule. Keeping it here
+ * means one module owns every header a timeline can contain.
  *
  * @param status - Command status (`denied`, `awaiting_approval`, `requested`, `skipped`).
  * @param script - Script that was not executed.
+ * @param reason - Optional denial reason (stable rule id).
  * @returns The status marker text.
  */
-export function format_command_status(status: string, script: string): string {
-  return `Command ${status}:\n${script}`;
+export function format_command_status(status: string, script: string, reason?: string): string {
+  const record = `Command ${status}:\n${script}`;
+  return reason === undefined || reason.trim() === '' ? record : `${record}\nReason: ${reason.trim()}`;
+}
+
+/**
+ * Formats the follow-up prompt for one denied command round.
+ *
+ * The child reads the denial and the rule reminder. The round is retried
+ * inside a delegated child only; every other host stops on the denial.
+ *
+ * @param script - Script the policy denied.
+ * @param reason - Optional denial reason (stable rule id).
+ * @returns The feedback text.
+ */
+export function format_denied_feedback(script: string, reason?: string): string {
+  return `${format_command_status('denied', script, reason)}\n\n${COMMAND_DENIED_PREAMBLE}\n${COMMAND_DENIED_INSTRUCTION}`;
 }
 
 /**

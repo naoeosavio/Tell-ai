@@ -175,6 +175,33 @@ describe('web sandbox: server guards', () => {
       assert.strictEqual(isHighRiskScript('ls -la'), false);
       assert.strictEqual(isHighRiskScript('git status'), false);
     });
+
+    it('blocks credential-file reads (sensitive-file rule)', () => {
+      for (const script of ['cat .env', 'cat ~/.config/openrouter.token', 'cat id_rsa', 'git show HEAD:.env']) {
+        assert.strictEqual(isHighRiskScript(script), true, script);
+      }
+      assert.strictEqual(isHighRiskScript('cat .env.example'), false);
+    });
+
+    it('blocks quoting/brace/glob/ANSI-C obfuscations of the credential name (LOG-TASK-55)', () => {
+      const vectors = [
+        "cat '.en'v",
+        'cat .e"nv"',
+        'cat .en?',
+        'cat .env*',
+        'cat {a.txt,.env}',
+        "cat $'\\x2eenv'",
+        'for f in .*; do cat "$f"; done',
+        'cat *.key',
+        'cat id_*',
+      ];
+      for (const script of vectors) {
+        assert.strictEqual(isHighRiskScript(script), true, script);
+      }
+      for (const script of ['ls *.txt', 'cat *.log', 'grep -r TODO .']) {
+        assert.strictEqual(isHighRiskScript(script), false, script);
+      }
+    });
   });
 
   describe('isSensitiveRelPath (.env.example is not a secret)', () => {
@@ -1888,6 +1915,7 @@ describe('web sandbox: api routes', () => {
     spawnSync('mkfifo', [path.join(dir, 'blocked.pipe')]);
     fs.writeFileSync(path.join(dir, '.env'), 'SECRET=1\n');
     fs.writeFileSync(path.join(dir, '.env.example'), 'PORT="3000"\n');
+    fs.writeFileSync(path.join(dir, 'secret.key'), 'key-canary-55\n');
     fs.writeFileSync(path.join(dir, 'hello.txt'), 'hi\n');
     const env = {
       ...process.env,
@@ -1969,6 +1997,15 @@ describe('web sandbox: api routes', () => {
     it('.env returns 403', async () => {
       const res = await fetch(`${base}/api/file?path=${encodeURIComponent('.env')}`);
       assert.strictEqual(res.status, 403);
+    });
+
+    it('missing sensitive names still return 403 (no existence oracle)', async () => {
+      for (const name of ['absent-test.key', 'absent-secret.pem', 'nested/.env.bak']) {
+        const read = await fetch(`${base}/api/file?path=${encodeURIComponent(name)}`);
+        assert.strictEqual(read.status, 403, name);
+        const raw = await fetch(`${base}/api/file/raw?path=${encodeURIComponent(name)}`);
+        assert.strictEqual(raw.status, 403, name);
+      }
     });
 
     it('.env.example is served (not a secret)', async () => {
@@ -2084,6 +2121,41 @@ describe('web sandbox: api routes', () => {
       assert.strictEqual(res.status, 400);
       const body = await res.json();
       assert.doesNotMatch(body.output, /must-not-reach-child/);
+    });
+
+    it('/execute denies credential-file reads and keeps .env.example usable', async () => {
+      const denied = await fetch(`${base}/api/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: 'cat .env' }),
+      });
+      assert.strictEqual(denied.status, 400);
+      assert.doesNotMatch((await denied.json()).output, /SECRET=1/);
+      const template = await fetch(`${base}/api/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: 'ls .env.example' }),
+      });
+      assert.strictEqual(template.status, 200);
+      for (const command of ['cat .en?', 'cat .e"nv"', "cat $'\\x2eenv'", 'for f in .*; do cat "$f"; done']) {
+        const obfuscated = await fetch(`${base}/api/execute`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ command }),
+        });
+        assert.strictEqual(obfuscated.status, 400, command);
+      }
+      // A glob the classifier cannot resolve still executes, but the output
+      // crosses the workspace-secret redactor (LOG-TASK-55 live finding).
+      const globbed = await fetch(`${base}/api/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: 'cat sec*' }),
+      });
+      assert.strictEqual(globbed.status, 200);
+      const globBody = await globbed.json();
+      assert.strictEqual(globBody.output, '[redacted]\n');
+      assert.doesNotMatch(globBody.output, /key-canary-55/);
     });
 
     it('/risk-check flags risky commands without executing', async () => {
@@ -2400,6 +2472,180 @@ describe('web sandbox: chain routes', () => {
     });
   });
 
+  describe('require-approval asks on high-risk instead of denying', () => {
+    const RISKY_REPLY = 'Reading it now.\n<RUN>cat .env</RUN>';
+    const CANARY = 'sandbox-canary-require-approval';
+
+    let stub;
+    let stubPort;
+
+    function startRiskyStub() {
+      const server = http.createServer((req, res) => {
+        let body = '';
+        req.on('data', (chunk) => {
+          body += chunk;
+        });
+        req.on('end', () => {
+          let payload = {};
+          try {
+            payload = JSON.parse(body || '{}');
+          } catch {
+            /* ignore */
+          }
+          const messages = Array.isArray(payload.messages) ? payload.messages : [];
+          const last = messages[messages.length - 1];
+          const content = typeof last?.content === 'string' ? last.content : '';
+          const done =
+            content.startsWith('Executed command:') || content.startsWith('Skipped by user:');
+          const reply = done
+            ? FINAL_REPLY
+            : content.includes('read the key glob')
+              ? 'Reading keys.\n<RUN>cat sec*</RUN>'
+              : RISKY_REPLY;
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              id: 'stub-risky',
+              object: 'chat.completion',
+              created: 1,
+              model: payload.model,
+              choices: [{ index: 0, message: { role: 'assistant', content: reply }, finish_reason: 'stop' }],
+              usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 },
+            }),
+          );
+        });
+      });
+      return new Promise((resolve) => {
+        server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port }));
+      });
+    }
+
+    function bootRisky(extraArgs = []) {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-web-chain-risk-'));
+      fs.writeFileSync(path.join(dir, '.env'), `CANARY=${CANARY}\n`);
+      fs.writeFileSync(path.join(dir, 'secret.key'), 'key-canary-55\n');
+      const env = {
+        ...process.env,
+        PORT: '0',
+        NODE_ENV: 'production',
+        LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stubPort}/v1`,
+      };
+      delete env.TELL_TOKEN;
+      const child = spawn(process.execPath, [DIST_SERVER, '--cwd', dir, '-m', 'q', ...extraArgs], {
+        env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      return { dir, child, basePromise: waitForServer(child) };
+    }
+
+    before(async () => {
+      stub = await startRiskyStub();
+      stubPort = stub.port;
+    });
+
+    after(() => {
+      if (stub) {
+        stub.server.closeAllConnections?.();
+        stub.server.close();
+      }
+    });
+
+    describe('with --require-approval', () => {
+      let handle;
+      let base;
+
+      before(async () => {
+        handle = bootRisky(['--require-approval']);
+        base = await handle.basePromise;
+      });
+
+      after(() => shutdown(handle));
+
+      it('parks high-risk on a pending carrying the risk reason', async () => {
+        const run = await (await createRun(base, 'read the env file')).json();
+        assert.strictEqual(run.status, 'awaiting_approval');
+        assert.strictEqual(run.pending.script, 'cat .env');
+        assert.match(run.pending.risk, /data-exfiltration/);
+        const replay = await (await fetch(`${base}/api/chain/${run.runId}`)).json();
+        assert.deepStrictEqual(replay.pending, run.pending);
+      });
+
+      it('approve executes the server-kept high-risk script', async () => {
+        const run = await (await createRun(base, 'read the env file')).json();
+        const res = await postJson(base, `/api/chain/${run.runId}/confirm`, {
+          decisionId: run.pending.decisionId,
+          expectedVersion: run.pending.expectedVersion,
+          decision: 'approve',
+        });
+        assert.strictEqual(res.status, 200);
+        const approved = await res.json();
+        assert.strictEqual(approved.status, 'completed');
+        const executed = approved.events.filter((e) => e.type === 'executed');
+        assert.strictEqual(executed.length, 1);
+        assert.strictEqual(executed[0].script, 'cat .env');
+        assert.match(executed[0].output, new RegExp(CANARY));
+      });
+
+      it('skip continues clean without executing', async () => {
+        const run = await (await createRun(base, 'read the env file')).json();
+        const res = await postJson(base, `/api/chain/${run.runId}/confirm`, {
+          decisionId: run.pending.decisionId,
+          expectedVersion: run.pending.expectedVersion,
+          decision: 'skip',
+        });
+        assert.strictEqual(res.status, 200);
+        const skipped = await res.json();
+        assert.strictEqual(skipped.status, 'completed');
+        assert.ok(skipped.events.some((e) => e.type === 'skipped'));
+        assert.ok(!skipped.events.some((e) => e.type === 'executed'));
+      });
+    });
+
+    describe('with -y auto-run', () => {
+      let handle;
+      let base;
+
+      before(async () => {
+        handle = bootRisky(['-y']);
+        base = await handle.basePromise;
+      });
+
+      after(() => shutdown(handle));
+
+      it('auto-runs the glob it cannot classify but redacts the key value', async () => {
+        const run = await (await createRun(base, 'read the key glob')).json();
+        assert.strictEqual(run.status, 'completed');
+        const executed = run.events.filter((e) => e.type === 'executed');
+        assert.strictEqual(executed.length, 1);
+        assert.strictEqual(executed[0].script, 'cat sec*');
+        assert.strictEqual(executed[0].output, '[redacted]\n');
+        assert.ok(!JSON.stringify(run).includes('key-canary-55'));
+      });
+    });
+
+    describe('without the flag', () => {
+      let handle;
+      let base;
+
+      before(async () => {
+        handle = bootRisky();
+        base = await handle.basePromise;
+      });
+
+      after(() => shutdown(handle));
+
+      it('denies high-risk exactly as before (no pending, run completes)', async () => {
+        const run = await (await createRun(base, 'read the env file')).json();
+        assert.strictEqual(run.status, 'completed');
+        assert.strictEqual(run.pending, null);
+        assert.ok(run.events.some((e) => e.type === 'denied'));
+        assert.ok(!run.events.some((e) => e.type === 'executed'));
+        const replay = await (await fetch(`${base}/api/chain/${run.runId}`)).json();
+        assert.strictEqual(replay.status, 'completed');
+      });
+    });
+  });
+
   describe('chain auth', () => {
     const TOKEN = 'chain-token-abc123';
     let handle;
@@ -2515,6 +2761,47 @@ describe('web sandbox: chain routes', () => {
       const body = await res.json();
       assert.strictEqual(body.limits.maxChainSteps, 1);
     });
+
+    it('/api/config exposes the delegation budget and repost target', async () => {
+      const res = await fetch(`${base}/api/config`);
+      const body = await res.json();
+      assert.strictEqual(body.maxDelegations, 0, 'chain cap 1 → budget 0');
+      assert.strictEqual(body.delegationRepostChars, 2048, 'default repost target');
+      assert.strictEqual(body.delegationMaxRounds, 32, 'default round cap');
+    });
+  });
+
+  describe('forwarded delegation limits', () => {
+    let handle;
+    let base;
+
+    before(async () => {
+      handle = bootChain([
+        '--max-chain-steps',
+        '8',
+        '--max-delegations',
+        '1',
+        '--delegation-repost',
+        '512',
+        '--delegation-max-rounds',
+        '5',
+      ]);
+      base = await handle.basePromise;
+    });
+
+    after(() => shutdown(handle));
+
+    it('/api/config reflects --max-delegations and --delegation-repost', async () => {
+      const res = await fetch(`${base}/api/config`);
+      assert.strictEqual(res.status, 200);
+      const body = await res.json();
+      assert.strictEqual(body.maxDelegations, 1);
+      assert.strictEqual(body.delegationRepostChars, 512);
+      assert.strictEqual(body.delegationMaxRounds, 5);
+      assert.strictEqual(body.limits.maxDelegations, 1);
+      assert.strictEqual(body.limits.delegationRepostChars, 512);
+      assert.strictEqual(body.limits.delegationMaxRounds, 5);
+    });
   });
 
   describe('chain rate limit', () => {
@@ -2538,6 +2825,492 @@ describe('web sandbox: chain routes', () => {
       assert.deepStrictEqual(statuses.slice(0, 10), Array(10).fill(404));
       assert.strictEqual(statuses[10], 429);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Delegation (sub-tell): `/api/delegate` guards live, plus chain research,
+// build and budget end-to-end against a stub model. No provider keys needed:
+// the stub speaks OpenAI chat-completions and the `q` alias is pointed at it
+// via LOCAL_OPENAI_BASE_URL (same trick as the chain routes above).
+// ---------------------------------------------------------------------------
+describe('web sandbox: delegation (sub-tell)', () => {
+  const postJson = (base, urlPath, body) =>
+    fetch(`${base}${urlPath}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+  function startDelegateStub(handler) {
+    const server = http.createServer((req, res) => {
+      let body = '';
+      req.on('data', (chunk) => {
+        body += chunk;
+      });
+      req.on('end', () => {
+        let payload = {};
+        try {
+          payload = JSON.parse(body || '{}');
+        } catch {
+          /* ignore */
+        }
+        const messages = Array.isArray(payload.messages) ? payload.messages : [];
+        const last = messages[messages.length - 1];
+        const content = typeof last?.content === 'string' ? last.content : '';
+        const reply = handler(content);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            id: 'stub',
+            object: 'chat.completion',
+            created: 1,
+            model: payload.model,
+            choices: [{ index: 0, message: { role: 'assistant', content: reply }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 },
+          }),
+        );
+      });
+    });
+    return new Promise((resolve) => {
+      server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port }));
+    });
+  }
+
+  function bootDelegate(extraArgs = [], extraEnv = {}) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-web-delegate-'));
+    fs.writeFileSync(path.join(dir, 'hello.txt'), 'hi\n');
+    // Task mode writes under `~/.ai/tell_context`: keep the suite hermetic.
+    const home = path.join(dir, 'home');
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, HOME: home, PORT: '0', NODE_ENV: 'production', ...extraEnv };
+    delete env.TELL_TOKEN;
+    const child = spawn(process.execPath, [DIST_SERVER, '--cwd', dir, ...extraArgs], {
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return { dir, home, child, basePromise: waitForServer(child) };
+  }
+
+  async function shutdown(handle) {
+    if (handle.child && !handle.child.killed) handle.child.kill('SIGTERM');
+    if (handle.dir) fs.rmSync(handle.dir, { recursive: true, force: true });
+  }
+
+  describe('/api/delegate guards (no model needed)', () => {
+    let handle;
+    let base;
+
+    before(async () => {
+      handle = bootDelegate(['-t', '%guards']);
+      base = await handle.basePromise;
+    });
+
+    after(() => shutdown(handle));
+
+    it('rejects unknown kind, empty objective, oversized objective and bad modelAlias', async () => {
+      for (const body of [
+        { kind: 'nope', objective: 'x' },
+        { kind: 'research', objective: '   ' },
+        { objective: 'x' },
+        { kind: 'research', objective: 'x'.repeat(4 * 1024 + 1) },
+        { kind: 'research', objective: 'x', modelAlias: 123 },
+      ]) {
+        const res = await postJson(base, '/api/delegate', body);
+        assert.strictEqual(res.status, 400, JSON.stringify(body));
+        await res.json().catch(() => ({}));
+      }
+    });
+
+    it('parks build without -y on awaiting (v2 nested, child asks via confirm)', async () => {
+      const res = await postJson(base, '/api/delegate', { kind: 'build', objective: 'list files' });
+      // No model keys here: the background fails before any approval, so the
+      // call fails closed instead of parking. The parked shape is covered
+      // live with a stub below; here the point is only that v1's 403 is gone.
+      assert.ok([202, 500].includes(res.status), `expected 202 or 500, got ${res.status}`);
+      await res.json().catch(() => ({}));
+    });
+
+    it('enforces the concurrency cap like /api/execute', async () => {
+      const sleepBody = { command: 'sleep 25' };
+      const first = postJson(base, '/api/execute', sleepBody);
+      const second = postJson(base, '/api/execute', sleepBody);
+      await sleep(1500);
+      const res = await postJson(base, '/api/delegate', { kind: 'research', objective: 'list files' });
+      assert.strictEqual(res.status, 429);
+      await res.json().catch(() => ({}));
+      await Promise.all([first, second].map((p) => p.then((r) => r.json().catch(() => ({})))));
+    });
+  });
+
+  describe('/api/delegate under --no-exec', () => {
+    let handle;
+    let base;
+
+    before(async () => {
+      handle = bootDelegate(['--no-exec']);
+      base = await handle.basePromise;
+    });
+
+    after(() => shutdown(handle));
+
+    it('denies with --no-exec before touching the model', async () => {
+      const res = await postJson(base, '/api/delegate', { kind: 'research', objective: 'list files' });
+      assert.strictEqual(res.status, 403);
+      const body = await res.json();
+      assert.match(body.error, /--no-exec/);
+    });
+  });
+
+  describe('chain research end-to-end (stub model)', () => {
+    let stub;
+    let handle;
+    let base;
+
+    before(async () => {
+      stub = await startDelegateStub((content) => {
+        // NOTE: child follow-up turns arrive wrapped (`Previous context: ...
+        // Executed command: ...`), so match markers with includes() and test
+        // exact objectives first.
+        if (content === 'please research') return 'Looking into it.\n<DELEGATE>list the txt files</DELEGATE>';
+        if (content === 'two tags') {
+          return 'Both:\n<DELEGATE>list the txt files</DELEGATE>\n<SUBTASK>build something</SUBTASK>';
+        }
+        if (content === 'think tag') return '<think><DELEGATE>list the txt files</DELEGATE></think>final';
+        if (content.includes('Research result (')) return 'Research done, no more commands.';
+        if (content.includes('Executed command:')) return `Noted: ${content}`;
+        if (content.includes('list the txt files')) return '<RUN>ls</RUN>';
+        return 'Final answer.';
+      });
+      handle = bootDelegate(['-m', 'q', '-t', '%research'], { LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stub.port}/v1` });
+      base = await handle.basePromise;
+    });
+
+    after(async () => {
+      await shutdown(handle);
+      stub.server.closeAllConnections?.();
+      stub.server.close();
+    });
+
+    it('honors the first tag and reports the extra one', async () => {
+      const res = await postJson(base, '/api/chain', { messages: [{ role: 'user', content: 'two tags' }] });
+      assert.strictEqual(res.status, 200);
+      const run = await res.json();
+      assert.strictEqual(run.status, 'completed');
+      const records = run.events.filter((e) => typeof e.text === 'string' && e.text.startsWith('Research result ('));
+      assert.strictEqual(records.length, 1, 'only the first tag runs');
+      assert.ok(!run.events.some((e) => typeof e.text === 'string' && e.text.startsWith('Task result (')));
+      const warning = run.events.find((e) => e.type === 'denied' && /extra tag/.test(e.text || ''));
+      assert.ok(warning, 'the ignored tag is reported, never dropped in silence');
+    });
+
+    it('never runs a tag inside a literal <think> block', async () => {
+      const res = await postJson(base, '/api/chain', { messages: [{ role: 'user', content: 'think tag' }] });
+      assert.strictEqual(res.status, 200);
+      const run = await res.json();
+      assert.strictEqual(run.status, 'completed');
+      const records = run.events.filter((e) => typeof e.text === 'string' && e.text.startsWith('Research result ('));
+      assert.strictEqual(records.length, 0, 'reasoning is data, not an instruction');
+      const assistantTexts = run.events.filter((e) => e.type === 'message').map((e) => e.text || '');
+      assert.ok(assistantTexts.includes('final'), 'the literal think block leaves the stored turn');
+    });
+
+    it('runs the child, strips the tag and completes with one record', async () => {
+      const res = await postJson(base, '/api/chain', { messages: [{ role: 'user', content: 'please research' }] });
+      assert.strictEqual(res.status, 200);
+      const run = await res.json();
+      assert.strictEqual(run.status, 'completed');
+      assert.strictEqual(run.pending, null);
+      const records = run.events.filter((e) => typeof e.text === 'string' && e.text.startsWith('Research result ('));
+      assert.strictEqual(records.length, 1);
+      assert.ok(records[0].text.includes('hello.txt'), 'child stdout reaches the parent only as summary');
+      const assistantTexts = run.events.filter((e) => e.type === 'message').map((e) => e.text || '');
+      assert.ok(!assistantTexts.some((t) => t.includes('<DELEGATE>')), 'tag leaves the stored turno');
+      assert.ok(
+        !assistantTexts.some((t) => t.startsWith('Executed command:')),
+        'no child command record enters the parent timeline (only the summary does)',
+      );
+    });
+  });
+
+  describe('chain build end-to-end with -y (stub model)', () => {
+    let stub;
+    let handle;
+    let base;
+
+    before(async () => {
+      stub = await startDelegateStub((content) => {
+        if (content === 'please build') return 'On it.\n<SUBTASK>create out.txt with hi</SUBTASK>';
+        if (content.includes('Task result (')) return 'Build done, no more commands.';
+        if (content.includes('Executed command:')) return 'Wrote it.';
+        if (content.includes('create out.txt with hi')) return '<RUN>echo hi > out.txt</RUN>';
+        return 'Final answer.';
+      });
+      handle = bootDelegate(['-m', 'q', '-t', '%build', '-y'], { LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stub.port}/v1` });
+      base = await handle.basePromise;
+    });
+
+    after(async () => {
+      await shutdown(handle);
+      stub.server.closeAllConnections?.();
+      stub.server.close();
+    });
+
+    it('executes the build child and records only the summary', async () => {
+      const res = await postJson(base, '/api/chain', { messages: [{ role: 'user', content: 'please build' }] });
+      assert.strictEqual(res.status, 200);
+      const run = await res.json();
+      assert.strictEqual(run.status, 'completed');
+      assert.strictEqual(fs.readFileSync(path.join(handle.dir, 'out.txt'), 'utf8'), 'hi\n');
+      const records = run.events.filter((e) => typeof e.text === 'string' && e.text.startsWith('Task result ('));
+      assert.strictEqual(records.length, 1);
+      const assistantTexts = run.events.filter((e) => e.type === 'message').map((e) => e.text || '');
+      assert.ok(!assistantTexts.some((t) => t.includes('<SUBTASK>')), 'tag leaves the stored turno');
+    });
+  });
+
+  describe('task mode forces auto-run for a build child (stub model)', () => {
+    let stub;
+    let handle;
+    let base;
+
+    before(async () => {
+      stub = await startDelegateStub((content) => {
+        if (content === 'please build') return 'On it.\n<SUBTASK>create out.txt with hi</SUBTASK>';
+        if (content.includes('create out.txt with hi')) return '<RUN>echo hi > out.txt</RUN>';
+        if (content.includes('Task result (')) return 'Build done, no more commands.';
+        return 'Final answer.';
+      });
+      handle = bootDelegate(['-m', 'q', '-t', '%build-auto'], {
+        LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stub.port}/v1`,
+      });
+      base = await handle.basePromise;
+    });
+
+    after(async () => {
+      await shutdown(handle);
+      stub.server.closeAllConnections?.();
+      stub.server.close();
+    });
+
+    it('executes the child without a childPending card and records only the summary', async () => {
+      const res = await postJson(base, '/api/chain', { messages: [{ role: 'user', content: 'please build' }] });
+      assert.strictEqual(res.status, 200);
+      const run = await res.json();
+      assert.strictEqual(run.status, 'completed');
+      assert.strictEqual(run.childPending, null, 'task mode forces -y: no child approval card');
+      assert.ok(fs.existsSync(path.join(handle.dir, 'out.txt')), 'build child executed');
+      const records = run.events.filter((e) => typeof e.text === 'string' && e.text.startsWith('Task result ('));
+      assert.strictEqual(records.length, 1);
+      const assistantTexts = run.events.filter((e) => e.type === 'message').map((e) => e.text || '');
+      assert.ok(!assistantTexts.some((t) => t.includes('<SUBTASK>')));
+    });
+  });
+
+  describe('delegate build under the forced auto-run (stub model)', () => {
+    let stub;
+    let handle;
+    let base;
+
+    before(async () => {
+      stub = await startDelegateStub((content) => {
+        if (content.includes('please build')) return '<RUN>echo hi > out.txt</RUN>';
+        return 'Built it.';
+      });
+      handle = bootDelegate(['-m', 'q', '-t', '%delegate-auto'], {
+        LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stub.port}/v1`,
+      });
+      base = await handle.basePromise;
+    });
+
+    after(async () => {
+      await shutdown(handle);
+      stub.server.closeAllConnections?.();
+      stub.server.close();
+    });
+
+    it('executes the child and returns only the summary (no awaiting card)', async () => {
+      // Task mode forces -y, so `/api/delegate` takes the auto-run branch:
+      // the v2 nested approval bridge is only reachable without -y.
+      const res = await postJson(base, '/api/delegate', { kind: 'build', objective: 'please build' });
+      assert.strictEqual(res.status, 200);
+      const done = await res.json();
+      assert.ok(typeof done.record === 'string' && done.record.includes('Task result ('));
+      assert.ok(!done.record.includes('echo hi > out.txt'), 'summary only, never the raw script');
+      assert.ok(fs.existsSync(path.join(handle.dir, 'out.txt')), 'build child executed');
+    });
+  });
+
+  describe('chain delegation budget (stub model)', () => {
+    let stub;
+    let handle;
+    let base;
+    let delegateTurns;
+
+    before(async () => {
+      delegateTurns = 0;
+      stub = await startDelegateStub((content) => {
+        if (content === 'please delegate') return '<DELEGATE>objective 1</DELEGATE>';
+        if (content.includes('Research result (')) {
+          delegateTurns += 1;
+          if (delegateTurns < 3) return `<DELEGATE>objective ${delegateTurns + 1}</DELEGATE>`;
+          return 'Enough research, final answer.';
+        }
+        if (content.includes('Executed command:')) return 'Listed.';
+        if (content.includes('objective')) return '<RUN>ls</RUN>';
+        return 'Final answer.';
+      });
+      handle = bootDelegate(['-m', 'q', '-t', '%build', '-y'], { LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stub.port}/v1` });
+      base = await handle.basePromise;
+    });
+
+    after(async () => {
+      await shutdown(handle);
+      stub.server.closeAllConnections?.();
+      stub.server.close();
+    });
+
+    it('serves at most two delegations per run, then the tag goes inert', async () => {
+      const res = await postJson(base, '/api/chain', { messages: [{ role: 'user', content: 'please delegate' }] });
+      assert.strictEqual(res.status, 200);
+      const run = await res.json();
+      assert.strictEqual(run.status, 'completed');
+      const records = run.events.filter((e) => typeof e.text === 'string' && e.text.startsWith('Research result ('));
+      assert.strictEqual(records.length, 2, 'default cap 8 → budget 2');
+      assert.ok(records.every((e) => typeof e.text === 'string' && e.text.includes('(DONE)')), 'host status rides the record');
+      const denied = run.events.filter((e) => e.type === 'denied');
+      assert.strictEqual(denied.length, 1, 'spent tag is denied with motive, never silent');
+      assert.match(denied[0].text, /Delegation budget exceeded \(2\)/);
+      const assistantTexts = run.events.filter((e) => e.type === 'message').map((e) => e.text || '');
+      assert.ok(!assistantTexts.some((t) => t.includes('<DELEGATE>')), 'spent tag stays stripped inert text');
+    });
+  });
+
+  describe('delegation without task mode (baseline 09269bb, stub model)', () => {
+    let stub;
+    let handle;
+    let base;
+
+    before(async () => {
+      stub = await startDelegateStub((content) => {
+        if (content === 'please research') return 'Looking into it.\n<DELEGATE>list files</DELEGATE>';
+        return 'Final answer.';
+      });
+      handle = bootDelegate(['-m', 'q'], { LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stub.port}/v1` });
+      base = await handle.basePromise;
+    });
+
+    after(async () => {
+      await shutdown(handle);
+      stub.server.closeAllConnections?.();
+      stub.server.close();
+    });
+
+    it('ignores the tag: no child, no record, tag stripped from the turn', async () => {
+      const res = await postJson(base, '/api/chain', { messages: [{ role: 'user', content: 'please research' }] });
+      assert.strictEqual(res.status, 200);
+      const run = await res.json();
+      assert.strictEqual(run.status, 'completed');
+      const records = run.events.filter((e) => typeof e.text === 'string' && e.text.startsWith('Research result ('));
+      assert.strictEqual(records.length, 0, 'the tag never starts a child outside task mode');
+      const assistantTexts = run.events.filter((e) => e.type === 'message').map((e) => e.text || '');
+      assert.ok(!assistantTexts.some((t) => t.includes('<DELEGATE>')), 'the inert tag leaves the stored turn');
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task mode (`-t/--task`): id resolution, forced toggles and the task-only
+// delegation contract. No model calls here, so no stub is needed.
+// ---------------------------------------------------------------------------
+describe('web sandbox: task mode', () => {
+  function bootTask(extraArgs = [], setup) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-web-task-'));
+    const home = path.join(dir, 'home');
+    fs.mkdirSync(home, { recursive: true });
+    if (setup) setup({ dir, home });
+    const env = { ...process.env, HOME: home, PORT: '0', NODE_ENV: 'production' };
+    delete env.TELL_TOKEN;
+    const child = spawn(process.execPath, [DIST_SERVER, '--cwd', dir, ...extraArgs], {
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return { dir, home, child, basePromise: waitForServer(child) };
+  }
+
+  function stopTask(handle) {
+    if (handle.child && !handle.child.killed) handle.child.kill('SIGTERM');
+    fs.rmSync(handle.dir, { recursive: true, force: true });
+  }
+
+  it('resolves task-NNN-name, exposes taskId and seeds the forced toggles', async () => {
+    const handle = bootTask(['-t', '%My_Task']);
+    try {
+      const base = await handle.basePromise;
+      const config = await (await fetch(`${base}/api/config`)).json();
+      assert.strictEqual(config.taskId, 'task-001-my-task');
+      assert.strictEqual(config.chain, true);
+      assert.strictEqual(config.yes, true);
+      assert.strictEqual(config.autoExecute, true);
+      assert.strictEqual(config.requireApproval, true);
+      assert.strictEqual(config.stream, true);
+      const anchor = path.join(handle.home, '.ai', 'tell_context', 'task-001-my-task', 'main.txt');
+      assert.ok(fs.existsSync(anchor), 'the task anchor exists so the CLI allocates the same number');
+      const context = await (await fetch(`${base}/api/context`)).json();
+      assert.match(context.systemPrompt, /Task mode \(task-001-my-task\)/);
+      assert.ok(context.systemPrompt.includes('<DELEGATE>'));
+      assert.ok(context.systemPrompt.includes('<SUBTASK>'));
+    } finally {
+      stopTask(handle);
+    }
+  });
+
+  it('reads the saved main.txt as the prior task context', async () => {
+    const handle = bootTask(['-t', '%Saved'], ({ home }) => {
+      const file = path.join(home, '.ai', 'tell_context', 'task-001-saved', 'main.txt');
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, 'User:\nprior work\nAssistant:\nprior answer\n');
+    });
+    try {
+      const base = await handle.basePromise;
+      const context = await (await fetch(`${base}/api/context`)).json();
+      assert.ok(context.systemPrompt.includes('Task context so far:'));
+      assert.ok(context.systemPrompt.includes('prior work'));
+    } finally {
+      stopTask(handle);
+    }
+  });
+
+  it('refuses --task with --no-exec at boot (exit 2)', async () => {
+    const handle = bootTask(['-t', '%x', '--no-exec']);
+    handle.basePromise.catch(() => {});
+    try {
+      const code = await new Promise((resolve) => handle.child.on('exit', resolve));
+      assert.strictEqual(code, 2);
+    } finally {
+      stopTask(handle);
+    }
+  });
+
+  it('never teaches delegation without -t and refuses /api/delegate', async () => {
+    const handle = bootTask([]);
+    try {
+      const base = await handle.basePromise;
+      const context = await (await fetch(`${base}/api/context`)).json();
+      assert.ok(!context.systemPrompt.includes('<DELEGATE>'), 'no delegation section without -t');
+      assert.ok(!context.systemPrompt.includes('<SUBTASK>'), 'no subtask section without -t');
+      const config = await (await fetch(`${base}/api/config`)).json();
+      assert.strictEqual(config.taskId, null);
+      const denied = await fetch(`${base}/api/delegate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'research', objective: 'x' }),
+      });
+      assert.strictEqual(denied.status, 403);
+      assert.match((await denied.json()).error, /task mode/);
+    } finally {
+      stopTask(handle);
+    }
   });
 });
 

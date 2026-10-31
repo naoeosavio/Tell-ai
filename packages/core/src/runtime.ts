@@ -50,8 +50,17 @@ export type CoreRuntimeInput = {
   callbacks?: RuntimeCallbacks;
   /** Primitive-loop round cap (defaults to `LOOP_MAX_ROUNDS`). */
   max_rounds?: number;
+  /** Whether a denied command feeds back to the model instead of ending the loop. */
+  retry_denied?: boolean;
   /** Internal per-command output cap in bytes (defaults to `CORE_MAX_OUTPUT_BYTES`). */
   max_output_bytes?: number;
+  /** Delegation runner (absent means tags stay inert text; child passes none). */
+  delegation?: TellRuntimeOptions['delegation'];
+  /**
+   * Fixed delegation budget for the run (undefined means the runner decides).
+   * The loop uses the same value as its delegation-round cap.
+   */
+  max_delegations?: number | undefined;
 };
 
 /** Executable core runtime handle (loop owned by core, contract by the SDK). */
@@ -88,6 +97,8 @@ export function create_core_runtime(input: CoreRuntimeInput): CoreRuntime {
     ...(input.cancellation !== undefined ? { cancellation: input.cancellation } : {}),
     ...(input.redact !== undefined ? { redact: input.redact } : {}),
     ...(input.callbacks !== undefined ? { callbacks: input.callbacks } : {}),
+    ...(input.delegation !== undefined ? { delegation: input.delegation } : {}),
+    ...(input.max_delegations !== undefined ? { max_delegations: input.max_delegations } : {}),
     timeout_ms: input.config.exec_timeout_ms,
     max_output_bytes: input.max_output_bytes ?? CORE_MAX_OUTPUT_BYTES,
   };
@@ -95,6 +106,8 @@ export function create_core_runtime(input: CoreRuntimeInput): CoreRuntime {
     runtime_options: base_options,
     single_turn: createTellRuntime(base_options),
     ...(input.max_rounds !== undefined ? { max_rounds: input.max_rounds } : {}),
+    ...(input.max_delegations !== undefined ? { max_delegations: input.max_delegations } : {}),
+    ...(input.retry_denied !== undefined ? { retry_denied: input.retry_denied } : {}),
   };
 
   async function run(message: string, override?: { cancellation?: CancellationToken }): Promise<TellResult> {
