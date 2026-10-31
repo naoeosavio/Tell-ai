@@ -36,11 +36,14 @@ Full spec format: `vendor:model[:thinking]` with thinking in `none|low|medium|hi
 | `-c, --context` | boolean | Use default per-directory+model context. |
 | `--ctx [ref]` | optional string | Context ref + prompt: `@N` recency, `%id` use-or-create; text after the ref is the prompt. No ref = prompt text for the default context. A single bare token with a positional prompt is an error (naming requires `%`). Cannot combine with `-c`. |
 | `-n, --name` | boolean | Reset modifier: `--ctx %id -n` (or `--task %id -n`) always starts empty. Requires `%id`. |
-| `-t, --task [ref]` | optional string | Task mode: `%id` resumes or creates `task-NNN-name`; without a ref the prompt creates `task-NNN-<hash8>`. Forces `-y --chain --stream --require-approval` and uses `~/.ai/tell_context/task-NNN-name/main.txt`. A new task needs a prompt; a resume can continue without one. Cannot combine with `--ctx`, `-c` or `--no-exec`. See Task mode below. |
+| `-t, --task [ref]` | optional string | Task mode: `%id` resumes or creates `task-NNN-name`; without a ref the prompt creates `task-NNN-<hash8>`. Forces `--chain --stream --require-approval` (add `-y` to auto-run safe commands; without it every command asks) and uses `~/.ai/tell_context/task-NNN-name/main.txt`. A new task needs a prompt; a resume can continue without one. Cannot combine with `--ctx`, `-c` or `--no-exec`. See Task mode below. |
 | `-l, --history [ref]` | optional string | List contexts + conversations; `@N`/`%N` reprints an entry; any other value searches both. No model call. See [history.md](history.md). |
 | `-y, --yes` | boolean | Auto-approve commands. High-risk **and** any reference to paths outside the working directory still require confirmation. No-op without TTY for those (auto-reject). |
 | `--require-approval` | boolean | Explicit Require Approval mode: with `-y`, safe commands run directly and high-risk ones still ask; without `-y`, every command asks (same as default). Never weakens the high-risk gate. Forwarded by `-w`/`--web` to seed the web sandbox toggle. |
 | `--chain` | boolean | Loop up to 8 command rounds, feeding output back to the model. |
+| `--tags` | boolean | Show `<RUN>`/`<DELEGATE>`/`<SUBTASK>` tag blocks on stdout. Hidden by default (the live stream is filtered; the saved text is always tag-free). |
+| `--output` | boolean | Show the output of executed commands (parent and delegation child); hidden by default. Approval prompts still show the script. |
+| `--delegation` | boolean | Show the child acting live (commands, outputs, text) until it returns the `Research/Task result` record. Hidden by default: only a compact `Delegando pesquisa… (research: <20>)` / `Delegando sub-tarefa… (build: <20>)` indicator remains (like `Thinking...`). |
 | `-i, --input` | boolean | Force stdin capture and wrap as `User request:` + `Input:` sections. |
 | `--no-exec` | boolean | Never execute; report `Command execution disabled` per script. Overrides `-y`. |
 | `--models` | boolean | List the models the `custom` endpoint exposes (`GET {CUSTOM_BASE_URL}/models`), grouped by the wire each would use, with a copy-pasteable `custom:<model>` spec. No model call, no prompt needed. Requires `CUSTOM_BASE_URL` + `CUSTOM_API_KEY`. |
@@ -59,7 +62,7 @@ Full spec format: `vendor:model[:thinking]` with thinking in `none|low|medium|hi
 
 ## Task mode (`-t`, `--task`)
 
-Task mode is sugar over chain mode. It opens a saved task, forces `-y --chain --stream --require-approval`, and refuses `--no-exec` (exit `2`).
+Task mode is sugar over chain mode. It opens a saved task, forces `--chain --stream --require-approval`, and refuses `--no-exec` (exit `2`). `-y` is opt-in: without it every command asks (non-TTY denies); with it safe commands auto-run and high-risk/outside-cwd commands still ask.
 
 - Id: `task-NNN-name`. `--task %name` resumes the saved task or creates it with the next free number. `--task "objective"` creates `task-NNN-<hash8>` from `sha256(cwd + prompt)`. Numbers never reset, repeat or renumber; a resume never allocates one. Repeating the exact objective reuses the same hash id (resume) — pass a distinct `%ref` to force a second task. When several saved tasks share the normalized name, the most recently used one wins; pass the full id to pick another.
 - The task line (`Created task:`/`Using task:`) is printed only after the run succeeds, so a model failure never reports a task that was never saved.

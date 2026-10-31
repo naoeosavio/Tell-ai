@@ -11,7 +11,7 @@ The model proposes commands by wrapping them in `<RUN>…</RUN>` tags. The core 
 5. `onCommandOutput`/`onCommandSkip` → legacy result lines (`Executed command:` / `Command failed:` / `Skipped by user:` / `Command execution disabled — not run:`) appended to the log, mirrored to the timeline, optional context save.
 6. Non-chain (`max_rounds: 1`): commands ran but visible text is empty → one more model call with tags stripped, break. Chain (`max_rounds: 8`): declined commands resume with conversation-plus-instruction feedback until clean, skipped, or capped.
 
-`visible` is printed to stdout; command output is echoed to stderr (dimmed when TTY) and embedded in the feedback string, never printed to stdout directly.
+`visible` is printed to stdout (protocol tag blocks are filtered by default; `--tags` shows them). Command output is embedded in the feedback string — never printed to stdout directly — and is echoed to stderr only with `--output` (dimmed when TTY); it stays in the log/context either way.
 
 ## Per-command outcomes (mirrored from runtime callbacks)
 
