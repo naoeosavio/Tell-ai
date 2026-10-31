@@ -9,7 +9,7 @@ const { describe, it } = require('node:test');
 
 const core = require('../packages/core/dist/index.cjs');
 
-const ALLOWED_RISK_KEYS = new Set(['risky', 'reason', 'severity', 'category', 'reasons', 'flags']);
+const ALLOWED_RISK_KEYS = new Set(['risky', 'reason', 'severity', 'category', 'reasons', 'flags', 'rules']);
 
 function base(script, profile) {
   return core.assess_base_risk(script, profile);
@@ -195,6 +195,15 @@ describe('RiskAssessment carries no action verdict', () => {
     assert.strictEqual(seen_risk.severity, 'high');
     assert.strictEqual(executed, false);
     assert.strictEqual(result.commands[0].status, 'denied');
+    assert.strictEqual(result.commands[0].reason, 'privilege-escalation', 'the denial names the rule');
+    assert.ok(result.timeline.join('\n').includes('Reason: privilege-escalation'));
+  });
+
+  it('exposes the matched rule ids (stable denial reason)', () => {
+    const assessment = base('bash <(echo hi)', 'permissive');
+    assert.strictEqual(assessment.risky, true);
+    assert.ok(assessment.rules.includes('shell-process-substitution'));
+    assert.ok(!base('echo hi').rules.includes('shell-process-substitution'));
   });
 });
 
