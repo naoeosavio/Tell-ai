@@ -107,6 +107,21 @@ tell --stream --think "why does this race condition happen?"  # reasoning on std
 stderr once the response arrives. Streaming never changes what is logged or
 saved to the context.
 
+By default the live output is quiet: `<RUN>`/`<DELEGATE>`/`<SUBTASK>` blocks,
+executed-command output and the child's activity/result are hidden (the saved
+log/context and execution are unchanged). The minimal `Delegando …` indicator
+remains, like `Thinking...`. Opt in per surface, like `--think`:
+
+```bash
+tell --stream --tags "..."        # show the protocol markup
+tell --stream --output "..."      # show executed command output
+tell -t --delegation "..."        # show the child acting live + result record
+tell -t -y "..."                  # auto-run safe commands (task mode asks by default)
+```
+
+Approval prompts and the task announcement still go to stderr; a security gate
+cannot be hidden.
+
 Include piped input with a prompt:
 
 ```bash

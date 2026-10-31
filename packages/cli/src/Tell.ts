@@ -9,6 +9,7 @@ import {
   collect_exec_secrets,
   collect_sensitive_file_secrets,
   create_delegation_runner,
+  type DelegationChildEvent,
   create_secret_redactor,
   DEFAULT_CONTEXT_MAX_CHARS,
   DEFAULT_EXEC_TIMEOUT_MS,
@@ -120,6 +121,9 @@ type CliOptions = {
   web?: boolean;
   stream?: boolean;
   think?: boolean;
+  tags?: boolean;
+  output?: boolean;
+  delegation?: boolean;
   cwd?: string;
   models?: boolean;
   requireApproval?: boolean;
@@ -204,6 +208,9 @@ type ConversationState = {
   saveContext: boolean;
   stream: boolean;
   think: boolean;
+  showTags: boolean;
+  showOutput: boolean;
+  showDelegation: boolean;
   coreConfig: CoreConfig;
   customSystemText?: string;
   temperature?: number;
@@ -989,7 +996,7 @@ function build_program(argv: string[]): Command {
     )
     .option(
       '-t, --task [ref]',
-      'run one task (%id resume/create, else a prompt): forces -y --chain --stream --require-approval',
+      'run one task (%id resume/create, else a prompt): forces --chain --stream --require-approval; add -y to auto-run safe commands',
     )
     .option('-n, --name', 'reset a context (--ctx %id -n) or a task (--task %id -n): starts empty')
     .option('-l, --history [ref]', 'list contexts + conversations; @N/%N show an entry; any other value searches both')
@@ -999,6 +1006,9 @@ function build_program(argv: string[]): Command {
     .option('--chain', 'continue after command output until the assistant gives a final answer')
     .option('--stream', 'stream the response as it is generated')
     .option('--think', 'show the model reasoning on stderr (works with and without --stream)')
+    .option('--tags', 'show <RUN>/<DELEGATE>/<SUBTASK> tag text on stdout (hidden by default)')
+    .option('--output', 'show the output of executed commands (hidden by default)')
+    .option('--delegation', 'show delegation indicators and result records (hidden by default)')
     .option('-i, --input', 'read stdin and include it with the prompt')
     .option('-w, --web', 'launch the interactive Tell Web sandbox')
     .option('--cwd <path>', 'working directory for the sandbox (created if missing)')
@@ -1064,9 +1074,42 @@ function print_command_output(output: string): void {
   }
 }
 
+// Prints one live child event when `--delegation` is active (never by default).
+function print_child_event(event: DelegationChildEvent): void {
+  if (event.type === 'text') {
+    const text = event.text.trim();
+    if (text !== '') {
+      const indented = text
+        .split('\n')
+        .map((line) => `  │ ${line}`)
+        .join('\n');
+      process.stderr.write(`\x1b[2m${indented}\x1b[0m\n`);
+    }
+  } else if (event.type === 'command') {
+    process.stderr.write(`\x1b[2m  │ $ ${event.script}\x1b[0m\n`);
+    const output = event.output.trim();
+    if (output !== '') {
+      const indented = output
+        .split('\n')
+        .map((line) => `  │ ${line}`)
+        .join('\n');
+      process.stderr.write(`\x1b[2m${indented}\x1b[0m\n`);
+    }
+  } else if (event.type === 'skipped') {
+    // Show the real status (`denied`, `skipped`) and the rule id when present.
+    const reason = event.reason !== undefined && event.reason.trim() !== '' ? ` (${event.reason.trim()})` : '';
+    process.stderr.write(`\x1b[2m  │ ${event.status}${reason}: ${event.script}\x1b[0m\n`);
+  } else {
+    process.stderr.write(`\x1b[2m  │ error: ${event.script}: ${event.error}\x1b[0m\n`);
+  }
+}
+
 // Follow-up instruction for resumed chain rounds (legacy wording, kept
 // verbatim: the pinned suites match on it and forbid `Conversation so far:`).
-const RESUME_INSTRUCTION = 'Request another command with <RUN> tags if needed; otherwise answer without <RUN> tags.';
+// A resume only happens after a declined command, so name the ban: the model
+// else spends the next round requesting the same script.
+const RESUME_INSTRUCTION =
+  'Request another command with <RUN> tags if needed; otherwise answer without <RUN> tags. Do not request the command above again.';
 
 // True when a finished run paused on a declined command and chain mode must
 // resume it: the core loop stops on non-executed commands (confirm pauses,
@@ -1162,12 +1205,28 @@ async function run_response_loop(
   const model = create_cli_model(ai, {
     stream: state.stream,
     think: state.think,
+    hide_tags: !state.showTags,
     ...(state.temperature !== undefined ? { temperature: state.temperature } : {}),
     on_raw: (response) => {
       last_raw = response;
     },
   });
-  const approval = create_cli_approval(state.execMode, (pending) => confirm_command(pending, state.execMode));
+  // The child is silent, so the wrapper prints a transient line while it
+  // works. The child can ask for approval mid-run: clear the line before
+  // every prompt, or the prompt text lands on the indicator line.
+  let is_delegation_line_active = false;
+  function clear_delegation_line(): void {
+    if (is_delegation_line_active) {
+      process.stderr.write('\r\x1b[K');
+      is_delegation_line_active = false;
+    } else {
+      // No delegation line on screen.
+    }
+  }
+  const approval = create_cli_approval(state.execMode, (pending) => {
+    clear_delegation_line();
+    return confirm_command(pending, state.execMode);
+  });
   // Shared ports across runs: storage accumulates the conversation so resumed
   // runs compose follow-ups continuously; everything else is stateless.
   const storage = create_cli_memory_storage(previousContext);
@@ -1188,6 +1247,7 @@ async function run_response_loop(
           executor,
           approval,
           risk: cli_risk_port(),
+          ...(state.showDelegation ? { on_child_event: print_child_event } : {}),
           ...(redact !== undefined ? { redact } : {}),
           cwd: process.cwd(),
           platform: `${os.platform()} ${os.release()}`,
@@ -1199,25 +1259,42 @@ async function run_response_loop(
           max_rounds: state.limits.delegation_max_rounds,
         })
       : undefined;
-  // UX indicator for the silent child (the child itself never writes): the
-  // wrapper prints before the runner and clears after, so the parent marker
-  // is never erased by the child. Child commands are audited to the run log
-  // (marked, never the parent timeline) so a delegation stays debuggable.
+  // UX line for the silent child (the child never writes): a transient line
+  // that clears itself before an approval prompt and when the child finishes.
+  // Child commands are audited to the run log (marked, never the parent
+  // timeline) so a delegation stays debuggable.
   const delegation_with_indicator =
     delegation_runner === undefined
       ? undefined
       : async (request: { kind: 'research' | 'build'; objective: string }): Promise<DelegationResult> => {
           const label = request.kind === 'research' ? 'Delegando pesquisa…' : 'Delegando sub-tarefa…';
-          process.stderr.write(`\x1b[2m${label}\x1b[0m`);
+          const objective = request.objective.replace(/\s+/g, ' ').trim();
+          const short = objective.length > 20 ? `${objective.slice(0, 20)}…` : objective;
+          if (state.showDelegation) {
+            process.stderr.write(`\x1b[2m${label} (${request.kind}: ${short})\x1b[0m\n`);
+          } else {
+            process.stderr.write(`\x1b[2m${label} (${request.kind}: ${short})\x1b[0m`);
+            is_delegation_line_active = true;
+          }
           try {
             const delegation_result: DelegationResult = await delegation_runner({
               ...request,
               ...(last_raw.trim() !== '' ? { context: last_raw } : {}),
             });
+            clear_delegation_line();
             if ('outcome' in delegation_result) {
               const outcome: DelegationOutcome = delegation_result.outcome;
               for (const command of outcome.commands) {
                 append_log(log, `Child command (${command.status}):\n${command.script}`);
+                if (
+                  state.showOutput &&
+                  !state.showDelegation &&
+                  typeof command.output === 'string' &&
+                  command.output.trim() !== ''
+                ) {
+                  process.stderr.write(`\x1b[2m[${request.kind}:${command.status}] ${command.script}\x1b[0m\n`);
+                  print_command_output(command.output);
+                }
               }
               if (state.task !== undefined) {
                 write_delegation_record(state.task, request, outcome, conversation_text(state), redact);
@@ -1233,7 +1310,7 @@ async function run_response_loop(
             }
             return delegation_result;
           } finally {
-            process.stderr.write('\r\x1b[K');
+            clear_delegation_line();
           }
         };
   const runtime_callbacks: RuntimeCallbacks = {
@@ -1250,13 +1327,19 @@ async function run_response_loop(
       } else {
         // Every tag was consumed.
       }
+      if (state.showDelegation) {
+        process.stderr.write(`\x1b[2m${event.record}\x1b[0m\n`);
+      }
       remember_delegation(state, log, event.record);
       if (state.saveContext) save_incremental_context(contextPath, previousContext, state);
     },
     onCommandOutput: (event) => {
       const capped = truncate_output(event.output, exec_options.max_output_bytes);
       const result_text = format_command_result(event.script, capped, event.exit_code);
-      print_command_output(capped);
+      if (state.showOutput) {
+        print_command_output(capped);
+      }
+
       append_log(log, result_text);
       remember_command_result(state, result_text);
       if (state.saveContext) save_incremental_context(contextPath, previousContext, state);
@@ -1357,11 +1440,22 @@ async function maybe_summarize_context(
   try {
     const turn = strip_think_tags(conversation_text(state));
     if (previousContext && previousContext.length + turn.length > state.limits.context_max_chars) {
-      try {
-        const summary = await summarize_context(ai, previousContext);
-        write_context(contextPath, `${summary}\n${turn}`, state.limits.context_max_chars);
-      } catch {
+      if (turn.length >= state.limits.context_max_chars) {
+        // The newest turn alone overflows: truncation keeps it and drops the
+        // summary, so the extra model call would be wasted.
         write_context(contextPath, `${previousContext}\n${turn}`, state.limits.context_max_chars);
+      } else {
+        // One extra model call: say so, or the process looks hung after the
+        // task/context line already printed.
+        process.stderr.write('\x1b[2mResumindo contexto...\x1b[0m');
+        try {
+          const summary = await summarize_context(ai, previousContext);
+          write_context(contextPath, `${summary}\n${turn}`, state.limits.context_max_chars);
+        } catch {
+          write_context(contextPath, `${previousContext}\n${turn}`, state.limits.context_max_chars);
+        } finally {
+          process.stderr.write('\r\x1b[K');
+        }
       }
     }
   } catch (error) {
@@ -1684,7 +1778,7 @@ async function run_tell(
   // mention read gate ignores `-y` and task mode: outside-cwd and
   // credential-named targets ask on a TTY and are denied without one.
   const full_prompt = await expand_mentions(raw_prompt, process.cwd(), {
-    yes: task !== undefined || Boolean(opts.yes),
+    yes: Boolean(opts.yes),
   });
   const save_context = plan.$ !== 'none';
   // Core config resolved once per invocation (exec/chain only — provider
@@ -1697,8 +1791,7 @@ async function run_tell(
     task !== undefined
       ? resolve_cli_core_config({ exec: true, chain: true, exec_timeout_ms: limits.exec_timeout_ms })
       : resolve_cli_core_config({ exec: opts.exec, chain: opts.chain, exec_timeout_ms: limits.exec_timeout_ms });
-  const exec_mode: ExecMode =
-    task !== undefined || opts.yes ? 'auto-risk' : core_config.exec_enabled === false ? 'no-exec' : 'confirm-all';
+  const exec_mode: ExecMode = core_config.exec_enabled === false ? 'no-exec' : opts.yes ? 'auto-risk' : 'confirm-all';
   // 'create' always starts empty, even if it reuses an existing name (an explicit reset).
   const active_task = task;
   if (active_task?.reset === true) {
@@ -1753,6 +1846,9 @@ async function run_tell(
     saveContext: save_context,
     stream: task !== undefined ? true : Boolean(opts.stream),
     think: Boolean(opts.think),
+    showTags: Boolean(opts.tags),
+    showOutput: Boolean(opts.output),
+    showDelegation: Boolean(opts.delegation),
     coreConfig: core_config,
     limits,
     ...(custom_system_text ? { customSystemText: custom_system_text } : {}),
