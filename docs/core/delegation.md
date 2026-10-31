@@ -46,7 +46,9 @@ flowchart TD
    or a fenced block is inert.
 2. The runtime checks the budget (2 delegations per invocation; `0` when the
    chain has fewer than 2 rounds). No budget left: tag stripped, warning
-   printed (stderr + log on the CLI, event on the Web), no child.
+   printed (stderr + log on the CLI, event on the Web), no child. The runtime
+   also marks the turn `delegation_refused`; the loop answers it with one
+   final-answer round instead of ending with the stripped text.
 3. The host builds the request: `{ kind, objective (4k, sanitized), context }`.
    The context is the parent's **current** answer, sanitized
    (`strip_think_tags` → `strip_run_tags` → `strip_delegation_tags` → `redact`)
@@ -54,21 +56,26 @@ flowchart TD
 4. The child runs with the system prompt (rules + `cwd`/`platform`/`task`), the
    objective and the context. Its storage is bounded at 64k and it gets at most
    32 rounds (adjustable `0..128`) — whichever comes first stops it at a round boundary.
-5. The host derives the status from the facts: `BLOCKED` when commands were
+5. A delegation round never spends a parent round: the parent cap counts
+   command rounds only. The child pays with its own round cap.
+6. The child retries a denied command: the loop feeds `Command denied:` plus a
+   rule reminder back to the child, which continues until its own cap. A
+   command denied by `--no-exec` still stops the child.
+7. The host derives the status from the facts: `BLOCKED` when commands were
    requested and none ran (denied/skipped/`--no-exec`) or the answer is empty;
    `IN PROGRESS` when the round or context cap stopped it with work pending;
    `DONE` otherwise. `SUPERSEDED` is reserved for v2. The model never sets the
    status.
-6. A result larger than the target goes through **one** summarize call (full
+8. A result larger than the target goes through **one** summarize call (full
    input, target 2k, redacted). The rule is `summary < target ? summary :
    original` — the target is a goal, not a hard cap, and the original is
    accepted when the summary misses it.
-7. The record (`Research result (STATUS):` / `Task result (STATUS):` + one
+9. The record (`Research result (STATUS):` / `Task result (STATUS):` + one
    host-assembled stats line) enters the parent timeline; command stdout never
    does.
-8. The parent decides from the status (prompt rule): `DONE` → use it;
-   `IN PROGRESS` → delegate again if budget remains; `BLOCKED` → stop
-   delegating and report.
+10. The parent decides from the status (prompt rule): `DONE` → use it;
+    `IN PROGRESS` → delegate again if budget remains; `BLOCKED` → stop
+    delegating and report.
 
 ## Budget
 
@@ -76,9 +83,12 @@ flowchart TD
   chain has fewer than 2 rounds. `--max-delegations 0..2` is the explicit exit;
   a resumed task gets a fresh per-invocation budget.
 - A status never consumes budget; only an actual child run does.
+- A delegation never consumes a parent round. The parent cap counts command
+  rounds only, so `--max-chain N` still buys N commands after a child run.
 - The third tag is inert with a warning: the runtime owns the counter, and the
   runner returns the reason (`budget` / `empty_objective`) so the host can say
-  why.
+  why. The loop then asks the parent for the final answer, so the run never
+  ends with empty text.
 
 ## Status
 
