@@ -382,6 +382,103 @@ async function test_task_resume_without_prompt() {
   }
 }
 
+async function test_task_default_hides_tags_and_command_output() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-task-'));
+  try {
+    const result = await run_tell(
+      ['-t', '%Hide', '-y', '--max-chain', '1', 'run'],
+      '<RUN>echo hi</RUN>Clean answer',
+      { dir, execStdout: 'TASK_HIDDEN_OUT\n' },
+    );
+    assert.strictEqual(result.exitCode, undefined);
+    // Task mode still streams, but the live filter drops the tag block.
+    assert.strictEqual(result.streamCalls.length, 1);
+    assert.deepStrictEqual(result.execCalls, ['echo hi']);
+    assert_includes(result.stdout, 'Clean answer');
+    assert_not_includes(result.stdout, '<RUN>');
+    assert_not_includes(result.stderr, 'TASK_HIDDEN_OUT');
+    assert_includes(result.stderr, 'Created task: task-001-hide');
+    assert.deepStrictEqual(list_task_ids(result.home), ['task-001-hide']);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+async function test_task_tags_flag_shows_markup() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-task-'));
+  try {
+    const result = await run_tell(
+      ['-t', '%Tags', '--tags', '-y', '--max-chain', '1', 'run'],
+      '<RUN>echo hi</RUN>Clean answer',
+      { dir },
+    );
+    assert.strictEqual(result.streamCalls.length, 1);
+    assert_includes(result.stdout, '<RUN>');
+    assert_includes(result.stdout, '</RUN>');
+    assert_includes(result.stdout, 'Clean answer');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+async function test_task_output_flag_shows_command_output() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-task-'));
+  try {
+    const result = await run_tell(
+      ['-t', '%Out', '--output', '-y', '--max-chain', '1', 'run'],
+      '<RUN>echo hi</RUN>Clean answer',
+      { dir, execStdout: 'TASK_SHOWN_OUT\n' },
+    );
+    assert.deepStrictEqual(result.execCalls, ['echo hi']);
+    assert_includes(result.stderr, 'TASK_SHOWN_OUT');
+    assert_not_includes(result.stdout, '<RUN>');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+async function test_task_without_yes_asks_and_skips_commands() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-task-'));
+  try {
+    // Task mode no longer forces -y: without it, every command asks and a
+    // non-TTY deny keeps the command out of the run (fail-closed).
+    const result = await run_tell(
+      ['-t', '%Ask', '--max-chain', '1', 'run'],
+      '<RUN>echo hi</RUN>Clean answer',
+      { dir },
+    );
+    assert.deepStrictEqual(result.execCalls, []);
+    assert_includes(result.stderr, 'Command skipped by user.');
+    assert_includes(result.stdout, 'Clean answer');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+async function test_task_delegation_flag_shows_indicator_and_record() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-task-'));
+  try {
+    const responses = ['<DELEGATE>list the files</DELEGATE>', '<RUN>ls</RUN>', 'found: hello.txt', 'done'];
+    const hidden = await run_tell(['-t', '%Quiet', '-y', 'look'], responses, { dir });
+    // The minimal indicator behaves like Thinking...; details and the result
+    // record stay hidden.
+    assert_includes(hidden.stderr, 'Delegando pesquisa… (research: list the files)');
+    assert_not_includes(hidden.stderr, 'Research result (DONE):');
+    assert_not_includes(hidden.stderr, '│ $ ls');
+
+    const shown = await run_tell(
+      ['-t', '%Shown', '--delegation', '-y', '--max-chain', '2', 'look'],
+      ['<DELEGATE>list the files</DELEGATE>', '<RUN>ls</RUN>', 'found: hello.txt', 'done'],
+      { dir },
+    );
+    assert_includes(shown.stderr, 'Delegando pesquisa… (research: list the files)');
+    assert_includes(shown.stderr, '│ $ ls');
+    assert_includes(shown.stderr, 'Research result (DONE):');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function test_task_empty_reply_saves_no_assistant_turn() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-task-'));
   try {
@@ -427,10 +524,10 @@ async function test_task_delegation_record_file() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-task-'));
   try {
     const responses = ['<DELEGATE>list the files</DELEGATE>', '<RUN>ls</RUN>', 'found: hello.txt', 'done'];
-    const result = await run_tell(['-t', '%Research', 'look around'], responses, { dir });
+    const result = await run_tell(['-t', '%Research', '-y', 'look around'], responses, { dir });
     const task_directory = task_dir(result.home, 'task-001-research');
-    // Streaming prints the raw first turn (tags included, like <RUN>); the
-    // second parent turn is the visible answer.
+    // Tags are filtered from the live stream by default; the second parent
+    // turn is the visible answer.
     assert_includes(result.stdout, 'done\n');
     assert.deepStrictEqual(result.execCalls, ['ls']);
     const record = fs.readFileSync(path.join(task_directory, 'delegate-001.txt'), 'utf8');
@@ -570,7 +667,7 @@ async function test_task_child_record_numbering_past_999() {
     fs.writeFileSync(path.join(task_directory, 'main.txt'), 'User:\nold\n');
     fs.writeFileSync(path.join(task_directory, 'delegate-999.txt'), 'old child record\n');
     const responses = ['<DELEGATE>list the files</DELEGATE>', '<RUN>ls</RUN>', 'found: hello.txt', 'done'];
-    const result = await run_tell(['-t', '%Research', 'look around'], responses, { dir });
+    const result = await run_tell(['-t', '%Research', '-y', 'look around'], responses, { dir });
     assert_includes(result.stderr, 'Using task: task-001-research');
     assert.strictEqual(
       fs.readFileSync(path.join(task_directory, 'delegate-999.txt'), 'utf8'),
@@ -693,7 +790,7 @@ async function test_task_high_risk_child_never_auto_approved() {
     // A skipped child command ends that child run, so the parent's next
     // streamed turn is the final answer.
     const responses = ['<SUBTASK>do admin</SUBTASK>', '<RUN>sudo ls /</RUN>', 'done'];
-    const result = await run_tell(['-t', '%admin', 'go'], responses, { dir });
+    const result = await run_tell(['-t', '%admin', '-y', 'go'], responses, { dir });
     assert.deepStrictEqual(result.execCalls, [], '-y never auto-approves a high-risk child command');
     const record = fs.readFileSync(path.join(task_dir(result.home, 'task-001-admin'), 'subtask-001.txt'), 'utf8');
     assert_includes(record, '(no commands)');
@@ -807,6 +904,33 @@ async function test_task_delegation_repost_custom_target() {
   }
 }
 
+async function test_task_huge_turn_skips_summarize() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-task-'));
+  try {
+    const first = await run_tell(['-t', '%huge', 'one'], 'ok', { dir });
+    assert_includes(first.stderr, 'Created task:');
+    const huge = 'x'.repeat(core.DEFAULT_CONTEXT_MAX_CHARS + 10);
+    const second = await run_tell(['-t', '%huge', 'two'], huge, { dir });
+    assert_includes(second.stderr, 'Using task: task-001-huge');
+    assert.strictEqual(second.tellCalls.length, 1, 'no wasted summarize call for an oversized turn');
+    const main_text = fs.readFileSync(path.join(task_dir(second.home, 'task-001-huge'), 'main.txt'), 'utf8');
+    assert.ok(main_text.length <= core.DEFAULT_CONTEXT_MAX_CHARS, 'context stays under the cap');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+async function test_task_delegation_denied_reason_shown() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-task-'));
+  try {
+    const responses = ['<DELEGATE>probe</DELEGATE>', '<RUN>\nbash <(echo x)\n</RUN>', 'child done', 'final'];
+    const result = await run_tell(['-t', '%why', '--delegation', 'go'], responses, { dir });
+    assert_includes(result.stderr, 'denied (shell-process-substitution): bash <(echo x)');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   const tests = [
     test_task_no_exec_conflict,
@@ -820,6 +944,11 @@ async function main() {
     test_task_named_create_and_numbering,
     test_task_resume_without_prompt,
     test_task_empty_reply_saves_no_assistant_turn,
+    test_task_default_hides_tags_and_command_output,
+    test_task_tags_flag_shows_markup,
+    test_task_output_flag_shows_command_output,
+    test_task_without_yes_asks_and_skips_commands,
+    test_task_delegation_flag_shows_indicator_and_record,
     test_task_reset_full_wipe_keeps_dir,
     test_task_delegation_record_file,
     test_task_model_failure_announces_nothing,
@@ -844,6 +973,8 @@ async function main() {
     test_task_status_in_record_file,
     test_task_max_delegations_zero_disables,
     test_task_delegation_repost_custom_target,
+    test_task_huge_turn_skips_summarize,
+    test_task_delegation_denied_reason_shown,
   ];
   let failed = 0;
   for (const test of tests) {

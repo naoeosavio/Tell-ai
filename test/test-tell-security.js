@@ -500,7 +500,7 @@ function assertPromptInjectionPolicy(result) {
   assert.match(result.stderr, /Command execution disabled/);
   assert.strictEqual(result.stdout, '');
 
-  result = await runTell(['--yes', 'd', 'run a safe command'], runBlock(`echo SAFE_OUTPUT`), {
+  result = await runTell(['--yes', '--output', 'd', 'run a safe command'], runBlock(`echo SAFE_OUTPUT`), {
     execStdout: 'SAFE_OUTPUT\n',
   });
   assert.strictEqual(result.execCalls.length, 1);
@@ -549,7 +549,7 @@ function assertPromptInjectionPolicy(result) {
   assert.deepStrictEqual(result.execCalls, ['echo ONE']);
 
   result = await runTell(
-    ['--yes', '--chain', 'd', 'multi command with final answer'],
+    ['--yes', '--chain', '--output', 'd', 'multi command with final answer'],
     ['<RUN>\necho ONE\n</RUN>', '<RUN>\necho TWO\n</RUN>', 'final answer'],
     { execStdout: 'OK\n' },
   );

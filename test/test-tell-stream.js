@@ -416,12 +416,62 @@ async function test_stream_commands_still_detected_and_run() {
       [{ type: 'text', text: run_block('echo hi') }],
       [{ type: 'text', text: 'Done.' }],
     ],
+    execStdout: 'HIDDEN_OUT\n',
   });
   assert.deepStrictEqual(result.execCalls, ['echo hi']);
-  // The raw stream shows the <RUN> markup, and the final answer only once.
-  assert_includes(result.stdout, run_block('echo hi'));
+  // Tags and command output are hidden by default; the final answer appears once.
+  assert_not_includes(result.stdout, '<RUN>');
+  assert_not_includes(result.stdout, 'HIDDEN_OUT');
+  assert_not_includes(result.stderr, 'HIDDEN_OUT');
   const occurrences = result.stdout.split('Done.').length - 1;
   assert.strictEqual(occurrences, 1, 'final answer must be streamed exactly once');
+}
+
+async function test_chain_resume_forbids_repeating_the_declined_command() {
+  const result = await run_tell(['d', '--stream', '--chain', 'run it'], [
+    '<RUN>\nrm -rf /\n</RUN>',
+    'Cannot run that.',
+  ]);
+  assert_includes(result.stderr, 'Command skipped by user.');
+  assert.strictEqual(result.tellCalls.length, 2, 'one run plus one resume');
+  assert_includes(result.tellMessages[1], 'Skipped by user:');
+  assert_includes(result.tellMessages[1], 'Do not request the command above again.');
+  assert_includes(result.stdout, 'Cannot run that.');
+}
+
+async function test_tags_flag_shows_raw_markup() {
+  const result = await run_tell(['d', '--stream', '--tags', '-y', 'run it'], 'ignored', {
+    streamEvents: [
+      [{ type: 'text', text: '<RU' }, { type: 'text', text: 'N>\necho hi\n</RUN>Done.' }],
+    ],
+  });
+  assert.deepStrictEqual(result.execCalls, ['echo hi']);
+  assert_includes(result.stdout, '<RUN>');
+  assert_includes(result.stdout, '</RUN>');
+  assert_includes(result.stdout, 'Done.');
+}
+
+async function test_default_tag_hider_handles_split_deltas() {
+  const result = await run_tell(['d', '--stream', 'hello'], 'ignored', {
+    streamEvents: [
+      [
+        { type: 'text', text: 'before <DEL' },
+        { type: 'text', text: 'EGATE>hidden objective</DEL' },
+        { type: 'text', text: 'EGATE>after' },
+      ],
+    ],
+  });
+  assert.strictEqual(result.stdout, 'before after\n');
+}
+
+async function test_output_flag_shows_command_output() {
+  const result = await run_tell(['d', '--stream', '--output', '-y', 'run it'], 'ignored', {
+    streamEvents: [[{ type: 'text', text: run_block('echo hi') }, { type: 'text', text: 'Done.' }]],
+    execStdout: 'SHOWN_OUT\n',
+  });
+  assert.deepStrictEqual(result.execCalls, ['echo hi']);
+  assert_includes(result.stderr, 'SHOWN_OUT');
+  assert_not_includes(result.stdout, '<RUN>');
 }
 
 // ---------------------------------------------------------------------
@@ -448,6 +498,17 @@ async function test_without_stream_prints_answer_once() {
   assert_includes(result.stderr, 'Thinking...');
 }
 
+async function test_default_hides_tags_from_live_stream() {
+  const result = await run_tell(['d', '--stream', '-y', 'run'], `${run_block('echo hi')}Visible answer`, {
+    execStdout: 'hi\n',
+  });
+  assert.strictEqual(result.streamCalls.length, 1);
+  assert.deepStrictEqual(result.execCalls, ['echo hi']);
+  assert_includes(result.stdout, 'Visible answer');
+  assert_not_includes(result.stdout, '<RUN>');
+  assert_not_includes(result.stdout, '</RUN>');
+}
+
 // ---------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------
@@ -460,9 +521,14 @@ const TESTS = [
   test_stream_keeps_full_response_in_log_and_context,
   test_stream_chain_streams_each_round,
   test_stream_commands_still_detected_and_run,
+  test_chain_resume_forbids_repeating_the_declined_command,
+  test_tags_flag_shows_raw_markup,
+  test_default_tag_hider_handles_split_deltas,
+  test_output_flag_shows_command_output,
   test_think_without_stream_prints_reasoning_on_stderr,
   test_without_think_reasoning_stays_hidden,
   test_without_stream_prints_answer_once,
+  test_default_hides_tags_from_live_stream,
 ];
 
 (async () => {
