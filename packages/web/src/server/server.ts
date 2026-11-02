@@ -9,14 +9,13 @@ import {
   build_sdk_config_from_env,
   canonical_path,
   canonical_write_path,
+  chain_limit_notice,
   collect_exec_secrets,
-  collect_sensitive_file_secrets,
   create_cancellation_token,
   create_delegation_runner,
   create_node_executor,
   create_pending_approvals,
   compose_custom_system,
-  create_secret_redactor,
   DEFAULT_CONTEXT_MAX_CHARS,
   DEFAULT_EXEC_TIMEOUT_MS,
   DELEGATION_SUMMARY_MAX_CHARS,
@@ -29,10 +28,10 @@ import {
   DEFAULT_MAX_BUFFER_BYTES,
   DEFAULT_OUTPUT_MAX_BYTES,
   format_command_skipped,
-  format_executed_command,
   has_lexical_target,
   is_path_inside_base,
   is_task_id,
+  missing_vendor_key,
   resolve_max_delegations,
   resolve_task_id,
   split_task_value,
@@ -52,14 +51,22 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import { type ChatStreamEvent, encode_chat_stream_event } from '../shared/chat-stream';
 import {
+  build_chain_command_record,
+  can_start_chain_execution,
+  decide_chain_gate,
+  extract_run_scripts,
+  format_extras_instruction,
+} from './chain-runtime';
+import {
   CHAIN_MAX_ROUNDS,
   CHAIN_TTL_MS,
   type ChainConfirmError,
   type ChainRunSnapshot,
   createChainStore,
 } from './chain-store';
-import { parseCliArgs, printHelp, resolveAssetMode } from './cli-args';
+import { is_loopback_host, parseCliArgs, printHelp, resolveAssetMode } from './cli-args';
 import { buildSystemPrompt } from './context-builder';
+import { CREDENTIAL_CHECK_BYTES, create_credential_guard, read_file_head } from './credentials';
 import {
   authFailureMessage,
   createRateLimiter,
@@ -297,15 +304,6 @@ const DELEGATION_BUDGET = resolve_max_delegations(CHAIN_ROUND_CAP, FORWARDED_LIM
 const DELEGATION_REPOST_TARGET = FORWARDED_LIMITS.delegationRepostChars ?? DELEGATION_SUMMARY_MAX_CHARS;
 /** Delegation round cap (`--delegation-max-rounds` wins). */
 const DELEGATION_ROUND_CAP = FORWARDED_LIMITS.delegationMaxRounds ?? DELEGATION_MAX_ROUNDS;
-/**
- * Chain-limit notice for the effective cap (same wording family as the core,
- * with the actual cap so a forwarded `--max-chain-steps 2` reports `(2)`).
- *
- * @returns The notice recorded when the server-side rounds run out.
- */
-function chain_limit_notice(): string {
-  return `Chain limit reached (${CHAIN_ROUND_CAP}); ignoring further requested commands.`;
-}
 
 /** Forwarded custom instructions (CLI-resolved tellrc system, 64 KB cap, non-secret). */
 function load_forwarded_system_text(file: string | undefined): string | undefined {
@@ -365,29 +363,47 @@ configureScrollbackMax(Number(process.env['TELL_SCROLLBACK_MAX']) || undefined);
 // throw here, failing the boot.
 const SDK_CONFIG = build_sdk_config_from_env(process.env);
 // Redaction sources the process knew at boot: provider keys and scrubbed
-// environment values. Credential-named workspace files are added per output
-// by `serverRedact` (they can change while the server runs).
+// environment values. The credential guard adds the workspace file values
+// and keeps them, so a rename cannot remove a value from the mask set.
 const BASE_SERVER_SECRETS = [
   ...collect_exec_secrets(process.env),
   ...Object.values(SDK_CONFIG.keys ?? {}).filter(
     (value): value is string => typeof value === 'string' && value.length > 0,
   ),
 ];
+const credential_guard = create_credential_guard({ cwd: CWD, base_secrets: BASE_SERVER_SECRETS });
 
 /**
  * Masks known secrets and credential-file values in command/delegation output.
  *
  * The lexical sensitive-file rule is a speed bump: `cat .en?`, `for f in .*`,
- * `cat sec*` and `grep -r` reach the files without naming them. Every output
- * that can carry model-facing or client-facing command text goes through this
- * boundary, so a bypass does not forward the secret. Re-scanning per call
- * keeps `.env` files created after boot covered; the scan is bounded.
+ * `cat sec*` and `grep -r` reach the files without naming them. The guard
+ * keeps every value that the server saw in a credential-named file, also
+ * after a rename. It also masks the base64 and hexadecimal forms. Every
+ * output that can carry model-facing or client-facing text uses this
+ * boundary.
  *
  * @param text - Command output, record or feedback text.
  * @returns The text with known secret values replaced by `[redacted]`.
  */
 function serverRedact(text: string): string {
-  return create_secret_redactor([...BASE_SERVER_SECRETS, ...collect_sensitive_file_secrets(CWD)])(text);
+  return credential_guard.redact(text);
+}
+
+/**
+ * Runs one command after a credential scan.
+ *
+ * The scan runs before the script, so a value that the script renames stays
+ * in the mask set for this output and the next outputs.
+ *
+ * @param exec_options - Script, working directory, timeout and output cap.
+ * @returns The executor result with raw output.
+ */
+async function run_guarded_execute(
+  exec_options: Parameters<typeof core_execute>[0],
+): Promise<Awaited<ReturnType<typeof core_execute>>> {
+  credential_guard.refresh();
+  return core_execute(exec_options);
 }
 const RETAINED_SERVER_ENV = new Set([
   'COLORTERM',
@@ -427,8 +443,8 @@ const DELEGATE_WAIT_POLL_MS = 30_000;
 // Feedback tail fed back to the model after a chain command (mirrors the
 // App `FEEDBACK_OUTPUT_LIMIT`: huge outputs must not explode the context).
 const CHAIN_FEEDBACK_TAIL_CHARS = 4 * 1024;
-// (Chain-limit notice lives in `chain_limit_notice()` so it reflects the
-// effective `CHAIN_ROUND_CAP`, not just the default.)
+// (Chain-limit notice is the core `chain_limit_notice(CHAIN_ROUND_CAP)` so it
+// reflects the effective cap, not just the default.)
 const executeRateLimit = createRateLimiter({ max: 10, windowMs: 60_000 });
 const delegateRateLimit = createRateLimiter({ max: 10, windowMs: 60_000 });
 const tellRateLimit = createRateLimiter({ max: 10, windowMs: 60_000 });
@@ -891,9 +907,19 @@ app.get('/api/file', (req, res) => {
       return res.status(413).json({ error: 'File too large to preview (>10MB). Use download instead.' });
     }
     const content = fs.readFileSync(fd, 'utf8');
-    return res.json({ content, mtime: stat.mtimeMs, size: stat.size });
+    const checked = content.slice(0, CREDENTIAL_CHECK_BYTES);
+    if (credential_guard.has_credential_material(checked)) {
+      return res.status(403).json({ error: 'Access denied: Credential material' });
+    } else {
+      return res.json({ content, mtime: stat.mtimeMs, size: stat.size });
+    }
   } catch (error: any) {
-    return res.status(500).json({ error: error.message });
+    const message = error instanceof Error ? error.message : String(error);
+    if (message === 'Path is not a regular file') {
+      return res.status(400).json({ error: message });
+    } else {
+      return res.status(500).json({ error: message });
+    }
   } finally {
     if (fd !== null) fs.closeSync(fd);
   }
@@ -926,6 +952,13 @@ app.get('/api/file/raw', (req, res) => {
     return res.status(403).json({ error: 'Access denied: Sensitive file' });
   }
 
+  const head = read_file_head(resolvedPath);
+  if (credential_guard.has_credential_material(head)) {
+    return res.status(403).json({ error: 'Access denied: Credential material' });
+  } else {
+    // The head is clear — stream the file below.
+  }
+
   let fd: number | null = null;
   try {
     if (!fs.existsSync(resolvedPath)) {
@@ -950,7 +983,12 @@ app.get('/api/file/raw', (req, res) => {
     return;
   } catch (error: any) {
     if (fd !== null) fs.closeSync(fd);
-    return res.status(500).json({ error: error.message });
+    const message = error instanceof Error ? error.message : String(error);
+    if (message === 'Path is not a regular file') {
+      return res.status(400).json({ error: message });
+    } else {
+      return res.status(500).json({ error: message });
+    }
   }
 });
 
@@ -1049,7 +1087,7 @@ app.post('/api/execute', async (req, res) => {
     });
   }
 
-  if (activeExecutions >= EXEC_MAX_CONCURRENCY) {
+  if (!can_start_chain_execution(activeExecutions, EXEC_MAX_CONCURRENCY)) {
     return res.status(429).json({ error: 'Server busy: max concurrent executions reached' });
   }
 
@@ -1059,7 +1097,7 @@ app.post('/api/execute', async (req, res) => {
     // One executor for the sandbox: the core owns the shell, the timeout and
     // the output cap, and kills the whole process group on timeout — `cmd &`
     // can no longer outlive the request.
-    const result = await core_execute({
+    const result = await run_guarded_execute({
       script: command,
       cwd: CWD,
       timeout_ms: EXEC_TIMEOUT_MS,
@@ -1116,10 +1154,14 @@ app.post('/api/delegate', async (req, res) => {
   if (!delegateRateLimit.check(clientIp(req))) {
     return res.status(429).json({ error: 'Rate limit exceeded (10/min). Slow down.' });
   }
-  if (activeExecutions >= EXEC_MAX_CONCURRENCY) {
+  if (!can_start_chain_execution(activeExecutions, EXEC_MAX_CONCURRENCY)) {
     return res.status(429).json({ error: 'Server busy: max concurrent executions reached' });
   }
   const modelSpec = typeof modelAlias === 'string' && modelAlias.trim() ? modelAlias : DEFAULT_MODEL;
+  const key_error = missing_key_message(modelSpec);
+  if (key_error !== undefined) {
+    return res.status(400).json({ error: key_error });
+  }
   // Abort → cancel: if the client goes away before the response is
   // finished, cancel the child at round boundaries. This must listen on
   // the response, not the request: `req` closes as soon as its body is
@@ -1172,7 +1214,7 @@ app.post('/api/delegate', async (req, res) => {
       executor: async (exec_options) => {
         activeExecutions += 1;
         try {
-          return await core_execute({
+          return await run_guarded_execute({
             script: exec_options.script,
             cwd: CWD,
             timeout_ms: EXEC_TIMEOUT_MS,
@@ -1270,7 +1312,7 @@ app.post('/api/delegate/:decisionId/confirm', async (req, res) => {
   if (waiter === undefined) {
     return res.status(409).json({ error: 'no_pending_approval' });
   }
-  if (decision === 'approve' && activeExecutions >= EXEC_MAX_CONCURRENCY) {
+  if (decision === 'approve' && !can_start_chain_execution(activeExecutions, EXEC_MAX_CONCURRENCY)) {
     return res.status(429).json({ error: 'Server busy: max concurrent executions reached' });
   }
   task.decided.set(decisionId, { verdict: decision, inFlight: true, result: null });
@@ -1475,6 +1517,31 @@ function model_error_message(error: unknown): string {
   }
 }
 
+/**
+ * Describes a missing provider key for one model spec.
+ *
+ * The Web server reads environment variables only. A local or custom
+ * endpoint can be keyless, so those vendors pass.
+ *
+ * @param model_spec - Alias or spec the client asked for.
+ * @returns The user-facing message, or undefined when the key exists.
+ */
+function missing_key_message(model_spec: string): string | undefined {
+  let vendor: string;
+  try {
+    vendor = resolve_model_spec(model_spec).vendor;
+  } catch {
+    // An unknown vendor fails at model resolution with its own message.
+    return undefined;
+  }
+  const missing = missing_vendor_key(vendor, SDK_CONFIG.keys);
+  if (missing === undefined) {
+    return undefined;
+  } else {
+    return `Missing API key for ${vendor}. Set ${missing.env_names.join(' or ')}. The Web server reads environment variables only.`;
+  }
+}
+
 // Streams a model response to the client as NDJSON (`--stream`). Model setup
 // errors still surface as a JSON 500; once headers are sent, failures become
 // an `error` event so the client can keep the partial answer it received.
@@ -1552,26 +1619,6 @@ async function generateOnce(
   return { text: result.text, reasoning: sanitizeReasoning((result as any).reasoning) };
 }
 
-// Extracts the first `<RUN>` script from a model answer (single source: the
-// SDK parser, never a second regex on the server).
-function extractFirstScript(text: string): string | null {
-  const first = extract_runs(text).scripts[0]?.trim();
-  if (first === undefined || first === '') {
-    return null;
-  } else {
-    return first;
-  }
-}
-
-// Output tail fed back to the model (keeps huge outputs from exploding the context).
-function truncateChainFeedbackTail(text: string): string {
-  if (text.length > CHAIN_FEEDBACK_TAIL_CHARS) {
-    return `…[truncated]\n${text.slice(-CHAIN_FEEDBACK_TAIL_CHARS)}`;
-  } else {
-    return text;
-  }
-}
-
 // API: Model execution route (using Vercel AI SDK)
 app.post('/api/tell', async (req, res) => {
   const payloadError = validateTellPayload(req.body);
@@ -1592,6 +1639,10 @@ app.post('/api/tell', async (req, res) => {
   }
 
   const modelSpec = modelAlias || DEFAULT_MODEL;
+  const key_error = missing_key_message(modelSpec);
+  if (key_error !== undefined) {
+    return res.status(400).json({ error: key_error });
+  }
   serverState.aiTurns += 1;
 
   try {
@@ -1752,7 +1803,7 @@ function new_web_runner(modelSpec: string, cancellation?: CancellationToken, run
     executor: async (exec_options) => {
       activeExecutions += 1;
       try {
-        return await core_execute({
+        return await run_guarded_execute({
           script: exec_options.script,
           cwd: CWD,
           timeout_ms: EXEC_TIMEOUT_MS,
@@ -1804,7 +1855,7 @@ async function run_web_delegation(
   if (kind === 'build' && !AUTO_EXECUTE && runner === undefined) {
     return null;
   }
-  if (activeExecutions >= EXEC_MAX_CONCURRENCY) {
+  if (!can_start_chain_execution(activeExecutions, EXEC_MAX_CONCURRENCY)) {
     return null;
   }
   const active = runner ?? new_web_runner(modelSpec, cancellation);
@@ -1848,26 +1899,47 @@ function chain_runner_for(runId: string, modelSpec: string): DelegationRunner {
   return runner;
 }
 
-async function runChainScript(runId: string, script: string): Promise<boolean> {
+async function runChainScript(runId: string, script: string): Promise<void> {
   serverState.commandsRun += 1;
   activeExecutions += 1;
   try {
-    const result = await core_execute({
+    const result = await run_guarded_execute({
       script,
       cwd: CWD,
       timeout_ms: EXEC_TIMEOUT_MS,
       max_output_bytes: EXEC_MAX_BUFFER,
     });
-    const output = serverRedact(cap_execution_output(result.stdout, result.stderr));
-    chainStore.pushMessage(runId, {
-      role: 'user',
-      content: format_executed_command(script, truncateChainFeedbackTail(output)),
+    // Core verdict, core wording: non-zero exits record the failed variant
+    // (with the FAILED self-healing preamble), never the executed wording.
+    const record = build_chain_command_record({
+      script,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      exit_code: result.exit_code,
+      max_bytes: EXEC_OUTPUT_MAX_BYTES,
+      max_tail_chars: CHAIN_FEEDBACK_TAIL_CHARS,
+      redact: serverRedact,
     });
-    chainStore.appendEvent(runId, { type: 'executed', script, output, exitCode: result.exit_code });
-    return true;
+    chainStore.pushMessage(runId, { role: 'user', content: record.message });
+    if (record.failed) {
+      chainStore.appendEvent(runId, { type: 'failed', script, output: record.output, exitCode: result.exit_code });
+    } else {
+      chainStore.appendEvent(runId, { type: 'executed', script, output: record.output, exitCode: result.exit_code });
+    }
   } catch (error: unknown) {
-    chainStore.appendEvent(runId, { type: 'failed', script, text: model_error_message(error) });
-    return false;
+    // Spawn/cancellation failure (exit statuses never throw): the core
+    // self-heals through FAILED feedback instead of failing the run.
+    const record = build_chain_command_record({
+      script,
+      stdout: model_error_message(error) || 'command executor failed',
+      stderr: '',
+      exit_code: null,
+      max_bytes: EXEC_OUTPUT_MAX_BYTES,
+      max_tail_chars: CHAIN_FEEDBACK_TAIL_CHARS,
+      redact: serverRedact,
+    });
+    chainStore.pushMessage(runId, { role: 'user', content: record.message });
+    chainStore.appendEvent(runId, { type: 'failed', script, output: record.output });
   } finally {
     activeExecutions -= 1;
   }
@@ -2017,26 +2089,45 @@ async function advanceChainRun(runId: string, modelSpec: string, system: string)
       chainStore.appendEvent(runId, { type: 'message', text: delegated.record });
       continue;
     }
-    const script = extractFirstScript(scan);
-    if (script === null) {
+    const scripts = extract_run_scripts(scan);
+    const script = scripts[0];
+    if (script === undefined) {
       return chainStore.completeRun(runId, visible_text);
-    } else if (NO_EXEC) {
+    } else {
+      // Extra scripts are never dropped in silence (core parity): only the
+      // first runs, the rest are recorded skipped and stay visible. One
+      // instruction replaces the per-extra skip message, or the model repeats
+      // its two-tag answer until the round cap.
+      const extras = scripts.slice(1);
+      for (const extra of extras) {
+        chainStore.appendEvent(runId, { type: 'skipped', script: extra });
+      }
+      if (extras.length > 0) {
+        chainStore.pushMessage(runId, { role: 'user', content: format_extras_instruction(extras) });
+      } else {
+        // One script — no extra instruction.
+      }
+    }
+    const gate = decide_chain_gate({
+      no_exec: NO_EXEC,
+      require_approval: REQUIRE_APPROVAL,
+      auto_execute: AUTO_EXECUTE,
+      risky: isHighRiskScript(script),
+    });
+    if (gate.action === 'deny' && gate.reason === 'no-exec') {
       // Contract wording: denied/disabled with --no-exec source, never
       // reason 'no-exec', and nothing is executed.
       chainStore.appendEvent(runId, { type: 'denied', script, text: 'disabled (--no-exec)' });
       return chainStore.completeRun(runId, generated.text);
-    } else if (isHighRiskScript(script) && !REQUIRE_APPROVAL) {
+    } else if (gate.action === 'deny') {
       chainStore.appendEvent(runId, { type: 'denied', script, text: 'high-risk: blocked without execution' });
       return chainStore.completeRun(runId, generated.text);
-    } else if (AUTO_EXECUTE && !isHighRiskScript(script)) {
+    } else if (gate.action === 'execute') {
       // Auto-Run (`-y`): the server executes the safe command itself instead
-      // of pausing for an approval the operator already granted.
-      const executed = await runChainScript(runId, script);
-      if (!executed) {
-        return chainStore.failRun(runId, 'Chain execution failed');
-      } else {
-        // The command output is now the context — the loop asks the model again.
-      }
+      // of pausing for an approval the operator already granted. Failures
+      // self-heal through the next model turn (core parity), never fail the
+      // run — the command output is now the context.
+      await runChainScript(runId, script);
     } else {
       // No auto-run for this script: park on the pending machinery. With
       // `--require-approval` a high-risk script parks here too (ask with the
@@ -2053,7 +2144,7 @@ async function advanceChainRun(runId: string, modelSpec: string, system: string)
   if (capped === null || capped.status !== 'running') {
     return capped;
   } else {
-    chainStore.appendEvent(runId, { type: 'completed', text: chain_limit_notice() });
+    chainStore.appendEvent(runId, { type: 'completed', text: chain_limit_notice(CHAIN_ROUND_CAP) });
     return chainStore.completeRun(runId);
   }
 }
@@ -2078,6 +2169,10 @@ app.post('/api/chain', async (req, res) => {
   }
 
   const modelSpec = modelAlias || DEFAULT_MODEL;
+  const key_error = missing_key_message(modelSpec);
+  if (key_error !== undefined) {
+    return res.status(400).json({ error: key_error });
+  }
   serverState.aiTurns += 1;
   pruneContinuations();
 
@@ -2139,7 +2234,7 @@ app.post('/api/chain/:runId/confirm', async (req, res) => {
     return res.status(429).json({ error: 'Rate limit exceeded (10/min). Slow down.' });
   }
   const runId = String(req.params.runId || '');
-  if (validation.value.decision === 'approve' && activeExecutions >= EXEC_MAX_CONCURRENCY) {
+  if (validation.value.decision === 'approve' && !can_start_chain_execution(activeExecutions, EXEC_MAX_CONCURRENCY)) {
     return res.status(429).json({ error: 'Server busy: max concurrent executions reached' });
   }
   const gate = chainStore.tryBeginConfirm(runId, validation.value);
@@ -2266,29 +2361,33 @@ app.post('/api/chain/:runId/confirm', async (req, res) => {
     serverState.commandsRun += 1;
     activeExecutions += 1;
     try {
-      // Same core executor as /api/execute: the exit status never throws, so
-      // success and failure share one feedback path (the message keeps the
-      // executed wording in both cases, the snapshot carries the real code).
-      const result = await core_execute({
+      // Same core executor as /api/execute: the exit status never throws.
+      // Verdict and wording are the core's — a non-zero exit records the
+      // failed variant, and the redaction boundary always applies (consent
+      // authorizes execution, never secret exfiltration).
+      const result = await run_guarded_execute({
         script,
         cwd: CWD,
         timeout_ms: EXEC_TIMEOUT_MS,
         max_output_bytes: EXEC_MAX_BUFFER,
       });
-      // An explicitly approved high-risk script is user consent: its output is
-      // shown as-is (the confirm card already carried the risk reason). Only
-      // auto-executed scripts cross the workspace-secret redactor.
-      const output = cap_execution_output(result.stdout, result.stderr);
-      chainStore.pushMessage(runId, {
-        role: 'user',
-        content: format_executed_command(script, truncateChainFeedbackTail(output)),
+      const record = build_chain_command_record({
+        script,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exit_code: result.exit_code,
+        max_bytes: EXEC_OUTPUT_MAX_BYTES,
+        max_tail_chars: CHAIN_FEEDBACK_TAIL_CHARS,
+        redact: serverRedact,
       });
+      chainStore.pushMessage(runId, { role: 'user', content: record.message });
       // A failing command self-heals through the next model turn (same
       // protocol as the CLI chain), it does not fail the run.
+      const event_type = record.failed ? 'failed' : 'executed';
       const executed = chainStore.finishConfirm(runId, decisionId, {
-        type: 'executed',
+        type: event_type,
         script,
-        output,
+        output: record.output,
         exitCode: result.exit_code,
         status: 'running',
       });
@@ -2456,6 +2555,10 @@ process.on('unhandledRejection', (reason) => {
 // project cwd with no index.html (404 on `/`).
 async function startServer() {
   const server = http.createServer(app);
+  // Unknown `/api/*` paths answer JSON instead of the SPA HTML.
+  app.use('/api', (_req, res) => {
+    res.status(404).json({ error: 'Not found' });
+  });
   const assetMode = resolveAssetMode({
     nodeEnv: process.env['NODE_ENV'],
     distIndexExists: fs.existsSync(path.join(__dirname, 'index.html')),
@@ -2478,12 +2581,28 @@ async function startServer() {
 
   attachTerminalServer(server, { cwd: CWD, token: TELL_TOKEN || undefined, allowedHosts: ALLOWED_HOSTS });
 
+  server.on('error', (error: NodeJS.ErrnoException) => {
+    if (error.code === 'EADDRINUSE') {
+      console.error(`Error: the port ${PORT} is already in use on ${HOST}. Stop the other process, or use --port.`);
+    } else {
+      console.error(`Error: the server cannot listen on ${HOST}:${PORT}: ${error.message}`);
+    }
+    process.exit(EXIT_CONFIG_ERROR);
+  });
+
   server.listen(PORT, HOST, () => {
     const address = server.address();
     const boundPort = typeof address === 'object' && address ? address.port : PORT;
     console.log(`Tell AI custom backend running at http://${HOST}:${boundPort}`);
     if (TELL_TOKEN) console.log('API auth: TELL_TOKEN active (Bearer required on /api/*)');
     else console.log('API auth: disabled (set TELL_TOKEN to require a Bearer token)');
+    if (!TELL_TOKEN && !is_loopback_host(HOST)) {
+      console.error(
+        `WARNING: this server binds ${HOST} with no TELL_TOKEN. Any client that can reach the port can run commands. Set TELL_TOKEN, or bind 127.0.0.1.`,
+      );
+    } else {
+      // Loopback or authenticated — no warning.
+    }
   });
 }
 

@@ -1,6 +1,19 @@
 import path from 'path';
 
-import { DELEGATION_MAX_DELEGATIONS, MAX_EXEC_TIMEOUT_MS, MIN_EXEC_TIMEOUT_MS } from '@tell-ai/core';
+import { MAX_EXEC_TIMEOUT_MS, MIN_EXEC_TIMEOUT_MS, validate_tellrc_limit_value } from '@tell-ai/core';
+
+/**
+ * True when a bind address admits local clients only.
+ *
+ * The server warns when it binds another address without `TELL_TOKEN`.
+ *
+ * @param host - Bind address from `--host` (or the default).
+ * @returns True for the loopback names and addresses.
+ */
+export function is_loopback_host(host: string): boolean {
+  const value = host.trim().toLowerCase();
+  return value === '127.0.0.1' || value === 'localhost' || value === '::1' || value === '[::1]';
+}
 
 export interface CliArgs {
   /** Resolved absolute working directory for the sandbox. */
@@ -98,7 +111,6 @@ export function parseCliArgs(argv: string[], defaultCwd: string): CliArgs {
   const stream = hasTask || has(argv, '--stream');
   const think = has(argv, '--think');
   const portRaw = argValue(argv, '--port');
-  const port = portRaw !== undefined ? Number(portRaw) : undefined;
   const host = argValue(argv, '--host');
   const execTimeoutRaw = argValue(argv, '--exec-timeout');
   const execTimeout = execTimeoutRaw !== undefined ? Number(execTimeoutRaw) : undefined;
@@ -113,34 +125,48 @@ export function parseCliArgs(argv: string[], defaultCwd: string): CliArgs {
   const maxDelegationsRaw = argValue(argv, '--max-delegations');
   const delegationRepostRaw = argValue(argv, '--delegation-repost', '--delegation-repost-chars');
   const delegationMaxRoundsRaw = argValue(argv, '--delegation-max-rounds');
-  const toPositiveInt = (raw: string | undefined): number | undefined => {
-    if (raw === undefined) return undefined;
-    const value = Math.floor(Number(raw));
-    return Number.isFinite(value) && value > 0 ? value : undefined;
-  };
-  const toDelegations = (raw: string | undefined): number | undefined => {
-    if (raw === undefined) return undefined;
-    const value = Math.floor(Number(raw));
-    if (!Number.isFinite(value) || value < 0 || value > DELEGATION_MAX_DELEGATIONS) return undefined;
-    return value;
-  };
-  const toRepostChars = (raw: string | undefined): number | undefined => {
-    if (raw === undefined) return undefined;
-    const value = Math.floor(Number(raw));
-    if (!Number.isFinite(value) || value < 512 || value > 8 * 1024) return undefined;
-    return value;
-  };
-  const toDelegationRounds = (raw: string | undefined): number | undefined => {
-    if (raw === undefined) return undefined;
-    const value = Math.floor(Number(raw));
-    if (!Number.isFinite(value) || value < 0 || value > 128) return undefined;
-    return value;
-  };
   const toTemperature = (raw: string | undefined): number | undefined => {
     if (raw === undefined) return undefined;
     const value = Number(raw);
     return Number.isFinite(value) && value >= 0 && value <= 2 ? value : undefined;
   };
+  const invalid: string[] = [];
+  const limitValue = (raw: string | undefined, flag: string, key: string): number | undefined => {
+    if (raw === undefined) return undefined;
+    const value = validate_tellrc_limit_value(key, raw);
+    if (value === undefined) {
+      invalid.push(`${flag} has an invalid value "${raw}"`);
+      return undefined;
+    } else {
+      return value;
+    }
+  };
+  const maxChainSteps = limitValue(maxChainStepsRaw, '--max-chain-steps', 'max_chain_steps');
+  const maxBufferBytes = limitValue(maxBufferBytesRaw, '--max-buffer-bytes', 'max_buffer_bytes');
+  const outputMaxBytes = limitValue(outputMaxBytesRaw, '--output-max-bytes', 'output_max_bytes');
+  const contextChars = limitValue(contextCharsRaw, '--context-chars', 'context_chars');
+  const stdinTimeoutMs = limitValue(stdinTimeoutMsRaw, '--stdin-timeout-ms', 'stdin_timeout_ms');
+  const maxDelegations = limitValue(maxDelegationsRaw, '--max-delegations', 'max_delegations');
+  const delegationRepostChars = limitValue(delegationRepostRaw, '--delegation-repost', 'delegation_repost_chars');
+  const delegationMaxRounds = limitValue(delegationMaxRoundsRaw, '--delegation-max-rounds', 'delegation_max_rounds');
+  const temperature = toTemperature(temperatureRaw);
+  if (temperatureRaw !== undefined && temperature === undefined) {
+    invalid.push(`--temperature must be a number in 0..2 (got "${temperatureRaw}")`);
+  } else {
+    // Valid temperature or no flag.
+  }
+  const portNumber = portRaw === undefined ? undefined : Number(portRaw);
+  const port =
+    portNumber !== undefined && Number.isInteger(portNumber) && portNumber >= 1 && portNumber <= 65535
+      ? portNumber
+      : undefined;
+  if (portRaw !== undefined && port === undefined) {
+    invalid.push(`--port must be an integer in 1..65535 (got "${portRaw}")`);
+  } else {
+    // Valid port or no flag.
+  }
+  const conflict = hasTask && noExec ? 'error: --task cannot be combined with --no-exec' : null;
+  const error_text = conflict ?? (invalid.length > 0 ? `error: invalid flag value: ${invalid.join('; ')}` : undefined);
   return {
     cwd: path.resolve(argCwd || defaultCwd),
     initialPrompt,
@@ -149,24 +175,24 @@ export function parseCliArgs(argv: string[], defaultCwd: string): CliArgs {
     model,
     profile,
     systemFile,
-    temperature: toTemperature(temperatureRaw),
-    maxChainSteps: toPositiveInt(maxChainStepsRaw),
-    maxBufferBytes: toPositiveInt(maxBufferBytesRaw),
-    outputMaxBytes: toPositiveInt(outputMaxBytesRaw),
-    contextChars: toPositiveInt(contextCharsRaw),
-    stdinTimeoutMs: toPositiveInt(stdinTimeoutMsRaw),
-    maxDelegations: toDelegations(maxDelegationsRaw),
-    delegationRepostChars: toRepostChars(delegationRepostRaw),
-    delegationMaxRounds: toDelegationRounds(delegationMaxRoundsRaw),
+    temperature,
+    maxChainSteps,
+    maxBufferBytes,
+    outputMaxBytes,
+    contextChars,
+    stdinTimeoutMs,
+    maxDelegations,
+    delegationRepostChars,
+    delegationMaxRounds,
     chain,
     yes,
     requireApproval,
     task: taskRaw,
     taskReset,
-    error: hasTask && noExec ? 'error: --task cannot be combined with --no-exec' : undefined,
+    error: error_text,
     stream,
     think,
-    port: port !== undefined && Number.isFinite(port) && port > 0 ? port : undefined,
+    port,
     host,
     execTimeout:
       execTimeout !== undefined && Number.isFinite(execTimeout)

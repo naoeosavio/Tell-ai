@@ -727,6 +727,8 @@ export default function App({ onLogout }: { onLogout?: (() => void) | undefined 
           appendAgentLine('system', `Agent requested script execution:\n${event.script}`);
         } else if (event.type === 'executed' && event.output !== undefined) {
           appendAgentLine('output', event.output);
+        } else if (event.type === 'failed' && event.output !== undefined) {
+          appendAgentLine('output', event.output);
         } else if (event.type === 'denied' && event.text) {
           appendAgentLine('error', `Chain denied: ${event.text}`);
         } else if (event.type === 'error' && event.text) {
