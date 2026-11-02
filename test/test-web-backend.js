@@ -99,7 +99,7 @@ function loadAbsoluteModule(absPath) {
   return require(file);
 }
 
-const { parseCliArgs, printHelp, resolveAssetMode } = loadModule('src/server/cli-args.ts');
+const { is_loopback_host, parseCliArgs, printHelp, resolveAssetMode } = loadModule('src/server/cli-args.ts');
 const {
   isSensitiveRelPath,
   isHighRiskScript,
@@ -141,6 +141,7 @@ const { buildSystemPrompt } = loadModule('src/server/context-builder.ts');
 const { createChainStore, hashChainScript, CHAIN_TTL_MS, CHAIN_MAX_ROUNDS } = loadModule(
   'src/server/chain-store.ts',
 );
+const { CREDENTIAL_CHECK_BYTES, create_credential_guard } = loadModule('src/server/credentials.ts');
 const { validate_chain_decision_payload } = loadAbsoluteModule(
   path.join(__dirname, '..', 'packages', 'core', 'src', 'chain-decision.ts'),
 );
@@ -475,6 +476,40 @@ test('guards: ordinary paths pass the sensitive guard', () => {
   assert.strictEqual(isSensitiveRelPath('telling.txt'), false);
   assert.strictEqual(isSensitiveRelPath('keys.md'), false);
   assert.strictEqual(isSensitiveRelPath('src/app.ts'), false);
+});
+
+// ---------------------------------------------------------------------------
+// Credential guard (a rename or an encoder must not unmask a value)
+// ---------------------------------------------------------------------------
+test('credentials: a renamed credential stays masked', () => {
+  const dir = tmpProject();
+  try {
+    fs.writeFileSync(path.join(dir, 'secret.key'), 'CANARY56_KEY\n', 'utf8');
+    const guard = create_credential_guard({ cwd: dir, base_secrets: [] });
+    assert.strictEqual(guard.redact('CANARY56_KEY'), '[redacted]');
+    fs.renameSync(path.join(dir, 'secret.key'), path.join(dir, 'moved.txt'));
+    assert.strictEqual(guard.redact('CANARY56_KEY'), '[redacted]', 'a rename must not unmask');
+    assert.strictEqual(guard.has_credential_material('value CANARY56_KEY here'), true);
+    assert.strictEqual(guard.has_credential_material(Buffer.from('CANARY56_KEY').toString('base64')), true);
+    assert.strictEqual(guard.has_credential_material('C A N A R Y 5 6 _ K E Y'), true);
+    assert.strictEqual(guard.has_credential_material('plain text'), false);
+    assert.ok(CREDENTIAL_CHECK_BYTES >= 1024, 'the file head check is bounded');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('credentials: refresh sees a file created after boot', () => {
+  const dir = tmpProject();
+  try {
+    const guard = create_credential_guard({ cwd: dir, base_secrets: [] });
+    fs.writeFileSync(path.join(dir, 'new.key'), 'NEWSECRET56\n', 'utf8');
+    assert.strictEqual(guard.redact('NEWSECRET56'), 'NEWSECRET56');
+    guard.refresh();
+    assert.strictEqual(guard.redact('NEWSECRET56'), '[redacted]');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -1303,11 +1338,6 @@ test('chain: server keeps the script, validates the helper, and denies closed', 
   assert.ok(source.includes('delegateDecisionToTask'), 'delegate waits are keyed by decision id (replayable)');
 });
 
-if (failures > 0) {
-  process.exit(1);
-}
-console.log('\nAll web backend tests passed.');
-
 // ---------------------------------------------------------------------------
 // Path containment answers: a missing file inside the workspace is 404, an
 // escape (including a symlink pointing outside) is 403. The route reads
@@ -1378,3 +1408,42 @@ test('delivered output cap uses the core marker once', () => {
   assert.ok(server.includes('cap_execution_output'), 'server must cap through the core owner');
   assert.ok(!server.includes('EXEC_OUTPUT_LIMIT ='), 'server must not restate the cap literal');
 });
+
+test('cli args: invalid numbers and --port 0 fail the boot', () => {
+  for (const args of [
+    ['--max-chain-steps', '0'],
+    ['--max-chain-steps', '129'],
+    ['--max-chain-steps', 'abc'],
+    ['--max-buffer-bytes', '0'],
+    ['--output-max-bytes', 'nope'],
+    ['--context-chars', '1'],
+    ['--stdin-timeout-ms', 'abc'],
+    ['--max-delegations', '3'],
+    ['--delegation-repost', '511'],
+    ['--delegation-max-rounds', '129'],
+    ['--temperature', '9'],
+    ['--port', '0'],
+    ['--port', '70000'],
+  ]) {
+    const parsed = parseCliArgs(args, '/tmp');
+    assert.ok(parsed.error && parsed.error.includes('invalid flag value'), `${args.join(' ')} must fail`);
+  }
+  assert.strictEqual(parseCliArgs(['--max-chain-steps', '8'], '/tmp').error, undefined);
+  assert.strictEqual(parseCliArgs(['--max-chain-steps', '8'], '/tmp').maxChainSteps, 8);
+  assert.strictEqual(parseCliArgs(['--port', '65535'], '/tmp').port, 65535);
+  assert.strictEqual(parseCliArgs(['--stdin-timeout-ms', '0'], '/tmp').error, undefined, 'zero disables the deadline');
+});
+
+test('cli args: loopback detection for the bind warning', () => {
+  for (const host of ['127.0.0.1', 'localhost', '::1', '[::1]', ' 127.0.0.1 ']) {
+    assert.strictEqual(is_loopback_host(host), true, host);
+  }
+  for (const host of ['0.0.0.0', '::', '[::]', '192.168.0.5', 'example.com']) {
+    assert.strictEqual(is_loopback_host(host), false, host);
+  }
+});
+
+if (failures > 0) {
+  process.exit(1);
+}
+console.log('\nAll web backend tests passed.');

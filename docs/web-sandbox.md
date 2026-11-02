@@ -351,7 +351,8 @@ them on a pending approval instead — see [Security notes](#security-notes).
 ## Server-side chain (`/api/chain`)
 
 In Chain Mode the App submits to `/api/chain` instead of looping in the
-browser: the model loop (up to 8 rounds), the pending script and the approval
+browser: the model loop (up to 8 model turns — every turn spends one round,
+command, delegation and final answer alike), the pending script and the approval
 state all stay on the server. The client renders the sequenced events and
 answers approvals by decision id; the local loop remains as the offline
 fallback, and `/api/tell`, `/api/execute` and `/api/risk-check` stay stable

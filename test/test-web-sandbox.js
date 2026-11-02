@@ -1971,8 +1971,9 @@ describe('web sandbox: api routes', () => {
       const res = await fetch(`${base}/api/file?path=${encodeURIComponent('blocked.pipe')}`);
       const elapsed = Date.now() - started;
       assert.ok(elapsed < 800, `FIFO read blocked for ${elapsed}ms`);
-      assert.strictEqual(res.status, 500);
-      await res.json();
+      assert.strictEqual(res.status, 400);
+      const body = await res.json();
+      assert.match(body.error, /not a regular file/, JSON.stringify(body));
       await writerExit;
     });
 
@@ -2217,7 +2218,9 @@ describe('web sandbox: chain routes', () => {
         const last = messages[messages.length - 1];
         const content = typeof last?.content === 'string' ? last.content : '';
         const done =
-          content.startsWith('Executed command:') || content.startsWith('Skipped by user:');
+          content.startsWith('Executed command:') ||
+          content.startsWith('Command failed') ||
+          content.startsWith('Skipped by user:');
         const reply = done ? FINAL_REPLY : SCRIPT_REPLY;
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(
@@ -2496,7 +2499,9 @@ describe('web sandbox: chain routes', () => {
           const last = messages[messages.length - 1];
           const content = typeof last?.content === 'string' ? last.content : '';
           const done =
-            content.startsWith('Executed command:') || content.startsWith('Skipped by user:');
+            content.startsWith('Executed command:') ||
+            content.startsWith('Command failed') ||
+            content.startsWith('Skipped by user:');
           const reply = done
             ? FINAL_REPLY
             : content.includes('read the key glob')
@@ -2583,7 +2588,8 @@ describe('web sandbox: chain routes', () => {
         const executed = approved.events.filter((e) => e.type === 'executed');
         assert.strictEqual(executed.length, 1);
         assert.strictEqual(executed[0].script, 'cat .env');
-        assert.match(executed[0].output, new RegExp(CANARY));
+        assert.ok(!JSON.stringify(approved).includes(CANARY), 'approved output crosses the redactor like any other');
+        assert.ok(executed[0].output.includes('[redacted]'));
       });
 
       it('skip continues clean without executing', async () => {
@@ -2618,7 +2624,7 @@ describe('web sandbox: chain routes', () => {
         const executed = run.events.filter((e) => e.type === 'executed');
         assert.strictEqual(executed.length, 1);
         assert.strictEqual(executed[0].script, 'cat sec*');
-        assert.strictEqual(executed[0].output, '[redacted]\n');
+        assert.strictEqual(executed[0].output, '[redacted]');
         assert.ok(!JSON.stringify(run).includes('key-canary-55'));
       });
     });
@@ -2642,6 +2648,90 @@ describe('web sandbox: chain routes', () => {
         assert.ok(!run.events.some((e) => e.type === 'executed'));
         const replay = await (await fetch(`${base}/api/chain/${run.runId}`)).json();
         assert.strictEqual(replay.status, 'completed');
+      });
+    });
+
+    describe('non-zero exit records failed and self-heals', () => {
+      let failStub;
+      let handle;
+      let base;
+      const seenContents = [];
+
+      function startFailStub() {
+        const server = http.createServer((req, res) => {
+          let body = '';
+          req.on('data', (chunk) => {
+            body += chunk;
+          });
+          req.on('end', () => {
+            let payload = {};
+            try {
+              payload = JSON.parse(body || '{}');
+            } catch {
+              /* ignore */
+            }
+            const messages = Array.isArray(payload.messages) ? payload.messages : [];
+            const last = messages[messages.length - 1];
+            const content = typeof last?.content === 'string' ? last.content : '';
+            seenContents.push(content);
+            const reply = content.includes('Command failed (exit code 3):')
+              ? 'Noted the failure, no more commands.'
+              : 'Trying it.\n<RUN>exit 3</RUN>';
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(
+              JSON.stringify({
+                id: 'stub-fail',
+                object: 'chat.completion',
+                created: 1,
+                model: payload.model,
+                choices: [{ index: 0, message: { role: 'assistant', content: reply }, finish_reason: 'stop' }],
+                usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 },
+              }),
+            );
+          });
+        });
+        return new Promise((resolve) => {
+          server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port }));
+        });
+      }
+
+      before(async () => {
+        failStub = await startFailStub();
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-web-chain-fail-'));
+        const env = {
+          ...process.env,
+          PORT: '0',
+          NODE_ENV: 'production',
+          LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${failStub.port}/v1`,
+        };
+        delete env.TELL_TOKEN;
+        const child = spawn(process.execPath, [DIST_SERVER, '--cwd', dir, '-m', 'q', '-y'], {
+          env,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        handle = { dir, child, basePromise: waitForServer(child) };
+        base = await handle.basePromise;
+      });
+
+      after(() => {
+        shutdown(handle);
+        failStub.server.closeAllConnections?.();
+        failStub.server.close();
+      });
+
+      it('records Command failed with the exit code and continues the chain', async () => {
+        const run = await (await createRun(base, 'please fail')).json();
+        assert.strictEqual(run.status, 'completed');
+        const failed = run.events.filter((e) => e.type === 'failed');
+        assert.strictEqual(failed.length, 1);
+        assert.strictEqual(failed[0].script, 'exit 3');
+        assert.strictEqual(failed[0].exitCode, 3);
+        assert.ok(!run.events.some((e) => e.type === 'executed'), 'no executed wording on a non-zero exit');
+        assert.ok(
+          seenContents.some((content) => content.startsWith('Command failed (exit code 3):')),
+          'the failed record (FAILED wording) is what the model sees next',
+        );
+        assert.ok(run.text.includes('Noted the failure'), 'self-heal continued after the failure');
       });
     });
   });
@@ -2826,6 +2916,98 @@ describe('web sandbox: chain routes', () => {
       assert.strictEqual(statuses[10], 429);
     });
   });
+
+  describe('extra RUN tags', () => {
+    let stub;
+    let handle;
+    let base;
+    const seen = [];
+
+    before(async () => {
+      stub = http.createServer((req, res) => {
+        let body = '';
+        req.on('data', (chunk) => {
+          body += chunk;
+        });
+        req.on('end', () => {
+          let payload = {};
+          try {
+            payload = JSON.parse(body || '{}');
+          } catch {
+            /* ignore */
+          }
+          const messages = Array.isArray(payload.messages) ? payload.messages : [];
+          seen.push(messages);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              id: 'stub',
+              object: 'chat.completion',
+              created: 1,
+              model: payload.model,
+              choices: [
+                {
+                  index: 0,
+                  message: { role: 'assistant', content: 'Two reads.\n<RUN>echo one</RUN>\n<RUN>echo two</RUN>' },
+                  finish_reason: 'stop',
+                },
+              ],
+              usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 },
+            }),
+          );
+        });
+      });
+      await new Promise((resolve) => {
+        stub.listen(0, '127.0.0.1', () => resolve());
+      });
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-web-extras-'));
+      const env = {
+        ...process.env,
+        PORT: '0',
+        NODE_ENV: 'production',
+        LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stub.address().port}/v1`,
+      };
+      delete env.TELL_TOKEN;
+      const child = spawn(process.execPath, [DIST_SERVER, '--cwd', dir, '-m', 'q', '-y'], {
+        env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      handle = { dir, child };
+      base = await waitForServer(child);
+    });
+
+    after(() => {
+      if (handle?.child && !handle.child.killed) handle.child.kill('SIGTERM');
+      if (handle?.dir) fs.rmSync(handle.dir, { recursive: true, force: true });
+      if (stub) {
+        stub.closeAllConnections?.();
+        stub.close();
+      }
+    });
+
+    it('sends one instruction, not a skip message per extra tag', async () => {
+      const res = await postJson(base, '/api/chain', {
+        messages: [{ role: 'user', content: 'please read both' }],
+      });
+      assert.strictEqual(res.status, 200);
+      const run = await res.json();
+      assert.strictEqual(run.status, 'completed');
+      assert.ok(run.events.some((event) => event.type === 'executed'), 'the first command ran');
+      assert.ok(run.events.some((event) => event.type === 'skipped'), 'the extra tag is recorded skipped');
+      const user_messages = seen
+        .flat()
+        .filter((message) => message.role === 'user')
+        .map((message) => String(message.content));
+      assert.ok(
+        user_messages.some((text) => text.includes('Only the first <RUN> block ran')),
+        'the model reads one instruction',
+      );
+      assert.ok(
+        !user_messages.some((text) => text.startsWith('Skipped by user:')),
+        'no per-extra skip message',
+      );
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -2885,6 +3067,13 @@ describe('web sandbox: delegation (sub-tell)', () => {
     fs.mkdirSync(home, { recursive: true });
     const env = { ...process.env, HOME: home, PORT: '0', NODE_ENV: 'production', ...extraEnv };
     delete env.TELL_TOKEN;
+    // Hermetic keys: the guards suite asserts keyless behavior ("no model
+    // needed"), so inherited vendor keys must not leak into the child. Every
+    // key env name ends in `_API_KEY`; explicit extraEnv keys survive because
+    // no caller passes one (stubs use `LOCAL_OPENAI_BASE_URL`, a URL).
+    for (const name of Object.keys(env)) {
+      if (name.endsWith('_API_KEY')) delete env[name];
+    }
     const child = spawn(process.execPath, [DIST_SERVER, '--cwd', dir, ...extraArgs], {
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -2924,11 +3113,12 @@ describe('web sandbox: delegation (sub-tell)', () => {
 
     it('parks build without -y on awaiting (v2 nested, child asks via confirm)', async () => {
       const res = await postJson(base, '/api/delegate', { kind: 'build', objective: 'list files' });
-      // No model keys here: the background fails before any approval, so the
-      // call fails closed instead of parking. The parked shape is covered
-      // live with a stub below; here the point is only that v1's 403 is gone.
-      assert.ok([202, 500].includes(res.status), `expected 202 or 500, got ${res.status}`);
-      await res.json().catch(() => ({}));
+      // No model key on this host: the request fails closed with a local
+      // message before any approval. The parked shape is covered live with a
+      // stub below; here the point is that v1's 403 is gone.
+      assert.strictEqual(res.status, 400, 'missing key fails closed with 400');
+      const body = await res.json();
+      assert.match(body.error, /Missing API key/, JSON.stringify(body));
     });
 
     it('enforces the concurrency cap like /api/execute', async () => {
