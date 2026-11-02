@@ -40,7 +40,7 @@ Full spec format: `vendor:model[:thinking]` with thinking in `none|low|medium|hi
 | `-l, --history [ref]` | optional string | List contexts + conversations; `@N`/`%N` reprints an entry; any other value searches both. No model call. See [history.md](history.md). |
 | `-y, --yes` | boolean | Auto-approve commands. High-risk **and** any reference to paths outside the working directory still require confirmation. No-op without TTY for those (auto-reject). |
 | `--require-approval` | boolean | Explicit Require Approval mode: with `-y`, safe commands run directly and high-risk ones still ask; without `-y`, every command asks (same as default). Never weakens the high-risk gate. Forwarded by `-w`/`--web` to seed the web sandbox toggle. |
-| `--chain` | boolean | Loop up to 8 command rounds, feeding output back to the model. |
+| `--chain` | boolean | Loop up to `--max-chain` model turns (default 8, max 128), feeding output back to the model. |
 | `--tags` | boolean | Show `<RUN>`/`<DELEGATE>`/`<SUBTASK>` tag blocks on stdout. Hidden by default (the live stream is filtered; the saved text is always tag-free). |
 | `--output` | boolean | Show the output of executed commands (parent and delegation child); hidden by default. Approval prompts still show the script. |
 | `--delegation` | boolean | Show the child acting live (commands, outputs, text) until it returns the `Research/Task result` record. Hidden by default: only a compact `Delegando pesquisa… (research: <20>)` / `Delegando sub-tarefa… (build: <20>)` indicator remains (like `Thinking...`). |

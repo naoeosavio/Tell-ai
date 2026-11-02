@@ -215,7 +215,9 @@ async function runTell(args, response, opts = {}) {
       };
     }
     if (name === './env') {
-      return { load_sdk_config: async () => opts.sdkConfig || { keys: {}, urls: {} } };
+      // Any vendor key resolves: the model port is mocked and never sends it.
+      const fake_keys = new Proxy({}, { get: (_target, key) => `sk-test-${String(key)}` });
+      return { load_sdk_config: async () => opts.sdkConfig || { keys: fake_keys, urls: {} } };
     }
     if (name === './systemPrompt') {
       return { get_system_prompt: (options) => sdk.get_system_prompt(options) };
@@ -603,6 +605,7 @@ function assertPromptInjectionPolicy(result) {
     'echo LATE_7',
   ]);
   assert.match(result.stderr, /Command skipped by user\./);
+  assert.match(result.stderr, /Reason: privilege escalation wrapper/);
   assert.match(result.stderr, /Chain limit reached \(8\); ignoring further requested commands/);
   assert.strictEqual(result.stdout, '');
 

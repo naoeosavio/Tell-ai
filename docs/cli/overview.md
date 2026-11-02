@@ -44,7 +44,7 @@ Key detail: without any context flag the plan is `'none'`, and `run_tell` delete
 |----------|-------|---------|
 | `DEFAULT_MODEL` | `process.env.TELL_MODEL \|\| 'g'` | Default alias when no model given |
 | `MAX_BUFFER` | `32 * 1024 * 1024` | Max stdout+stderr per command |
-| `MAX_CHAIN_STEPS` | `8` | Max command rounds in `--chain` |
+| `MAX_CHAIN_STEPS` | `8` | Default model turns per `--chain` run (overridable to 128 via `--max-chain`) |
 | `EXEC_TIMEOUT` | `120_000` ms | Per-command timeout + confirm prompt auto-reject |
 | `STDIN_TIMEOUT` | `30_000` ms | Piped stdin read timeout |
 | `MAX_CONTEXT_CHARS` | `64 * 1024` | Saved-context budget before AI summarization |

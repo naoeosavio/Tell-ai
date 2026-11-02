@@ -113,10 +113,22 @@ describe('cli risk classification delegates to core', () => {
   });
 
   it('keeps outside-cwd detection identical for reads and writes', () => {
-    const cwd = process.cwd();
-    assert.strictEqual(adapters.script_touches_outside_cwd('cat ./local.txt', cwd), false);
-    assert.strictEqual(adapters.script_touches_outside_cwd('cat /etc/passwd', cwd), true);
-    assert.strictEqual(adapters.script_touches_outside_cwd('cat ~/.ssh/id_rsa', cwd), true);
+    // The `~` form expands against HOME. A HOME inside the test cwd would
+    // make the check read as inside, so the pin uses a neutral temp cwd.
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-adapters-cwd-'));
+    try {
+      assert.strictEqual(adapters.script_touches_outside_cwd('cat ./local.txt', cwd), false);
+      assert.strictEqual(adapters.script_touches_outside_cwd('cat /etc/passwd', cwd), true);
+      const relative_home = path.relative(cwd, os.homedir());
+      const is_home_inside = relative_home === '' || (!relative_home.startsWith('..') && !path.isAbsolute(relative_home));
+      if (!is_home_inside) {
+        assert.strictEqual(adapters.script_touches_outside_cwd('cat ~/.ssh/id_rsa', cwd), true);
+      }
+      // HOME inside the temp cwd is an unusual environment; the other two
+      // pins still prove the read/write parity.
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
   });
 });
 

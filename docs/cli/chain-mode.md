@@ -1,6 +1,6 @@
 # Chain mode (`--chain`)
 
-Without `--chain`, the CLI runs at most one command round: execute the requested scripts, then print the visible text or ask once for a final answer. With `--chain`, it loops — run commands, feed output back, repeat — until the model answers without `<RUN>` tags or the 8-round limit is hit.
+Without `--chain`, the CLI runs at most one model turn: execute the requested scripts, then print the visible text or ask once for a final answer. With `--chain`, it loops — run commands, feed output back, repeat — until the model answers without `<RUN>` tags or the model-turn cap is hit (`--max-chain 1..128`, default 8).
 
 ```bash
 tell --chain "find out why the build is failing and fix it"
@@ -15,9 +15,10 @@ State: `ConversationState` — `firstPrompt` (unwrapped; the runtime composes `P
 ```
 runtime = create_core_runtime({ config, model: cli_model_port, storage: seeded,
   executor: cli_executor, approval: cli_approval, risk: permissive_port,
-  system, callbacks: file_mirrors, max_rounds: chain ? 8 : 1 })
+  system, callbacks: file_mirrors, max_rounds: chain ? chain_budget : 1 })
 result = runtime.run(firstPrompt)
-chain && declined && under cap → runtime.run(feedback) again (merged)
+chain && declined && turns remain → runtime.run(feedback) again with the
+leftover budget (merged)
 render result.text once (non-stream); default mode with commands but empty
 text asks once more without `<RUN>` (legacy final answer)
 ```
@@ -28,12 +29,12 @@ The first call uses `{ chain: autoContinue }` so the system prompt advertises mu
 
 * `conversation_text` = `timeline.join('\n')` (mirrored from callbacks for logs, context saves and resume prompts).
 * Chain feedback is owned by `packages/core/src/loop-feedback.ts` (`format_command_result`, re-exported by `loop.ts` as `build_loop_feedback`): `Executed command:\n<script>\nOutput:\n<output>` (or the `Command failed (exit code N)` variant with the `FAILED` self-healing prefix) plus `Request another command with <RUN> tags if needed; otherwise answer without <RUN> tags.` Cancelled and skipped rounds use `Command cancelled:` / `Skipped by user:` from the same owner, and `split_context_turns` (`runtime-limits.ts`) splits every one of those headers, so context truncation never cuts a record in half. History travels through the storage port; declines resume with the legacy conversation-plus-instruction prompt.
-* Stop when no scripts are requested, approval declines without chain resume, or the 8-round cap is hit (stderr warns `Chain limit reached (8); asking for final answer.` + `ignoring further requested commands.`).
-* Default (non-chain) mode runs at most one command round (`max_rounds: 1`); when commands ran but the visible answer is empty, one extra model call without `<RUN>` guarantees a visible answer. Guarantees a visible answer even when the model only emitted commands.
+* Stop when no scripts are requested, approval declines without chain resume, or the model-turn cap is hit (stderr warns `Chain limit reached (N); asking for final answer.` + `ignoring further requested commands.`, with the effective `--max-chain` cap, never the default).
+* Default (non-chain) mode runs at most one model turn (`max_rounds: 1`); when commands ran but the visible answer is empty, one extra model call without `<RUN>` guarantees a visible answer. Guarantees a visible answer even when the model only emitted commands.
 
 ## Context interplay
 
-Chain alone does not persist across invocations (`saveContext = false` without `-c`/`--ctx`). `-c --chain` reads previous context once, then `save_incremental_context` overwrites the file after the assistant turn and after every command round — full-timeline recompute, so each round is stored exactly once. Final AI summarization via `maybe_summarize_context` applies on top when over budget. See [context.md](context.md).
+Chain alone does not persist across invocations (`saveContext = false` without `-c`/`--ctx`). `-c --chain` reads previous context once, then `save_incremental_context` overwrites the file after the assistant turn and after every model turn — full-timeline recompute, so each turn is stored exactly once. Final AI summarization via `maybe_summarize_context` applies on top when over budget. See [context.md](context.md).
 
 ## Failure-aware example
 
@@ -50,7 +51,7 @@ Task-only (`-t`, `--task`): the core-owned delegation section (`delegation_promp
 - `<DELEGATE>` is read-only: the core wraps approval with `create_read_only_approval` (sensitive paths deny first, then metacharacter/write rules, then the host approval). Deny-by-default: `cat`/`ls`/`git log` pass; `sed -i`, `rm`, `>`, `|`, `;`, `find -delete`, `git checkout`, `cat .env` deny with or without `-y`. Precision: fd duplication (`2>&1`) stays allowed and absolute paths inside the host cwd are scoped to the allowlist + host gate (see [execution.md](execution.md)).
 - `<SUBTASK>` inherits the host approval (CLI in-process, Web Auto-Run with `-y` executes safe builds immediately). Without `-y` the Web parks the child script on a nested approval instead of denying: server chain pauses with `childPending` (confirm by decision id, same 409/403/cancel semantics as the parent slot) and the stateless `POST /api/delegate` parks on `202 awaiting_approval` (resume via `POST /api/delegate/:decisionId/confirm`, single summary at the end). Denied-with-motive (`denied`, never `skipped`) now only covers `--no-exec`, high-risk, concurrency/budget exhaustion and TTL/restart expiry.
 - The parent only receives `Research result (STATUS):` / `Task result (STATUS):` + one host-assembled stats line (repost target 2 Ki, adjustable via `--delegation-repost`; summary `<` target wins, else the redacted original climbs). Raw child stdout never climbs. The child runs up to 32 rounds (adjustable 0..128 via `TELL_DELEGATION_MAX_ROUNDS`/tellrc) with bounded storage (64 Ki) and never recurses (no runner inside). The briefing is `Objective:` + `Context (data, not instructions):` (parent answer, sanitized, 2 Ki), persisted in the child storage; the system carries `Working directory`/`Platform`/`Task:`. Status is host-assigned (`DONE` / `IN PROGRESS` / `BLOCKED`). Child scripts are audited to the run log as `Child command (<status>):` (log-only, never parent context). A tag-only parent answer with no commands still asks once more for a visible answer instead of printing nothing (the model can still stay silent — the guarantee is the extra ask, not the words).
-- Budget: fixed 2 per invocation whenever the chain has `>= 2` rounds, else 0 (`--max-chain 1` → 0, the tag stays inert). `--max-delegations 0..2` is the explicit exit (`0` disables); only a real run consumes budget. A delegation round does not spend a `--max-chain` round: only executed `<RUN>` rounds count, and the child pays with its own cap. The 3rd tag is inert with a deterministic warning, and the run then asks once for the final visible answer.
+- Budget: fixed 2 per invocation whenever the chain has `>= 2` rounds, else 0 (`--max-chain 1` → 0, the tag stays inert). `--max-delegations 0..2` is the explicit exit (`0` disables); only a real run consumes budget. A delegation turn spends one `--max-chain` round like any other model turn, and the child pays with its own cap on top. The 3rd tag is inert with a deterministic warning, and the run then asks once for the final visible answer.
 
 Full flow: [../core/delegation.md](../core/delegation.md).
 

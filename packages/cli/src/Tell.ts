@@ -32,6 +32,7 @@ import {
   HOST_DEFAULT_MODEL,
   format_command_skipped,
   is_task_id,
+  missing_vendor_key,
   MAX_CHAIN_STEPS,
   delegation_prompt_section,
   parse_runtime_limits,
@@ -61,6 +62,7 @@ import {
 import { Command } from 'commander';
 import {
   type CoreConfig,
+  assess_cli_risk,
   cli_risk_port,
   create_cli_approval,
   create_cli_executor,
@@ -1303,22 +1305,28 @@ async function run_response_loop(
             clear_delegation_line();
             if ('outcome' in delegation_result) {
               const outcome: DelegationOutcome = delegation_result.outcome;
-              for (const command of outcome.commands) {
-                append_log(log, `Child command (${command.status}):\n${command.script}`);
-                if (
-                  state.showOutput &&
-                  !state.showDelegation &&
-                  typeof command.output === 'string' &&
-                  command.output.trim() !== ''
-                ) {
-                  process.stderr.write(`\x1b[2m[${request.kind}:${command.status}] ${command.script}\x1b[0m\n`);
-                  print_command_output(command.output);
-                }
-              }
-              if (state.task !== undefined) {
-                write_delegation_record(state.task, request, outcome, conversation_text(state), redact);
+              if (outcome.status === 'SUPERSEDED') {
+                // Dedup hit — no child ran, so no new record file and no
+                // command audit; the reuse itself is logged.
+                append_log(log, `Delegation dedup (SUPERSEDED): reused record for:\n${request.objective}`);
               } else {
-                // Task mode is the only host with an on-disk child record.
+                for (const command of outcome.commands) {
+                  append_log(log, `Child command (${command.status}):\n${command.script}`);
+                  if (
+                    state.showOutput &&
+                    !state.showDelegation &&
+                    typeof command.output === 'string' &&
+                    command.output.trim() !== ''
+                  ) {
+                    process.stderr.write(`\x1b[2m[${request.kind}:${command.status}] ${command.script}\x1b[0m\n`);
+                    print_command_output(command.output);
+                  }
+                }
+                if (state.task !== undefined) {
+                  write_delegation_record(state.task, request, outcome, conversation_text(state), redact);
+                } else {
+                  // Task mode is the only host with an on-disk child record.
+                }
               }
             } else if (delegation_result.refused === 'budget') {
               const warning = `Delegation budget exceeded (${delegation_budget}); ignoring delegation tag.`;
@@ -1371,7 +1379,10 @@ async function run_response_loop(
       if (disabled) {
         process.stderr.write('\x1b[33mCommand execution disabled (--no-exec).\x1b[0m\n');
       } else {
-        process.stderr.write('\x1b[33mCommand skipped by user.\x1b[0m\n');
+        const risk = assess_cli_risk(event.script);
+        const detail = event.reason !== undefined ? event.reason : risk.risky ? risk.reason : undefined;
+        const reason = detail === undefined ? '' : ` Reason: ${detail}.`;
+        process.stderr.write(`\x1b[33mCommand skipped by user.${reason}\x1b[0m\n`);
       }
       append_log(log, result_text);
       remember_command_result(state, result_text);
@@ -1881,7 +1892,18 @@ async function run_tell(
   let ai: AskInstance | null = null;
   try {
     const config = await load_sdk_config();
-    ai = await create_ask_ai(effective_model, config);
+    const spec = resolve_model_spec(effective_model);
+    const missing = missing_vendor_key(spec.vendor, config.keys);
+    if (missing !== undefined) {
+      discard_unused_task(task);
+      console.error(
+        `\x1b[31mMissing API key for ${spec.vendor}. Set ${missing.env_names.join(' or ')}, or create ~/.config/${missing.token_file}.token.\x1b[0m`,
+      );
+      process.exitCode = EXIT_MODEL_ERROR;
+      return;
+    } else {
+      ai = await create_ask_ai(effective_model, config);
+    }
     // Collect process secrets before the lock scrubs them; the redactor masks
     // them in delegation summaries (the child env is already sanitized).
     const key_values: string[] = [];

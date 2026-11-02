@@ -9,7 +9,7 @@ Complete reference for the `tell-ai` package (`packages/cli/`): the `tell` binar
 | [context.md](context.md) | `-c` / `--ctx` / `-n`, `ContextPlan` state machine, files |
 | [history.md](history.md) | `-l` / `--history`: listing, `@N`/`%N` cat, search over contexts + conversations |
 | [execution.md](execution.md) | `<RUN>` flow, confirmation, `-y` / `--no-exec`, timeouts |
-| [chain-mode.md](chain-mode.md) | `--chain` loop, feedback, 8-round limit |
+| [chain-mode.md](chain-mode.md) | `--chain` loop, feedback, per-turn round cap |
 | [input-logging.md](input-logging.md) | stdin / `-i`, history logs |
 | [mentions.md](mentions.md) | `@path` file/dir expansion, outside-cwd gate |
 | [tellrc.md](tellrc.md) | `.tellrc` INI config: precedence, profiles, aliases, temperature, limits, web forwarding |

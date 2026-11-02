@@ -208,7 +208,9 @@ async function run_tell(args, response, opts = {}) {
       };
     }
     if (name === './env') {
-      return { load_sdk_config: async () => ({ keys: {}, urls: {} }) };
+      // Any vendor key resolves: the model port is mocked and never sends it.
+      const fake_keys = new Proxy({}, { get: (_target, key) => `sk-test-${String(key)}` });
+      return { load_sdk_config: async () => ({ keys: fake_keys, urls: {} }) };
     }
     if (name === './systemPrompt') {
       return { get_system_prompt: (options) => sdk.get_system_prompt(options) };
@@ -578,6 +580,28 @@ async function test_task_low_chain_budget_hides_delegation() {
   assert_not_includes(system, '<DELEGATE>');
 }
 
+async function test_task_resume_budget_counts_turns() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-task-'));
+  try {
+    // --max-chain 2 is two model turns, not two commands: one delegation
+    // turn (no parent commands) plus one declined command turn fill the
+    // budget, so the legacy decline-resume must not run again.
+    const responses = [
+      '<DELEGATE>list the files</DELEGATE>',
+      'child findings',
+      '<RUN>echo hi</RUN>got it',
+      'SHOULD NOT ASK',
+    ];
+    const result = await run_tell(['-t', '%Budget', '--max-chain', '2', 'go'], responses, { dir });
+    assert.strictEqual(result.tellCalls.length, 3);
+    assert_includes(result.stderr, 'Chain limit reached (2)');
+    assert_not_includes(result.stdout, 'SHOULD NOT ASK');
+    assert.deepStrictEqual(result.execCalls, []);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function test_task_tag_only_answer_gets_final_ask() {
   // A tag-only parent turn strips to empty text with no commands. The run
   // must ask once more so stdout is never empty.
@@ -850,6 +874,25 @@ async function test_task_delegation_budget_two_and_third_warns() {
   }
 }
 
+async function test_task_delegation_dedup_reuses_record_file() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-task-'));
+  try {
+    const responses = [
+      '<DELEGATE>same goal</DELEGATE>',
+      'child findings',
+      '<DELEGATE>same goal</DELEGATE>',
+      'final answer',
+    ];
+    const result = await run_tell(['-t', '%dedup', 'go'], responses, { dir });
+    const task_directory = task_dir(result.home, 'task-001-dedup');
+    assert.ok(fs.existsSync(path.join(task_directory, 'delegate-001.txt')), 'first runs');
+    assert.ok(!fs.existsSync(path.join(task_directory, 'delegate-002.txt')), 'dedup writes no second file');
+    assert_includes(result.stdout, 'final answer');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function test_task_briefing_reaches_child() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-task-'));
   try {
@@ -968,7 +1011,9 @@ async function main() {
     test_chain_without_task_keeps_baseline_prompt,
     test_chain_without_task_ignores_delegation_tag,
     test_task_low_chain_budget_hides_delegation,
+    test_task_resume_budget_counts_turns,
     test_task_delegation_budget_two_and_third_warns,
+    test_task_delegation_dedup_reuses_record_file,
     test_task_briefing_reaches_child,
     test_task_status_in_record_file,
     test_task_max_delegations_zero_disables,

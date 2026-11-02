@@ -50,7 +50,7 @@ Deliberately allowed: local-only interpreter one-liners such as `node -e "consol
 
 * One command per round (first `<RUN>` block only).
 * Each command: 120s timeout, 32MiB output cap.
-* Chain mode: at most 8 command rounds per invocation (see [chain-mode.md](chain-mode.md)).
+* Chain mode: at most `--max-chain` model turns per invocation (default 8, max 128; see [chain-mode.md](chain-mode.md)).
 
 ## Delegation precedence (`<DELEGATE>` / `<SUBTASK>` win over `<RUN>`)
 
