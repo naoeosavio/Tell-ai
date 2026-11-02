@@ -1,5 +1,10 @@
 import { delegation_budget_notice } from './delegation-status';
-import { COMMAND_FEEDBACK_INSTRUCTION, format_command_feedback, format_denied_feedback } from './loop-feedback';
+import {
+  COMMAND_FEEDBACK_INSTRUCTION,
+  format_command_feedback,
+  format_denied_feedback,
+  format_skipped_feedback,
+} from './loop-feedback';
 import type { CancellationToken, RuntimeCommand, TellResult, TellRuntime, TellRuntimeOptions } from './runtime-api';
 import { DEFAULT_MAX_CHAIN_STEPS, DELEGATION_MAX_DELEGATIONS } from './runtime-limits';
 
@@ -201,6 +206,10 @@ export async function run_primitive_loop(message: string, options: CoreLoopOptio
       } else if (rounds_used >= max_rounds) {
         timeline.push(chain_limit_notice(max_rounds));
         return { status: 'completed', text, timeline, commands };
+      } else if (round_result.delegation.status === 'SUPERSEDED') {
+        // Dedup hit — the cached record climbs but the budget stays.
+        current_message = round_result.delegation.record;
+        continue;
       } else {
         delegations_used += 1;
         current_message = round_result.delegation.record;
@@ -233,11 +242,18 @@ export async function run_primitive_loop(message: string, options: CoreLoopOptio
       } else {
         current_message = build_loop_feedback(last.script, last.output ?? '', last.exit_code ?? 1);
       }
-    } else if (last.status === 'denied' && options.retry_denied === true && last.reason !== 'disabled') {
-      // A policy denial is self-healable inside a child run; `--no-exec` is not.
+    } else if (
+      (last.status === 'denied' || last.status === 'skipped') &&
+      options.retry_denied === true &&
+      last.reason !== 'disabled'
+    ) {
+      // A policy denial or an approval skip is self-healable inside a child
+      // run; `--no-exec` is not.
       if (rounds_used >= max_rounds) {
         timeline.push(chain_limit_notice(max_rounds));
         return { status: 'completed', text, timeline, commands };
+      } else if (last.status === 'skipped') {
+        current_message = format_skipped_feedback(last.script, last.reason);
       } else {
         current_message = format_denied_feedback(last.script, last.reason);
       }

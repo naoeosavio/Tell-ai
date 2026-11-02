@@ -91,6 +91,51 @@ export const SENSITIVE_ENV_SUFFIX =
  * the model has to read, so such values are dropped instead of masked.
  */
 export const EXEC_MIN_SECRET_LENGTH = 4;
+/** Min secret length that also gets the encoded and squashed masks. */
+const EXEC_ENCODED_MIN_SECRET_LENGTH = 8;
+/** Min alphanumeric size of a squashed secret before the whole text is masked. */
+const EXEC_SQUASH_MIN_SECRET_LENGTH = 10;
+
+/**
+ * Removes every non-alphanumeric character from a value.
+ *
+ * A dump tool can separate the characters of a secret (`od -An -c`). The
+ * squashed form keeps the characters in order.
+ *
+ * @param value - Text to squash.
+ * @returns The alphanumeric characters only.
+ */
+function squash_alphanumeric(value: string): string {
+  return value.replace(/[^A-Za-z0-9]/g, '');
+}
+
+/**
+ * Builds the encoded forms of one secret value.
+ *
+ * The forms cover base64 (padded and unpadded), base64url and hexadecimal
+ * (lower and upper). An encoder can emit any of these forms.
+ *
+ * @param secret - Raw secret value.
+ * @returns Encoded forms that differ from the raw value (deduplicated).
+ */
+function encoded_secret_forms(secret: string): string[] {
+  const forms: string[] = [];
+  const add = (candidate: string): void => {
+    if (candidate !== secret && candidate.length > 0 && !forms.includes(candidate)) {
+      forms.push(candidate);
+    } else {
+      // Duplicate or empty form — skip it.
+    }
+  };
+  const base64 = Buffer.from(secret, 'utf8').toString('base64');
+  add(base64);
+  add(base64.replace(/=+$/, ''));
+  add(base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''));
+  const hex = Buffer.from(secret, 'utf8').toString('hex');
+  add(hex);
+  add(hex.toUpperCase());
+  return forms;
+}
 
 /**
  * True when a URL-shaped value carries inline credentials.
@@ -186,23 +231,60 @@ export function resolve_exec_cwd(cwd?: string): string {
 /**
  * Creates a redactor masking known secret values.
  *
- * Each non-empty secret value found verbatim in a script or output is
- * replaced with `EXEC_REDACTED_MARKER`. Values shorter than
- * `EXEC_MIN_SECRET_LENGTH` are ignored: masking them would replace almost
- * every character and destroy the output. Non-secret content is preserved.
+ * Each secret value found verbatim in a script or output is replaced with
+ * `EXEC_REDACTED_MARKER`. Values shorter than `EXEC_MIN_SECRET_LENGTH` are
+ * ignored: masking them would replace almost every character and destroy the
+ * output. A value of `EXEC_ENCODED_MIN_SECRET_LENGTH` or more also masks its
+ * base64 and hexadecimal forms. If the text holds a squashed copy of a longer
+ * secret, the redactor masks the whole text; `od -An -c` and similar dump
+ * tools emit that form. Non-secret content is preserved.
  *
  * @param secrets - Secret values to mask (empty or too short entries are ignored).
  * @returns A `Redactor` for the runtime redaction boundary.
  */
 export function create_secret_redactor(secrets: readonly string[]): Redactor {
   const values = secrets.filter((secret) => secret.length >= EXEC_MIN_SECRET_LENGTH);
+  const masks: string[] = [];
+  const squashed: string[] = [];
+  for (const secret of values) {
+    if (!masks.includes(secret)) {
+      masks.push(secret);
+    } else {
+      // Duplicate value — the first copy is enough.
+    }
+    if (secret.length >= EXEC_ENCODED_MIN_SECRET_LENGTH) {
+      for (const form of encoded_secret_forms(secret)) {
+        if (!masks.includes(form)) {
+          masks.push(form);
+        } else {
+          // Duplicate encoded form — skip it.
+        }
+      }
+      const flat = squash_alphanumeric(secret);
+      if (flat.length >= EXEC_SQUASH_MIN_SECRET_LENGTH && !squashed.includes(flat)) {
+        squashed.push(flat);
+      } else {
+        // Short or duplicate squashed form — no whole-text mask.
+      }
+    } else {
+      // Short value — literal masking only.
+    }
+  }
   return (value: string): string => {
     let redacted = value;
-    for (const secret of values) {
-      if (redacted.includes(secret)) {
-        redacted = redacted.split(secret).join(EXEC_REDACTED_MARKER);
+    for (const mask of masks) {
+      if (redacted.includes(mask)) {
+        redacted = redacted.split(mask).join(EXEC_REDACTED_MARKER);
       } else {
-        // Secret absent — nothing to mask.
+        // Form absent — nothing to mask.
+      }
+    }
+    const flat = squash_alphanumeric(redacted);
+    for (const form of squashed) {
+      if (flat.includes(form)) {
+        return EXEC_REDACTED_MARKER;
+      } else {
+        // No spaced or reformatted copy of this secret.
       }
     }
     return redacted;

@@ -76,6 +76,7 @@ export {
   format_executed_command,
   format_failed_command,
   format_research_result,
+  format_skipped_feedback,
   format_subtask_result,
   OUTPUT_SEPARATOR,
   parse_command_feedback,
@@ -122,6 +123,7 @@ export type {
 export {
   type ApprovalDecision,
   cancelled_token,
+  combine_output,
   create_cancellation_token,
   createTellRuntime,
   DEFAULT_STORAGE_KEY,

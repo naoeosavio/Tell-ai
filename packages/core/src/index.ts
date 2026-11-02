@@ -82,6 +82,7 @@ export {
   COMMAND_DENIED_PREAMBLE,
   COMMAND_FEEDBACK_FAILED_PREAMBLE,
   COMMAND_FEEDBACK_INSTRUCTION,
+  COMMAND_SKIPPED_PREAMBLE,
   EXECUTED_HEADER,
   format_cancelled_command,
   format_command_feedback,
@@ -91,6 +92,7 @@ export {
   format_executed_command,
   format_failed_command,
   format_research_result,
+  format_skipped_feedback,
   format_subtask_result,
   OUTPUT_SEPARATOR,
   parse_command_feedback,
@@ -140,6 +142,7 @@ export {
   type CommandExecutor,
   type CommandStatus,
   cancelled_token,
+  combine_output,
   create_cancellation_token,
   createTellRuntime,
   DEFAULT_STORAGE_KEY,
@@ -219,8 +222,8 @@ export {
   truncate_output,
   validate_tellrc_limit_value,
 } from './runtime-limits';
-export type { SdkConfigEnv, SdkConfigSource } from './sdk-config';
-export { build_sdk_config_from_env, load_sdk_config_from_env } from './sdk-config';
+export type { MissingVendorKey, SdkConfigEnv, SdkConfigSource } from './sdk-config';
+export { build_sdk_config_from_env, load_sdk_config_from_env, missing_vendor_key } from './sdk-config';
 export type { SummarizeResult, SummarizeUsed } from './summarize-result';
 export { build_summarize_message, SUMMARIZE_SYSTEM, summarize_result } from './summarize-result';
 export type { TaskResolution } from './task-naming';

@@ -25,6 +25,11 @@ export type RiskRule = {
    * (shell quote splicing, e.g. `cat '.en'v` reads `.env`).
    */
   dequoted?: boolean;
+  /**
+   * When true, `find` path-predicate arguments are removed before the match.
+   * A nested hidden-path exclusion selects paths; it never reads a file.
+   */
+  ignore_find_path_arguments?: boolean;
   /** When true the rule only applies to the strict (Web) profile. */
   strict_only?: boolean;
   /** When true the rule only applies to the permissive (CLI) profile. */
@@ -307,8 +312,10 @@ const BASE_RISK_RULES: readonly RiskRule[] = [
     // `.*`, `.e*`, `.en?`, `.env*` and the `for f in .*` loop all expand to
     // `.env` in bash. Any dotfile pattern with a glob metachar is treated as
     // a potential credential read; `ls .*` asks too (names can expose the
-    // layout, contents are the real risk).
+    // layout, contents are the real risk). A nested-path predicate of `find`
+    // (`-path '*/.*'`) only selects paths and is not a read: ignore it.
     dequoted: true,
+    ignore_find_path_arguments: true,
     pattern: /(?:^|[\s=:;|&<>(){},/])\.[^\s=:;|&<>(){}]*[*?[]/,
   },
   {
@@ -317,11 +324,11 @@ const BASE_RISK_RULES: readonly RiskRule[] = [
     severity: 'high',
     reason: 'glob can read a credential file (keys/tokens/id_*)',
     flags: ['sensitive-file', 'sensitive-glob'],
-    // `*.key`, `id_*`, `*.pem`, `*.token` are reads of credential files even
-    // though the literal name is not in the script.
+    // `*.key`, `id_*`, `*.pem`, `*.token` and `i?_rsa` are reads of
+    // credential files even though the literal name is not in the script.
     dequoted: true,
     pattern:
-      /(?:^|[\s=:;|&<>(){},/])(?=[^\s=:;|&<>(){}]*[*?[])[^\s=:;|&<>(){}]*(?:id_|\.key\b|\.pem\b|\.p12\b|\.pfx\b|\.token\b|credentials)[^\s=:;|&<>(){}]*/i,
+      /(?:^|[\s=:;|&<>(){},/])(?=[^\s=:;|&<>(){}]*[*?[])[^\s=:;|&<>(){}]*(?:id_|_rsa\b|_dsa\b|_ecdsa\b|_ed25519\b|\.key\b|\.pem\b|\.p12\b|\.pfx\b|\.token\b|credentials)[^\s=:;|&<>(){}]*/i,
   },
   {
     id: 'ansi-c-quote',
@@ -368,6 +375,36 @@ function dequote_script(compact: string): string {
   return compact.replace(/['"]/g, '');
 }
 
+/** Find actions that read or write file content (a path predicate alone does not). */
+const FIND_READ_ACTIONS = /\s-(?:exec|execdir|ok|okdir|delete|fprint|fprint0|fprintf|fls)\b/;
+
+/**
+ * Removes the nested-path predicate arguments of a `find` command.
+ *
+ * A find path predicate with a nested hidden pattern excludes hidden files.
+ * The path argument is a selector, not a read. The removal applies only to a
+ * `find` command without an exec, delete or print action. Every other command
+ * keeps its text.
+ *
+ * @param compact - Compacted script.
+ * @returns The script without nested-path predicates (or the input).
+ */
+function strip_find_path_arguments(compact: string): string {
+  if (!/^\s*(?:\S*\/)?find\b/.test(compact)) {
+    return compact;
+  } else if (FIND_READ_ACTIONS.test(compact)) {
+    return compact;
+  } else {
+    return compact.replace(
+      /\s-i?path\s+(?:'([^']*)'|"([^"]*)"|(\S+))/g,
+      (match: string, single?: string, double?: string, plain?: string): string => {
+        const argument = single ?? double ?? plain ?? '';
+        return argument.startsWith('*/') ? ' -path' : match;
+      },
+    );
+  }
+}
+
 /**
  * Ranks severities so the highest match wins (`high` beats `medium`).
  *
@@ -410,9 +447,12 @@ export function assess_base_risk(script: string, profile: RiskProfile = DEFAULT_
   let matched = false;
 
   for (const rule of BASE_RISK_RULES) {
+    const base_text = rule.dequoted === true ? dequoted : compact;
     if (rule.strict_only === true && profile !== 'strict') {
     } else if (rule.permissive_only === true && profile !== 'permissive') {
-    } else if (rule.pattern.test(rule.dequoted === true ? dequoted : compact)) {
+    } else if (
+      rule.pattern.test(rule.ignore_find_path_arguments === true ? strip_find_path_arguments(base_text) : base_text)
+    ) {
       matched = true;
       reasons.push(rule.reason);
       rules.push(rule.id);

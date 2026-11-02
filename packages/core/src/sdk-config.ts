@@ -311,3 +311,42 @@ export async function load_sdk_config_from_env(
   }
   return config;
 }
+
+/** Places that can supply a missing vendor key. */
+export type MissingVendorKey = {
+  /** Environment names that can hold the key, in priority order. */
+  env_names: string[];
+  /** Token file name under `~/.config` (without the suffix). */
+  token_file: string;
+};
+
+/** Vendors that can run without a key (a local endpoint serves them). */
+const KEYLESS_VENDORS: ReadonlySet<string> = new Set(['custom']);
+
+/**
+ * Reports a missing key for a vendor that needs one.
+ *
+ * The check runs before the model call, so the user reads a local message
+ * instead of a provider error. A vendor without a row (for example `local`
+ * or `vast`) and the `custom` vendor return undefined: both can be keyless.
+ *
+ * @param vendor - Vendor name from `resolve_model_spec`.
+ * @param keys - Resolved keys from the SDK config.
+ * @returns The env names and the token file, or undefined when the key exists.
+ */
+export function missing_vendor_key(
+  vendor: string,
+  keys: Partial<Record<keyof SDKKeys, string | undefined>> | undefined,
+): MissingVendorKey | undefined {
+  const spec = VENDOR_SPECS.find((entry) => entry.key === vendor);
+  if (spec === undefined || KEYLESS_VENDORS.has(vendor)) {
+    return undefined;
+  } else {
+    const value = keys?.[spec.key];
+    if (typeof value === 'string' && value.trim() !== '') {
+      return undefined;
+    } else {
+      return { env_names: spec.key_env, token_file: spec.token_file };
+    }
+  }
+}

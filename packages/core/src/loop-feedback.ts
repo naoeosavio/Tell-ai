@@ -18,6 +18,10 @@ export const COMMAND_FEEDBACK_FAILED_PREAMBLE =
 /** Preamble of the denied-command feedback (child retry protocol). */
 export const COMMAND_DENIED_PREAMBLE = 'The policy denied the command above. Request a different command.';
 
+/** Preamble of the skipped-command feedback (child retry protocol). */
+export const COMMAND_SKIPPED_PREAMBLE =
+  'The approval skipped the command above. Request a different command, or answer in plain text.';
+
 /** Rule reminder appended to the denied-command feedback. */
 export const COMMAND_DENIED_INSTRUCTION =
   'Use one simple command without `;`, `&&`, `|`, redirections, `cd`, or secret paths.';
@@ -201,6 +205,21 @@ export function format_command_status(status: string, script: string, reason?: s
  */
 export function format_denied_feedback(script: string, reason?: string): string {
   return `${format_command_status('denied', script, reason)}\n\n${COMMAND_DENIED_PREAMBLE}\n${COMMAND_DENIED_INSTRUCTION}`;
+}
+
+/**
+ * Formats the follow-up prompt for one approval-skipped command round.
+ *
+ * The child reads the skip and a request for a different command. The round
+ * is retried inside a delegated child only; every other host stops on the
+ * skip.
+ *
+ * @param script - Script the approval skipped.
+ * @param reason - Optional reason.
+ * @returns The feedback text.
+ */
+export function format_skipped_feedback(script: string, reason?: string): string {
+  return `${format_command_status('skipped', script, reason)}\n\n${COMMAND_SKIPPED_PREAMBLE}`;
 }
 
 /**

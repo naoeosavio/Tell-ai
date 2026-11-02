@@ -428,11 +428,15 @@ function extract_think_content(raw: string): string {
 /**
  * Combines executor stdout/stderr into the single command output record.
  *
+ * stdout and stderr stay separate until here so the executor can cap them
+ * independently; every host must join them this way before truncating the
+ * delivered output.
+ *
  * @param stdout - Redacted standard output.
  * @param stderr - Redacted standard error.
  * @returns Combined output, trimmed.
  */
-function combine_output(stdout: string, stderr: string): string {
+export function combine_output(stdout: string, stderr: string): string {
   if (stderr) {
     return `${stdout}\n${stderr}`.trim();
   } else {
@@ -592,7 +596,11 @@ export function createTellRuntime(options: TellRuntimeOptions): TellRuntime {
           }
         }
         const outcome = delegation_result.outcome;
-        delegation_used += 1;
+        if (outcome.status === 'SUPERSEDED') {
+          // Dedup hit replays the cached record without spending the budget.
+        } else {
+          delegation_used += 1;
+        }
         timeline.push(outcome.record);
         if (callbacks.onDelegation !== undefined) {
           await callbacks.onDelegation({
