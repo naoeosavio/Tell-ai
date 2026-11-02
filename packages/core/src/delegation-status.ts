@@ -7,7 +7,7 @@
  */
 
 /** Lifecycle of one delegated child, assigned by the host. */
-export type DelegationStatus = 'DONE' | 'IN PROGRESS' | 'BLOCKED';
+export type DelegationStatus = 'DONE' | 'IN PROGRESS' | 'BLOCKED' | 'SUPERSEDED';
 
 /** Aggregate facts of a finished child run (host-observed, never model text). */
 export type DelegationFacts = {
@@ -44,7 +44,8 @@ export function delegation_budget_notice(max: number): string {
  *
  * `BLOCKED` when commands were requested but none ran, or when the answer is
  * empty and nothing ran. `IN PROGRESS` when the round cap stopped the child
- * with work pending. `DONE` otherwise. `SUPERSEDED` stays reserved for v2.
+ * with work pending. `DONE` otherwise. `SUPERSEDED` is never derived here: the
+ * runner assigns it on a dedup hit (same normalized objective, same runner).
  *
  * @param facts - Host-observed facts of the finished child.
  * @returns The delegation status.

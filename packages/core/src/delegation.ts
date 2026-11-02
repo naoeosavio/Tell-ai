@@ -276,7 +276,9 @@ export function build_child_message(objective: string, context: string): string 
  * carries the host status plus at most one host-assembled stats line. The
  * runner never persists: the parent saves the record as the next
  * `current_message` via its own `save_turn`. Only a real run consumes the
- * budget; `empty_objective` never does.
+ * budget; `empty_objective` never does. A repeated normalized objective
+ * replays the cached outcome with status `SUPERSEDED`: no child runs, no
+ * budget spent (`refused: 'budget'` still wins when the budget is gone).
  *
  * @param options - Parent ports and limits.
  * @returns The delegation runner.
@@ -284,6 +286,9 @@ export function build_child_message(objective: string, context: string): string 
 export function create_delegation_runner(options: DelegationRunnerOptions): DelegationRunner {
   const redact = options.redact ?? ((value: string): string => value);
   let used = 0;
+  // shortcut: in-memory only — a repeat across invocations runs again; add a
+  // disk index when a task needs cross-run dedup.
+  const seen: Map<string, DelegationOutcome> = new Map();
   return async (request: DelegationRequest): Promise<DelegationResult> => {
     const objective = sanitize_objective(request.objective);
     if (objective.length === 0) {
@@ -292,6 +297,13 @@ export function create_delegation_runner(options: DelegationRunnerOptions): Dele
     const budget = options.max_delegations ?? Number.POSITIVE_INFINITY;
     if (used >= budget) {
       return { refused: 'budget' };
+    }
+    const dedup_key = `${request.kind} ${objective}`;
+    const cached = seen.get(dedup_key);
+    if (cached !== undefined) {
+      return { outcome: { ...cached, status: 'SUPERSEDED' } };
+    } else {
+      // First run for this objective — executes below and caches the outcome.
     }
     used += 1;
     const raw_context = request.context ?? options.context ?? '';
@@ -426,22 +438,22 @@ export function create_delegation_runner(options: DelegationRunnerOptions): Dele
       request.kind === 'research'
         ? format_research_result(summary, stats_line, status)
         : format_subtask_result(summary, stats_line, status);
-    return {
-      outcome: {
-        kind: request.kind,
-        status,
-        facts,
-        record,
-        summary,
-        stats: stats_line,
-        commands: result.commands.map((command) => ({
-          script: command.script,
-          status: command.status,
-          ...(command.output !== undefined ? { output: command.output } : {}),
-          ...(command.exit_code !== undefined ? { exit_code: command.exit_code } : {}),
-        })),
-        text: result.text,
-      },
+    const outcome: DelegationOutcome = {
+      kind: request.kind,
+      status,
+      facts,
+      record,
+      summary,
+      stats: stats_line,
+      commands: result.commands.map((command) => ({
+        script: command.script,
+        status: command.status,
+        ...(command.output !== undefined ? { output: command.output } : {}),
+        ...(command.exit_code !== undefined ? { exit_code: command.exit_code } : {}),
+      })),
+      text: result.text,
     };
+    seen.set(dedup_key, outcome);
+    return { outcome };
   };
 }

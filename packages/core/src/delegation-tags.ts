@@ -45,21 +45,47 @@ function escape_tag(tag: string): string {
 }
 
 /**
+ * Builds the matcher for one tag literal.
+ *
+ * A tolerant matcher accepts spaces inside the tag (`< DELEGATE >`), like the
+ * SDK `<RUN>` matcher. Real models pad the tags, and the request must not
+ * become visible text.
+ *
+ * @param tag - Tag literal (e.g. `<DELEGATE>` or `</DELEGATE>`).
+ * @param is_tolerant - Whether spaces inside the tag are accepted.
+ * @returns The case-insensitive matcher.
+ */
+function tag_matcher(tag: string, is_tolerant: boolean): RegExp {
+  if (!is_tolerant) {
+    return new RegExp(escape_tag(tag), 'gi');
+  } else {
+    const name = escape_tag(tag.replace(/[<>/]/g, '').trim());
+    if (tag.startsWith('</')) {
+      return new RegExp(`<\\s*/\\s*${name}\\s*>`, 'gi');
+    } else {
+      return new RegExp(`<\\s*${name}\\s*>`, 'gi');
+    }
+  }
+}
+
+/**
  * Finds every `open`…`close` block in a text.
  *
  * A block ends at the **last** closing tag before the next opening tag, so a
  * body containing the literal closer (e.g. `echo "</RUN>"`) is not truncated
- * mid-script. Matching is case-insensitive and strict: the opener must equal
- * `open` exactly (no space before `>`). An unterminated block is ignored.
+ * mid-script. Matching is case-insensitive. The strict matcher needs the
+ * exact tag; the tolerant matcher also accepts spaces inside the tag. An
+ * unterminated block is ignored.
  *
  * @param text - Text to scan.
  * @param open - Opening tag literal (e.g. `<RUN>`).
  * @param close - Closing tag literal (e.g. `</RUN>`).
+ * @param is_tolerant - Accept spaces inside the tags (default false).
  * @returns The blocks in order.
  */
-export function find_blocks(text: string, open: string, close: string): TagBlock[] {
-  const opener_re = new RegExp(escape_tag(open), 'gi');
-  const closer_re = new RegExp(escape_tag(close), 'gi');
+export function find_blocks(text: string, open: string, close: string, is_tolerant = false): TagBlock[] {
+  const opener_re = tag_matcher(open, is_tolerant);
+  const closer_re = tag_matcher(close, is_tolerant);
   const blocks: TagBlock[] = [];
   let cursor = 0;
   while (cursor < text.length) {
@@ -118,22 +144,22 @@ export function delegation_kind(tag: string): DelegationKind | null {
 /**
  * Finds every delegation block (`<DELEGATE>` or `<SUBTASK>`) in a text.
  *
- * The scan is strict like `<RUN>`: `<DELEGATE >` (space before `>`) does not
- * open a block, and matching is case-insensitive. A body containing the
- * literal closer (e.g. `echo "</RUN>"` inside `<DELEGATE>`) still ends at the
- * last closer before the next opener of the same kind.
+ * The scan is tolerant like the SDK `<RUN>` matcher: `<DELEGATE >` and
+ * `< DELEGATE >` open a block, and matching is case-insensitive. A body
+ * containing the literal closer (e.g. `echo "</RUN>"` inside `<DELEGATE>`)
+ * still ends at the last closer before the next opener of the same kind.
  *
  * @param text - Text to scan (already stripped of fenced code by the caller).
  * @returns The blocks in document order.
  */
 function find_delegation_blocks(text: string): DelegationBlock[] {
-  const delegate_blocks = find_blocks(text, '<DELEGATE>', '</DELEGATE>').map((block) => ({
+  const delegate_blocks = find_blocks(text, '<DELEGATE>', '</DELEGATE>', true).map((block) => ({
     kind: 'research' as DelegationKind,
     start: block.start,
     end: block.end,
     body: block.body,
   }));
-  const subtask_blocks = find_blocks(text, '<SUBTASK>', '</SUBTASK>').map((block) => ({
+  const subtask_blocks = find_blocks(text, '<SUBTASK>', '</SUBTASK>', true).map((block) => ({
     kind: 'build' as DelegationKind,
     start: block.start,
     end: block.end,
