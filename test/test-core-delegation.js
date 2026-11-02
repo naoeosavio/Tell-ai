@@ -58,10 +58,18 @@ describe('core delegation parser', () => {
     assert.strictEqual(out.objective, 'real-goal');
   });
 
-  it('treats <DELEGATE > with space as plain text', () => {
-    const out = core.extract_delegation('<DELEGATE >\nlist\n</DELEGATE>');
-    assert.strictEqual(out.kind, null);
-    assert.ok(out.visible.includes('<DELEGATE >'), 'strict opener: space before > never opens');
+  it('accepts spaces inside the delegation tags (like <RUN>)', () => {
+    const spaced = core.extract_delegation('< DELEGATE >\nlist\n</ DELEGATE >');
+    assert.strictEqual(spaced.kind, 'research');
+    assert.strictEqual(spaced.objective, 'list');
+    assert.strictEqual(spaced.visible, '');
+    const trailing = core.extract_delegation('<SUBTASK >\nbuild\n</SUBTASK>');
+    assert.strictEqual(trailing.kind, 'build');
+    assert.strictEqual(trailing.objective, 'build');
+    assert.strictEqual(
+      core.strip_delegation_tags('a< DELEGATE >x</ DELEGATE >b<SUBTASK >y</ SUBTASK >c'),
+      'abc',
+    );
   });
 
   it('keeps the </RUN> last-closer trick inside DELEGATE', () => {
@@ -486,6 +494,66 @@ describe('delegation runner', () => {
     assert.deepStrictEqual(await runner({ kind: 'research', objective: 'two' }), { refused: 'budget' });
   });
 
+  it('dedups the same normalized objective without running the child twice', async () => {
+    let calls = 0;
+    const runner = core.create_delegation_runner({
+      model: {
+        ask: async () => {
+          calls += 1;
+          return 'child findings';
+        },
+      },
+      exec_enabled: true,
+      max_delegations: 2,
+    });
+    const first = await runner({ kind: 'research', objective: 'list files' });
+    assert.ok('outcome' in first);
+    assert.strictEqual(first.outcome.status, 'DONE');
+    const second = await runner({ kind: 'research', objective: '  <think>noise</think>list files  ' });
+    assert.ok('outcome' in second);
+    assert.strictEqual(second.outcome.status, 'SUPERSEDED');
+    assert.strictEqual(second.outcome.record, first.outcome.record, 'the cached record climbs unchanged');
+    assert.strictEqual(calls, 1, 'the child ran once');
+    const third = await runner({ kind: 'research', objective: 'other goal' });
+    assert.ok('outcome' in third && third.outcome.status !== 'SUPERSEDED');
+    assert.strictEqual(calls, 2, 'a distinct objective still runs (budget intact)');
+  });
+
+  it('dedups per kind (same text, other kind still runs)', async () => {
+    let calls = 0;
+    const runner = core.create_delegation_runner({
+      model: {
+        ask: async () => {
+          calls += 1;
+          return 'done';
+        },
+      },
+      exec_enabled: true,
+    });
+    await runner({ kind: 'research', objective: 'same goal' });
+    const second = await runner({ kind: 'build', objective: 'same goal' });
+    assert.ok('outcome' in second);
+    assert.notStrictEqual(second.outcome.status, 'SUPERSEDED');
+    assert.strictEqual(calls, 2);
+  });
+
+  it('budget refusal wins over dedup', async () => {
+    let calls = 0;
+    const runner = core.create_delegation_runner({
+      model: {
+        ask: async () => {
+          calls += 1;
+          return 'child findings';
+        },
+      },
+      exec_enabled: true,
+      max_delegations: 1,
+    });
+    assert.ok('outcome' in (await runner({ kind: 'research', objective: 'list files' })));
+    assert.deepStrictEqual(await runner({ kind: 'research', objective: 'list files' }), { refused: 'budget' });
+    assert.strictEqual(calls, 1, 'the spent budget refuses before the cache is read');
+  });
+
   it('empty objective refuses without consuming the budget', async () => {
     let calls = 0;
     const runner = core.create_delegation_runner({
@@ -646,6 +714,27 @@ describe('delegation runner', () => {
     assert.ok(outcome.facts.rounds >= 2, 'the child got a second round');
   });
 
+  it('continues after a skipped child approval', async () => {
+    const answers = ['<RUN>\ncat f\n</RUN>', 'child findings'];
+    let calls = 0;
+    let approvals = 0;
+    const runner = core.create_delegation_runner({
+      model: { ask: async () => answers[Math.min(calls++, answers.length - 1)] },
+      executor: async () => ({ stdout: 'ok\n', stderr: '', exit_code: 0 }),
+      approval: async () => {
+        approvals += 1;
+        return 'skipped';
+      },
+      cwd: '/tmp/work',
+      exec_enabled: true,
+    });
+    const outcome = await run_outcome(runner, { kind: 'build', objective: 'read the file' });
+    assert.strictEqual(approvals, 1, 'the host approval ran once');
+    assert.strictEqual(calls, 2, 'the child got a second round after the skip');
+    assert.strictEqual(outcome.facts.commands_run, 0, 'the skipped command never ran');
+    assert.ok(outcome.summary.includes('child findings'), outcome.summary);
+  });
+
   it('does not retry a command denied by --no-exec', async () => {
     let calls = 0;
     const runner = core.create_delegation_runner({
@@ -789,6 +878,37 @@ describe('parent seam (runtime-api + loop)', () => {
     const warning = result.timeline.find((line) => line.includes('Delegation budget exceeded (2)'));
     assert.ok(warning !== undefined, 'third tag warns deterministically in the timeline');
     assert.strictEqual(core.delegation_budget_notice(2), 'Delegation budget exceeded (2); ignoring delegation tag.');
+  });
+
+  it('a repeated objective replays without spending the delegation budget', async () => {
+    // Regression: the runtime and the loop counted every delegation record,
+    // so a SUPERSEDED replay consumed a budget slot and a later distinct
+    // objective was refused even though only one child had run.
+    const answers = ['<DELEGATE>\nsame\n</DELEGATE>', '<DELEGATE>\nsame\n</DELEGATE>', '<DELEGATE>\nother\n</DELEGATE>', 'final answer'];
+    let calls = 0;
+    let child_calls = 0;
+    const parent = core.createTellRuntime({
+      model: { ask: async () => answers[Math.min(calls++, answers.length - 1)] },
+      exec: true,
+      delegation: core.create_delegation_runner({
+        model: {
+          ask: async () => {
+            child_calls += 1;
+            return 'child findings';
+          },
+        },
+        exec_enabled: true,
+      }),
+      max_delegations: 2,
+    });
+    const result = await core.run_primitive_loop('goal', {
+      runtime_options: {},
+      single_turn: parent,
+      max_rounds: 8,
+    });
+    assert.strictEqual(child_calls, 2, 'same ran once, other ran once');
+    assert.strictEqual(result.text, 'final answer');
+    assert.ok(!result.timeline.join('\n').includes('Delegation budget exceeded'));
   });
 
   it('a refused tag asks for the final answer instead of ending mute', async () => {

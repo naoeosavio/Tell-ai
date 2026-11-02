@@ -31,9 +31,12 @@ flowchart TD
     P[parent] -->|"<DELEGATE> / <SUBTASK>"| B{"runtime: budget left?"}
     B -- no --> W[tag stripped + warning]
     B -- yes --> R["request: kind + objective 4k + context 2k"]
-    R --> C["child: system (cwd/platform/task)<br/>storage 64k, rounds 32"]
+    R --> D{"repeat?"}
+    D -- yes --> H["hit: replay record as SUPERSEDED (no child, no budget)"]
+    H --> P
+    D -- no --> C["child: system (cwd/platform/task), storage 64k, rounds 32"]
     C --> F["facts: rounds, commands, denied, hit_cap"]
-    F --> S["status (host): DONE / IN PROGRESS / BLOCKED"]
+    F --> S["status (host): DONE / IN PROGRESS / BLOCKED (+ SUPERSEDED on dedup)"]
     S --> Z{"result > target?"}
     Z -- no --> REC["record: Kind result (STATUS) + stats"]
     Z -- yes --> SUM["one summarize, target 2k<br/>summary < target ? summary : original"]
@@ -63,7 +66,9 @@ flowchart TD
 7. The host derives the status from the facts: `BLOCKED` when commands were
    requested and none ran (denied/skipped/`--no-exec`) or the answer is empty;
    `IN PROGRESS` when the round or context cap stopped it with work pending;
-   `DONE` otherwise. `SUPERSEDED` is reserved for v2. The model never sets the
+   `DONE` otherwise. `SUPERSEDED` on a dedup hit: the same normalized
+   objective repeats in the same invocation, so the cached record replays and
+   no child runs. The model never sets the
    status.
 8. A result larger than the target goes through **one** summarize call (full
    input, target 2k, redacted). The rule is `summary < target ? summary :
@@ -81,7 +86,10 @@ flowchart TD
 - 2 delegations per invocation (`DELEGATION_MAX_DELEGATIONS`), `0` when the
   chain has fewer than 2 rounds. `--max-delegations 0..2` is the explicit exit;
   a resumed task gets a fresh per-invocation budget.
-- A status never consumes budget; only an actual child run does.
+- A status never consumes budget; only an actual child run does. A repeated
+  normalized objective in the same invocation reuses the previous record with
+  status `SUPERSEDED`: no child runs, no budget spent (`refused: 'budget'`
+  still wins when the budget is already gone).
 - A delegation turn spends one parent round like any other model turn. The child pays with its own round cap on top, so `--max-chain N` buys N turns (commands, delegations and final answers combined).
 - The third tag is inert with a warning: the runtime owns the counter, and the
   runner returns the reason (`budget` / `empty_objective`) so the host can say
@@ -95,7 +103,7 @@ flowchart TD
 | `DONE` | finished with a final answer, no cap hit, no total block | use the record and continue |
 | `IN PROGRESS` | stopped at the round cap or the 64k context cap with work pending | may delegate again (if budget remains) |
 | `BLOCKED` | requested a command and none ran (denied/skipped/`--no-exec`), or empty answer without commands | stop delegating and report |
-| `SUPERSEDED` | v2 (same normalized objective in the same task) | ignore the old record |
+| `SUPERSEDED` | same normalized objective, same invocation (dedup hit, no child ran) | reuse the previous record, ignore the old record |
 
 ## Limits
 

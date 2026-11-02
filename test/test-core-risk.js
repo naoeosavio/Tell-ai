@@ -241,6 +241,24 @@ describe('assess_base_risk sensitive-file reads (both profiles)', () => {
       assert.strictEqual(base(script, 'strict').risky, false, script);
     }
   });
+
+  it('flags private-key glob variants that avoid the id_ literal', () => {
+    for (const profile of ['strict', 'permissive']) {
+      assert.strictEqual(base('cat i?_rsa', profile).risky, true, `${profile}: i?_rsa`);
+      assert.strictEqual(base('cat my_rsa_backup', profile).risky, false, `${profile}: my_rsa_backup`);
+      assert.strictEqual(base('cat notes_about_rsa.md', profile).risky, false, `${profile}: notes_about_rsa`);
+    }
+  });
+
+  it('allows the find hidden-file exclusion and keeps find actions risky', () => {
+    for (const profile of ['strict', 'permissive']) {
+      assert.strictEqual(base("find . -maxdepth 3 -not -path '*/.*'", profile).risky, false, `${profile}: exclusion`);
+      assert.strictEqual(base("find . -path '*/.*' | head", profile).risky, false, `${profile}: selection`);
+      assert.strictEqual(base("find . -path '*/.*' -exec cat {} +", profile).risky, true, `${profile}: exec`);
+      assert.strictEqual(base("find . -path '*/.*' -delete", profile).risky, true, `${profile}: delete`);
+      assert.strictEqual(base('cat .env*', profile).risky, true, `${profile}: dotfile glob`);
+    }
+  });
 });
 
 describe('assess_base_risk obfuscated credential reads (LOG-TASK-55)', () => {

@@ -64,6 +64,18 @@ describe('sanitize_exec_env', () => {
     assert.strictEqual(redact('leaked sk-abc here'), 'leaked [redacted] here');
     assert.strictEqual(redact('nothing secret'), 'nothing secret');
   });
+
+  it('masks the encoded and squashed forms of a secret', () => {
+    const secret = 'CANARY56_KEY';
+    const redact = core.create_secret_redactor([secret]);
+    assert.strictEqual(redact(secret), '[redacted]');
+    assert.strictEqual(redact(Buffer.from(secret).toString('base64')), '[redacted]');
+    assert.strictEqual(redact(Buffer.from(secret).toString('base64').replace(/=+$/, '')), '[redacted]');
+    assert.strictEqual(redact(Buffer.from(secret).toString('hex')), '[redacted]');
+    assert.strictEqual(redact(Buffer.from(secret).toString('hex').toUpperCase()), '[redacted]');
+    assert.strictEqual(redact('C A N A R Y 5 6 _ K E Y'), '[redacted]');
+    assert.strictEqual(redact('plain text'), 'plain text');
+  });
 });
 
 describe('create_node_executor basics', () => {

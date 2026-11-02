@@ -118,3 +118,20 @@ describe('load_sdk_config_from_env custom knobs', () => {
     await assert.rejects(core.load_sdk_config_from_env({ CUSTOM_HEADERS: '[1]' }, web_source), /CUSTOM_HEADERS must be a JSON object/);
   });
 });
+
+describe('missing_vendor_key (local diagnostic before the provider call)', () => {
+  it('reports the env names and the token file for a missing key', () => {
+    assert.deepStrictEqual(core.missing_vendor_key('google', {}), {
+      env_names: ['GOOGLE_API_KEY', 'GEMINI_API_KEY'],
+      token_file: 'google',
+    });
+    assert.deepStrictEqual(core.missing_vendor_key('openrouter', undefined), {
+      env_names: ['OPENROUTER_API_KEY'],
+      token_file: 'openrouter',
+    });
+    assert.strictEqual(core.missing_vendor_key('google', { google: 'AIza-test' }), undefined);
+    assert.strictEqual(core.missing_vendor_key('google', { google: '   ' }).token_file, 'google');
+    assert.strictEqual(core.missing_vendor_key('custom', {}), undefined, 'a custom endpoint can be keyless');
+    assert.strictEqual(core.missing_vendor_key('local', {}), undefined, 'a URL-only vendor is keyless');
+  });
+});
