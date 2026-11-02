@@ -229,7 +229,7 @@ Paths resolve against the current directory. Absolute paths work, but anything o
 
 ## Chain mode (`--chain`)
 
-The assistant can run commands, see their output, and continue with follow-up commands until it reaches a final answer. Up to 8 command rounds.
+The assistant can run commands, see their output, and continue with follow-up commands until it reaches a final answer. Up to `--max-chain` model turns (default 8, max 128).
 
 ```bash
 tell --chain "find out why the build is failing and fix it"
