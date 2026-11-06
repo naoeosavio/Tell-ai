@@ -1030,11 +1030,12 @@ function print_child_event(event: DelegationChildEvent): void {
 const RESUME_INSTRUCTION =
   'Request another command with <RUN> tags if needed; otherwise answer without <RUN> tags. Do not request the command above again.';
 
-// True when a finished run paused on a declined command and chain mode must
-// resume it: the core loop stops on non-executed commands (confirm pauses,
-// deny ends) while the legacy chain treats declines as `failed: false` and
-// asks the model again. Cancelled/failed runs and runs without commands
-// never resume.
+// True when a finished run paused on a user-declined command and chain mode
+// must resume it: the core loop stops on non-executed commands (confirm
+// pauses, deny ends) while the legacy chain treats a decline as
+// `failed: false` and asks the model again. A denial ends the attempt by
+// design (the model must report it, never work around it), so only `skipped`
+// resumes. Cancelled/failed runs and runs without commands never resume.
 function should_resume_after_decline(result: TellResult): boolean {
   if (result.status !== 'completed') {
     return false;
@@ -1043,7 +1044,7 @@ function should_resume_after_decline(result: TellResult): boolean {
     if (last === undefined) {
       return false;
     } else {
-      return last.status === 'skipped' || last.status === 'denied';
+      return last.status === 'skipped';
     }
   }
 }

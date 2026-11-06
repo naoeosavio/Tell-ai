@@ -422,6 +422,20 @@ function assertPromptInjectionPolicy(result) {
   assert.deepStrictEqual(result.execCalls, []);
   assert.match(result.stderr, /Command execution disabled/);
 
+  // --no-exec with --chain denies the first command and ends the attempt:
+  // a denial is terminal, never a retryable error. The only follow-up is
+  // the final-answer fetch in plain text — never a resume turn asking for
+  // another command.
+  result = await runTell(
+    ['--yes', '--chain', '--no-exec', 'd', 'run two commands'],
+    [runBlock(`echo ONE`), runBlock(`echo TWO`)],
+  );
+  assert.deepStrictEqual(result.execCalls, []);
+  assert.strictEqual(result.tellCalls.length, 2, 'one turn plus the plain-text final answer');
+  assert.match(result.tellCalls[1].message, /without <RUN>, <DELEGATE> or <SUBTASK> tags/);
+  assert.doesNotMatch(result.tellCalls[1].message, /Do not request the command above again/);
+  assert.match(result.stderr, /Command execution disabled/);
+
   // -y + any path outside the cwd needs confirmation (reads included,
   // mirroring the @path mention gate): non-TTY rejects, fail-closed.
   for (const script of [
