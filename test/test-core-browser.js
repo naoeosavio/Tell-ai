@@ -90,8 +90,8 @@ async function main() {
     }
   });
 
-  await check('risk: strict flags eval, ignores bare word', () => {
-    assert.strictEqual(ns.assess_base_risk('php -r "x"', 'strict').risky, true);
+  await check('risk: strict flags dirty eval, ignores bare word', () => {
+    assert.strictEqual(ns.assess_base_risk('php -r "system(\'id\')"', 'strict').risky, true);
     assert.strictEqual(ns.assess_base_risk('echo ssh', 'strict').risky, false);
   });
 

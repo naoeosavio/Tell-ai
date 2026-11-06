@@ -805,33 +805,34 @@ describe('fuzz/core: risk classification is total and ordered', () => {
     });
   });
 
-  it('never lets the strict profile be laxer about an interpreter eval', () => {
+  it('never lets the strict profile disagree with permissive on an interpreter eval', () => {
     run_property_over_seeds({
-      name: 'strict risk must cover every permissive interpreter-eval hit',
+      name: 'strict and permissive agree on every interpreter-eval script',
       iterations: 600,
       generate: (rng) => random_script(rng),
       check: (input) => {
         const script = String(input);
         const permissive = core.assess_base_risk(script, 'permissive');
         const strict = core.assess_base_risk(script, 'strict');
-        if (permissive.category === 'interpreter-eval' && !strict.risky) {
-          return `permissive flagged "${script}" (${permissive.reason}) but strict did not`;
+        if (permissive.category === 'interpreter-eval' && permissive.risky !== strict.risky) {
+          return `permissive (${permissive.risky}) and strict (${strict.risky}) disagree on "${script}"`;
         }
         return null;
       },
     });
   });
 
-  it('flags every interpreter eval form in the strict profile', () => {
+  it('flags dirty interpreter eval forms in the strict profile, passes clean ones', () => {
+    for (const script of ['php -r "system(\'id\')"', 'lua -e "os.execute(\'id\')"']) {
+      assert.strictEqual(core.assess_base_risk(script, 'strict').risky, true, `${script} must be risky (strict)`);
+    }
     for (const script of [
-      'php -r "system(\'id\')"',
-      'lua -e "os.execute(\'id\')"',
       'deno eval "console.log(1)"',
       'bun -e "console.log(1)"',
       'python3 -c "print(1)"',
       'node --eval "process.exit(0)"',
     ]) {
-      assert.strictEqual(core.assess_base_risk(script, 'strict').risky, true, `${script} must be risky (strict)`);
+      assert.strictEqual(core.assess_base_risk(script, 'strict').risky, false, `${script} must pass (strict)`);
     }
   });
 
