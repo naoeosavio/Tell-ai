@@ -393,7 +393,7 @@ async function test_stream_keeps_full_response_in_log_and_context() {
 }
 
 async function test_stream_chain_streams_each_round() {
-  const result = await run_tell(['d', '--stream', '--chain', 'check'], 'ignored', {
+  const result = await run_tell(['d', '--stream', '--chain', '-y', 'check'], 'ignored', {
     streamEvents: [
       [
         { type: 'text', text: 'Checking now.\n' },
@@ -401,6 +401,7 @@ async function test_stream_chain_streams_each_round() {
       ],
       [{ type: 'text', text: 'All good.' }],
     ],
+    execStdout: 'OK\n',
   });
   assert.strictEqual(result.streamCalls.length, 2);
   assert_includes(result.stdout, 'Checking now.');
@@ -408,8 +409,7 @@ async function test_stream_chain_streams_each_round() {
   // The final visible answer is not printed twice.
   const occurrences = result.stdout.split('All good.').length - 1;
   assert.strictEqual(occurrences, 1, 'final streamed answer must appear exactly once');
-  assert_includes(result.stderr, 'Command skipped by user.');
-  assert.deepStrictEqual(result.execCalls, []);
+  assert.deepStrictEqual(result.execCalls, ['echo hi']);
 }
 
 async function test_stream_commands_still_detected_and_run() {
@@ -429,15 +429,16 @@ async function test_stream_commands_still_detected_and_run() {
   assert.strictEqual(occurrences, 1, 'final answer must be streamed exactly once');
 }
 
-async function test_chain_resume_forbids_repeating_the_declined_command() {
+async function test_chain_denial_ends_attempt_without_resume() {
   const result = await run_tell(['d', '--stream', '--chain', 'run it'], [
     '<RUN>\nrm -rf /\n</RUN>',
     'Cannot run that.',
   ]);
   assert_includes(result.stderr, 'Command skipped by user.');
-  assert.strictEqual(result.tellCalls.length, 2, 'one run plus one resume');
+  assert.strictEqual(result.tellCalls.length, 2, 'one run plus the plain-text final answer');
   assert_includes(result.tellMessages[1], 'Skipped by user:');
-  assert_includes(result.tellMessages[1], 'Do not request the command above again.');
+  assert_includes(result.tellMessages[1], 'without <RUN>, <DELEGATE> or <SUBTASK> tags.');
+  assert_not_includes(result.tellMessages[1], 'Do not request the command above again.');
   assert_includes(result.stdout, 'Cannot run that.');
 }
 
@@ -543,7 +544,7 @@ const TESTS = [
   test_stream_keeps_full_response_in_log_and_context,
   test_stream_chain_streams_each_round,
   test_stream_commands_still_detected_and_run,
-  test_chain_resume_forbids_repeating_the_declined_command,
+  test_chain_denial_ends_attempt_without_resume,
   test_tags_flag_shows_raw_markup,
   test_default_tag_hider_handles_split_deltas,
   test_output_flag_shows_command_output,

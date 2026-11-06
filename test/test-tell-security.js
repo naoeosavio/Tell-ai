@@ -436,24 +436,34 @@ function assertPromptInjectionPolicy(result) {
   assert.doesNotMatch(result.tellCalls[1].message, /Do not request the command above again/);
   assert.match(result.stderr, /Command execution disabled/);
 
-  // -y + any path outside the cwd needs confirmation (reads included,
-  // mirroring the @path mention gate): non-TTY rejects, fail-closed.
+  // -y + outside writes and credential reads stay denied (high and
+  // forbidden never run automatically).
   for (const script of [
     'cat ~/.ssh/id_rsa',
     'cat ${HOME}/.ssh/id_rsa',
-    'cat \\/etc/passwd',
-    'cat "${PWD}/../outside-secret"',
-    'unset PWD; cat "${PWD:-/etc}/hostname"',
     'rm ../outside-file',
-    'cat /etc/os-release',
-    'grep x /var/log/syslog',
     'cp local.txt $HOME/secrets.txt',
-    'ls --output=/tmp/out',
-    'cd ..',
     'tar czf backup.tgz -C / /etc',
   ]) {
     result = await runTell(['--yes', 'd', 'outside path'], runBlock(script));
     assertSkipped(result);
+  }
+
+  // -y + plain outside reads run: the graded scope names a read outside
+  // medium, and medium runs with `-y` (Phase 2). The scope check is lexical
+  // (the permission layer is pure, no I/O), so escaped spellings resolve the
+  // same way as the plain path. Output redaction still masks secret values.
+  for (const script of [
+    'cat \\/etc/passwd',
+    'cat "${PWD}/../outside-secret"',
+    'unset PWD; cat "${PWD:-/etc}/hostname"',
+    'cat /etc/os-release',
+    'grep x /var/log/syslog',
+    'ls --output=/tmp/out',
+    'cd ..',
+  ]) {
+    result = await runTell(['--yes', 'd', 'outside read'], runBlock(script), { execStdout: 'OK\n' });
+    assert.strictEqual(result.execCalls.length, 1, script);
   }
 
   const symlinkDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-security-link-'));
@@ -461,8 +471,10 @@ function assertPromptInjectionPolicy(result) {
     const work = path.join(symlinkDir, 'work');
     fs.mkdirSync(work, { recursive: true });
     fs.symlinkSync('/etc/passwd', path.join(work, 'outside-link'));
+    // Lexical scope reads the link as inside: it runs with `-y` (known gap,
+    // documented in task 063 — the pure layer cannot resolve symlinks).
     result = await runTell(['--yes', 'd', 'read link'], runBlock('cat outside-link'), { dir: symlinkDir });
-    assertSkipped(result);
+    assert.strictEqual(result.execCalls.length, 1);
   } finally {
     fs.rmSync(symlinkDir, { recursive: true, force: true });
   }
@@ -609,26 +621,22 @@ function assertPromptInjectionPolicy(result) {
   assert.strictEqual(result.stdout, '');
 
   result = await runTell(
-    ['--yes', '--chain', 'd', 'resume respects the total cap'],
+    ['--yes', '--chain', 'd', 'denial ends the attempt'],
     [
       ...Array.from({ length: 6 }, (_, index) => runBlock(`echo EARLY_${index}`)),
       runBlock('sudo ls /'),
-      runBlock('echo LATE_7'),
-      runBlock('echo LATE_8'),
       'final answer',
     ],
     { execStdout: 'OK\n' },
   );
-  // 6 executed + 1 skipped = 7 commands: the resume gets a budget of 1, so
-  // only LATE_7 runs and the total stays capped at 8 like the legacy counter.
-  assert.deepStrictEqual(result.execCalls, [
-    ...Array.from({ length: 6 }, (_, index) => `echo EARLY_${index}`),
-    'echo LATE_7',
-  ]);
+  // Discovery 10: `-y` denies high (no prompt). A denial ends the attempt —
+  // only the plain-text final-answer fetch follows, never a resume turn, so
+  // the total stays capped without spending the remaining budget.
+  assert.deepStrictEqual(result.execCalls, Array.from({ length: 6 }, (_, index) => `echo EARLY_${index}`));
   assert.match(result.stderr, /Command skipped by user\./);
-  assert.match(result.stderr, /Reason: privilege escalation wrapper/);
-  assert.match(result.stderr, /Chain limit reached \(8\); ignoring further requested commands/);
-  assert.strictEqual(result.stdout, '');
+  assert.match(result.stderr, /Reason: high-privilege/);
+  assert.strictEqual(result.tellCalls.length, 8);
+  assert.strictEqual(result.stdout, 'final answer\n');
 
   // Delegation is task-only (task_051): a plain `--chain` run never teaches
   // the tag, so a tag-only answer is inert — no child model call, no record.

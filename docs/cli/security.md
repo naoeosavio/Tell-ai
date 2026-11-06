@@ -4,7 +4,7 @@ Threat model: the model output, piped stdin, and stored context are all untruste
 
 ## High-risk guard (`is_high_risk_script` → core `assess_base_risk`)
 
-The guard is a thin CLI boolean (`is_high_risk_script` in `src/core-adapters.ts`) over the core base classifier (`assess_base_risk`, permissive profile — see [../core/risk.md](../core/risk.md)). Input is normalized (`\\\n` → space, runs of whitespace → single space) into `compact`; every pattern below is tested against it. Match → high-risk: `-y` does not approve, TTY confirmation is still required, non-TTY auto-rejects. Credential-file reads (row 16) are high-risk in both profiles: the CLI prompts even with `-y --require-approval` instead of auto-running; the Web blocks outright.
+The guard is a thin CLI boolean (`is_high_risk_script` in `src/core-adapters.ts`) over the core base classifier (`assess_base_risk`, permissive profile — see [../core/risk.md](../core/risk.md)). Input is normalized (`\\\n` → space, runs of whitespace → single space) into `compact`; every pattern below is tested against it. Match → high-risk: `-y` denies, `--require-approval` asks on a TTY, non-TTY denies. Credential-file reads (row 16) are forbidden in both profiles: the CLI denies them in every automatic path; the Web blocks outright.
 
 | # | Pattern (summary) | Example blocked |
 |---|-------------------|-----------------|
@@ -30,9 +30,18 @@ The guard is a thin CLI boolean (`is_high_risk_script` in `src/core-adapters.ts`
 
 Since Phase 5 every interpreter one-liner needs confirmation, even local-only ones like `node -e "require('fs').writeFileSync('pwned','1')"` — the `-e` rule fires with or without a network/decode token. This is asserted, not accidental (`test-tell-security.js:333-337` expects the run skipped under `--yes` without a TTY).
 
-## Outside-cwd command gate (`script_touches_outside_cwd`, `Tell.ts`)
+## Outside-cwd scope (permission class, lexical)
 
-Independent of the pattern table: with `-y`, any command referencing a path that resolves outside the working directory requires confirmation — reads included (`cat /etc/os-release`, `cat ~/.ssh/id_rsa`, `rm ../outside-file`, `ls --output=/tmp/out`), mirroring the `@path` mention read gate in `mentions.ts`. Path tokens are matched in absolute, home (`~/`, `$HOME`), traversal (`../`, `./`, bare `..`/`~`), after-`=` and quoted forms, then resolved via `is_outside_cwd` (lexical + symlink/realpath — a symlink inside `cwd` pointing outside counts as outside). When cwd IS `$HOME`, `~/x` resolves inside and stays allowed. Non-TTY stdin rejects (fail-closed), same as the high-risk guard.
+The working directory changes the class of a write, not of a read. A write
+outside the working directory is high (denied with `-y`, asks only with
+`--require-approval`). A read outside is medium (runs with `-y`, asks
+without it) — `cat /etc/os-release` and `ls --output=/tmp/out` run under
+`-y`. A credential name outside stays forbidden and never runs
+automatically (`cat ~/.ssh/id_rsa`). The scope check is lexical: the
+permission layer is pure and cannot resolve symlinks, so a link inside the
+cwd that points outside reads as inside. `/tmp` counts as inside. The old
+`script_touches_outside_cwd` realpath check now only labels the prompt; it
+no longer decides. Output redaction still masks secret values.
 
 Guard limits: regex heuristics, not a sandbox. Do not rely on it in production/trusted hosts without a container/VM. `--no-exec` always wins over `-y`.
 
@@ -56,7 +65,7 @@ Consequences, all covered by tests:
 
 ## Precedence and safe defaults
 
-* `--no-exec` > `-y` > interactive prompt. Non-TTY never approves.
+* `--no-exec` > `-y` > interactive prompt. Allow effects run without a prompt (even non-TTY); ask effects deny without a TTY.
 * Flag-less invocations delete the default context file, so a poisoned default cannot linger silently.
 * Context names reject path traversal (`sanitize_context_name`); `-n` misuse and bad refs are hard errors before any model call.
 

@@ -44,10 +44,12 @@ tell --no-exec d "run ls" # never executes requested commands
 
 `-y`/`--yes` is intended for disposable or sandboxed environments. The CLI blocks known high-risk command patterns, but this is a heuristic guard, not a security boundary. Do not use automatic execution in production, critical hosts, or trusted workstations unless it is contained by a real sandbox such as a container or VM.
 
-High-risk commands always ask, even with `-y`, and so does any command touching a
-path outside the working directory (reads included). `--require-approval` makes
-that posture explicit: with `-y` safe commands run directly and high-risk ones
-still ask; without `-y` every command asks, same as the default.
+High commands (destructive, external, privileged) deny with `-y` and ask
+only with `--require-approval`. A write outside the working directory is
+high; a plain read outside is medium and runs with `-y`. Credential reads
+never run automatically. `--require-approval` makes that posture explicit:
+with `-y` low and medium commands run directly and high ones still ask;
+without `-y` low, medium and high commands ask, same as the default.
 
 ```bash
 tell --require-approval "fix the failing test"   # ask for everything
