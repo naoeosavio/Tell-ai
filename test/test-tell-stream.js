@@ -480,6 +480,26 @@ async function test_output_flag_shows_command_output() {
 // Reasoning without streaming (`--think` alone)
 // ---------------------------------------------------------------------
 
+// The CLI reads reasoning with the core extractor (D4): a printed span must
+// equal what the core turn wiring itself treated as reasoning, and the CLI
+// adapter must not restate the regex.
+async function test_think_extraction_matches_core() {
+  const THINK_OPEN = '<' + 'think>';
+  const THINK_CLOSE = '<' + '/think>';
+  const raw = `${THINK_OPEN}reasoned span\nwith lines /detail and trailing${THINK_CLOSE}\nanswer text`;
+  const expected = core.extract_think_content(raw);
+  assert.strictEqual(expected, 'reasoned span\nwith lines /detail and trailing');
+  const result = await run_tell(['d', '--think', 'hello'], raw);
+  assert_includes(result.stderr, 'reasoned span');
+  assert_not_includes(result.stderr, 'answer text');
+  const adapters_src = fs.readFileSync(
+    path.join(__dirname, '..', 'packages', 'cli', 'src', 'core-adapters.ts'),
+    'utf8',
+  );
+  assert.ok(adapters_src.includes('extract_think_content'), 'core-adapters delegates to the core extractor');
+  assert.ok(!adapters_src.includes('.exec(response)'), 'core-adapters owns no second think regex');
+}
+
 async function test_think_without_stream_prints_reasoning_on_stderr() {
   const result = await run_tell(['d', '--think', 'hello'], '<think>reasoned here</think>\nanswer');
   assert.strictEqual(result.stdout, 'answer\n');
@@ -527,6 +547,7 @@ const TESTS = [
   test_tags_flag_shows_raw_markup,
   test_default_tag_hider_handles_split_deltas,
   test_output_flag_shows_command_output,
+  test_think_extraction_matches_core,
   test_think_without_stream_prints_reasoning_on_stderr,
   test_without_think_reasoning_stays_hidden,
   test_without_stream_prints_answer_once,

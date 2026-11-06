@@ -618,6 +618,61 @@ async function test_task_tag_only_answer_gets_final_ask() {
   }
 }
 
+// The CLI resume loop merges with the core `merge_tell_results` (D5): the
+// continuation's repeated `User:` line is dropped (like the core loop drops
+// it per round), so the aggregated timeline can never carry the turn header
+// twice. Pin the merge parity here; the decline-resume runs above cover the
+// end-to-end path.
+// A1 (accepted divergence, pinned): the CLI task prompt block never embeds
+// the saved context (the CLI seeds the storage port instead); the Web block
+// includes it — the two hosts keep their own strings.
+async function test_task_prompt_section_string() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-task-'));
+  try {
+    const first = await run_tell(['-t', '%Pinned', 'seed the context'], 'a', { dir });
+    assert_includes(first.stderr, 'Created task:');
+    // A resume keeps the CLI wording without any saved-context embed.
+    const second = await run_tell(['-t', '%Pinned', 'next step'], 'b', { dir });
+    const system = second.streamCalls[0].options.system;
+    assert_includes(
+      system,
+      'Task mode (task-001-pinned): this run is one turn of a saved task context. Keep the answer focused on the next step.',
+    );
+    assert_not_includes(system, 'Task context so far:');
+    assert_includes(system, 'Delegate research and builds to keep this context small.');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function test_task_resume_merge_matches_core() {
+  const aggregated = {
+    status: 'completed',
+    text: '',
+    timeline: ['User:\ngo', 'Assistant:\n<RUN>echo declined</RUN>'],
+    commands: [{ script: 'echo declined', status: 'skipped', exit_code: null }],
+  };
+  const next = {
+    status: 'completed',
+    text: 'done',
+    timeline: ['User:\nresume feedback', 'Assistant:\ndone'],
+    commands: [],
+  };
+  const merged = core.merge_tell_results(aggregated, next);
+  assert.deepStrictEqual(merged.timeline, [
+    'User:\ngo',
+    'Assistant:\n<RUN>echo declined</RUN>',
+    'Assistant:\ndone',
+  ]);
+  assert.strictEqual(merged.text, 'done');
+  assert.strictEqual(merged.status, 'completed');
+  assert.deepStrictEqual(merged.commands, aggregated.commands);
+  // The CLI host calls the core merge and owns no second one.
+  const src = fs.readFileSync('./packages/cli/src/Tell.ts', 'utf8');
+  assert.ok(src.includes('merge_tell_results(result, latest)'), 'Tell.ts merges through the core owner');
+  assert.ok(!src.includes('function merge_run_result'), 'Tell.ts owns no second merge');
+}
+
 async function test_task_web_forwards_flags() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-task-'));
   try {
@@ -998,6 +1053,8 @@ async function main() {
     test_invalid_model_leaves_no_task_dir,
     test_task_child_record_numbering_past_999,
     test_task_tag_only_answer_gets_final_ask,
+    test_task_resume_merge_matches_core,
+    test_task_prompt_section_string,
     test_task_web_forwards_flags,
     test_log_write_failure_does_not_abort,
     test_task_same_prompt_resumes,

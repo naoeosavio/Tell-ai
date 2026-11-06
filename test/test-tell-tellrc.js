@@ -271,6 +271,65 @@ function test_temperature_validation() {
   assert.strictEqual(resolved.temperature, 1);
 }
 
+// The interval rule is a core constant now (D8): the tellrc layer and the
+// Web flag parser call the same validator, so the two hosts can never
+// accept a different temperature span.
+function test_temperature_validation_uses_core() {
+  const core = require('@tell-ai/core');
+  const tell_src = fs.readFileSync(path.join(CLI_SRC_DIR, 'tellrc.ts'), 'utf8');
+  const web_src = fs.readFileSync(
+    path.join(__dirname, '..', 'packages', 'web', 'src', 'server', 'cli-args.ts'),
+    'utf8',
+  );
+  // No host restates the numbers.
+  assert.ok(!/TEMPERATURE_(MIN|MAX) = /.test(tell_src), 'tellrc.ts must not restate the temperature bounds');
+  assert.ok(
+    !/value >= 0 && value <= 2/.test(web_src),
+    'web cli-args.ts must not restate the temperature interval',
+  );
+  assert.ok(tell_src.includes("from '@tell-ai/core'"), 'tellrc.ts imports the core validator');
+  assert.ok(
+    /validate_temperature\(/.test(web_src) && web_src.includes("from '@tell-ai/core'"),
+    'web cli-args.ts imports the core validator',
+  );
+  // Both boundaries behave identically through the two import paths (the
+  // `Number('') === 0` quirk is part of the shared rule, never a drift).
+  const bounds = [core.TEMPERATURE_MIN, core.TEMPERATURE_MAX];
+  assert.deepStrictEqual(bounds, [0, 2]);
+  for (const raw of [0, 2, 0.5, '1.75', -0.1, 2.01, Number.NaN, Number.POSITIVE_INFINITY, null, '']) {
+    assert.strictEqual(tellrc.validate_temperature(raw), core.validate_temperature(raw), `raw ${String(raw)}`);
+    const web_value = cli_args.parseCliArgs(['--cwd', '/tmp', '--temperature', String(raw)], '/tmp').temperature;
+    assert.strictEqual(web_value, core.validate_temperature(String(raw)), `web parity for raw ${String(raw)}`);
+  }
+}
+
+// Model precedence is `-m` flag > positional alias > env/`.tellrc` > host
+// default (D3): the tellrc layer reads `TELL_MODEL`, so `DEFAULT_MODEL`
+// never reads the variable again, and the positional alias wins over env.
+function test_model_precedence_flag_positional_env() {
+  const tell_src = fs.readFileSync(path.join(CLI_SRC_DIR, 'Tell.ts'), 'utf8');
+  assert.ok(tell_src.includes('const DEFAULT_MODEL = HOST_DEFAULT_MODEL.cli'), 'host default only in DEFAULT_MODEL');
+  assert.ok(
+    !tell_src.includes("process.env['TELL_MODEL'] || HOST_DEFAULT_MODEL"),
+    'DEFAULT_MODEL reads TELL_MODEL a second time',
+  );
+  assert.ok(tell_src.includes('opt_model ?? DEFAULT_MODEL'), 'flag/tellrc model wins over the host default');
+  // env layer: the tellrc resolver reads TELL_MODEL; without it the resolved
+  // model is undefined and DEFAULT_MODEL applies.
+  const saved = process.env.TELL_MODEL;
+  try {
+    delete process.env.TELL_MODEL;
+    const empty = tellrc.resolve_tellrc([], {}, {});
+    assert.strictEqual(empty.model, undefined);
+    const env_layer = tellrc.resolve_tellrc([], {}, { TELL_MODEL: 'z' });
+    assert.strictEqual(env_layer.model, 'z');
+    assert.notStrictEqual(env_layer.model, tellrc.resolve_tellrc([], {}, {}).model);
+  } finally {
+    if (saved !== undefined) process.env.TELL_MODEL = saved;
+    else delete process.env.TELL_MODEL;
+  }
+}
+
 function test_limits_validated() {
   const parsed = tellrc.parse_tellrc('[limits]\nmax_chain_steps = 3\ncontext_chars = 999999999\n', 'test');
   assert.strictEqual(parsed.limits.max_chain_steps, 3);
@@ -411,6 +470,95 @@ function test_web_forwarding_uses_resolved_tellrc() {
   assert.ok(!src.includes('TELL_TOKEN'));
 }
 
+// ---------------------------------------------------------------------------
+// F1: the Web branch must forward the FULL tellrc custom text (profile
+// system/prompt/style/system-file included), composed by the same helper the
+// direct run composes — one resolver, both hosts.
+// F2: the Web branch must not forward a raw `system_file` path; the project
+// gate loads (or rejects) the file inside the helper.
+// F10: an explicit relative `--system-file` resolves against the CLI cwd
+// (`process.cwd()`), never the sandbox `--cwd`.
+// ---------------------------------------------------------------------------
+
+function test_resolve_tellrc_system_text_helper() {
+  assert.strictEqual(typeof tellrc.resolve_tellrc_system_text, 'function', 'the shared system resolver exists');
+}
+
+function test_web_forwarding_includes_profile_system() {
+  const resolved = tellrc.resolve_tellrc([], {}, {});
+  resolved.profile_data = {
+    name: 'node',
+    prompt: 'Be terse.',
+    style: 'short answers',
+    system: 'profile system text',
+    aliases: {},
+    deny_commands: [],
+    limits: {},
+  };
+  const text = tellrc.resolve_tellrc_system_text(resolved, process.cwd());
+  // Same wording as `tellrc_custom_text`: profile system (fill-if-empty),
+  // then prompt, then style.
+  assert.strictEqual(text, 'profile system text\n\nBe terse.\n\nStyle: short answers');
+  // Without profile data, an empty resolved tellrc gives no text.
+  assert.strictEqual(tellrc.resolve_tellrc_system_text(tellrc.resolve_tellrc([], {}, {}), process.cwd()), undefined);
+}
+
+function test_web_forwarding_rejects_project_system_file_escape() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-tellrc-sys-'));
+  try {
+    const outside = path.join(dir, 'outside-sys.md');
+    fs.writeFileSync(outside, 'leaked text', 'utf8');
+    // Project-layer origin: the file must stay inside cwd.
+    const escaping = tellrc.resolve_tellrc([], {}, {});
+    escaping.system_file = path.join(path.basename(dir), 'outside-sys.md');
+    escaping.provenance['system_file'] = path.join(dir, '.tellrc');
+    assert.strictEqual(tellrc.resolve_tellrc_system_text(escaping, dir), undefined);
+    // Same path, user-layer origin (explicit choice, not a project file):
+    // the file loads and composes even though it sits outside cwd.
+    const user_layer = tellrc.resolve_tellrc([], {}, {});
+    user_layer.system_file = outside;
+    user_layer.provenance['system_file'] = path.join(os.homedir(), '.tellrc');
+    const loaded = tellrc.resolve_tellrc_system_text(user_layer, dir);
+    assert.strictEqual(loaded, 'leaked text');
+    // A project file inside cwd still loads.
+    const inside = path.join(dir, 'inside-sys.md');
+    fs.writeFileSync(inside, 'good text', 'utf8');
+    const project_inside = tellrc.resolve_tellrc([], {}, {});
+    project_inside.system_file = 'inside-sys.md';
+    project_inside.provenance['system_file'] = path.join(dir, '.tellrc');
+    assert.strictEqual(tellrc.resolve_tellrc_system_text(project_inside, dir), 'good text');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function test_web_system_file_uses_cli_cwd_not_sandbox_cwd() {
+  const src = fs.readFileSync(path.join(CLI_SRC_DIR, 'Tell.ts'), 'utf8');
+  // The Web branch calls the shared resolver with the CLI cwd.
+  assert.ok(src.includes('resolve_tellrc_system_text(early_tellrc, process.cwd())'), 'the web helper gets the CLI cwd');
+  assert.ok(!/resolve_tellrc_system_text\([^)]*opts\.cwd/.test(src), 'the sandbox --cwd never enters the helper');
+  // No raw path is forwarded: the temp-file channel carries resolved text only.
+  assert.ok(!src.includes("child_args.push('--system-file', opts.systemFile)"), 'no raw flag path forwarding (F2/F10)');
+  assert.ok(!src.includes('systemFile: web_system_file'), 'no web branch pass-through of a raw path (F2)');
+  const tellrc_src = fs.readFileSync(path.join(CLI_SRC_DIR, 'tellrc.ts'), 'utf8');
+  assert.ok(tellrc_src.includes('path.resolve(cwd || process.cwd(), expanded)'), 'the helper owns cwd resolution');
+}
+
+// D9: the 64 KB cap is one core constant; the tellrc file layer and the Web
+// forwarded-text loader both read it, never a second literal.
+function test_system_file_cap_is_core() {
+  const core = require('@tell-ai/core');
+  assert.strictEqual(core.SYSTEM_FILE_MAX_BYTES, 64 * 1024);
+  const tellrc_src = fs.readFileSync(path.join(CLI_SRC_DIR, 'tellrc.ts'), 'utf8');
+  assert.ok(!/SYSTEM_FILE_MAX_BYTES\s*=\s*64/.test(tellrc_src), 'tellrc reuses the core cap');
+  const web_src = fs.readFileSync(
+    path.join(__dirname, '..', 'packages', 'web', 'src', 'server', 'server.ts'),
+    'utf8',
+  );
+  assert.ok(!web_src.includes('64 * 1024'), 'the web loader reuses the core cap');
+  assert.ok(web_src.includes('SYSTEM_FILE_MAX_BYTES'), 'the web loader names the core constant');
+}
+
 const TESTS = [
   test_missing_file_is_silent,
   test_comments_duplicates_unknown_section,
@@ -432,6 +580,8 @@ const TESTS = [
   test_profile_alias_subsection_invalid_name,
   test_alias_resolution_no_mutation,
   test_temperature_validation,
+  test_temperature_validation_uses_core,
+  test_model_precedence_flag_positional_env,
   test_limits_validated,
   test_limits_delegate_to_runtime_limits,
   test_limits_accept_zero_stdin_deadline_and_full_chain_range,
@@ -440,6 +590,11 @@ const TESTS = [
   test_sdk_temperature_propagates,
   test_web_cli_args_forwarding,
   test_web_forwarding_uses_resolved_tellrc,
+  test_resolve_tellrc_system_text_helper,
+  test_web_forwarding_includes_profile_system,
+  test_web_forwarding_rejects_project_system_file_escape,
+  test_web_system_file_uses_cli_cwd_not_sandbox_cwd,
+  test_system_file_cap_is_core,
 ];
 
 (async () => {

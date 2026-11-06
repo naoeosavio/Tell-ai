@@ -407,20 +407,51 @@ describe('cli model port streams inside ask', () => {
 describe('cli memory storage seeds previous context', () => {
   it('serves the seed on load and tracks writes in memory', async () => {
     const storage = adapters.create_cli_memory_storage('Previous turns');
-    assert.strictEqual(await storage.load('any-key'), 'Previous turns');
-    await storage.appendLog('any-key', '\nUser:\nhi');
-    assert.strictEqual(await storage.load('any-key'), 'Previous turns\nUser:\nhi');
-    await storage.save('any-key', 'replaced');
-    assert.strictEqual(await storage.load('any-key'), 'replaced');
-    await storage.clear('any-key');
-    assert.strictEqual(await storage.load('any-key'), '');
+    // The core runtime addresses this port through the one default key only;
+    // the core adapter is keyed, so the test uses the same key.
+    const key = core.DEFAULT_STORAGE_KEY;
+    assert.strictEqual(await storage.load(key), 'Previous turns');
+    await storage.appendLog(key, '\nUser:\nhi');
+    assert.strictEqual(await storage.load(key), 'Previous turns\nUser:\nhi');
+    await storage.save(key, 'replaced');
+    assert.strictEqual(await storage.load(key), 'replaced');
+    await storage.clear(key);
+    assert.strictEqual(await storage.load(key), '');
+  });
+
+  it('behaves byte-for-byte like the core MemoryStorageAdapter (D2)', async () => {
+    // `create_cli_memory_storage` wraps the core adapter now; the same op
+    // sequence on both stores must give identical values.
+    const seed = 'Context already saved';
+    const entries = [
+      { op: 'log', text: '\nUser:\nfirst' },
+      { op: 'log', text: '\nAssistant:\nanswer' },
+      { op: 'save', text: 'New context' },
+      { op: 'log', text: '\nUser:\nagain' },
+    ];
+    const cli_store = adapters.create_cli_memory_storage(seed);
+    const core_store = new core.MemoryStorageAdapter(undefined, { [core.DEFAULT_STORAGE_KEY]: seed });
+    for (const entry of entries) {
+      if (entry.op === 'log') {
+        await cli_store.appendLog(core.DEFAULT_STORAGE_KEY, entry.text);
+        await core_store.appendLog(core.DEFAULT_STORAGE_KEY, entry.text);
+      } else {
+        await cli_store.save(core.DEFAULT_STORAGE_KEY, entry.text);
+        await core_store.save(core.DEFAULT_STORAGE_KEY, entry.text);
+      }
+      assert.strictEqual(await cli_store.load(core.DEFAULT_STORAGE_KEY), await core_store.load(core.DEFAULT_STORAGE_KEY));
+    }
+    await cli_store.clear(core.DEFAULT_STORAGE_KEY);
+    await core_store.clear(core.DEFAULT_STORAGE_KEY);
+    assert.strictEqual(await cli_store.load(core.DEFAULT_STORAGE_KEY), await core_store.load(core.DEFAULT_STORAGE_KEY));
   });
 });
 
 describe('Tell.ts migration boundaries', () => {
   it('keeps defaults, modules and layers while owning no risk/exec duplication', () => {
     const tell = fs.readFileSync('packages/cli/src/Tell.ts', 'utf8');
-    assert.match(tell, /const DEFAULT_MODEL = process\.env\['TELL_MODEL'\] \|\| HOST_DEFAULT_MODEL\.cli/);
+    assert.match(tell, /const DEFAULT_MODEL = HOST_DEFAULT_MODEL\.cli/);
+    assert.ok(!tell.includes("process.env['TELL_MODEL'] ||"), 'DEFAULT_MODEL reads TELL_MODEL a second time (D3 removed)');
     assert.ok(tell.includes('HOST_DEFAULT_MODEL'), 'Tell.ts takes the CLI default model from the core owner');
     assert.strictEqual(core.HOST_DEFAULT_MODEL.cli, 'g');
     assert.ok(tell.includes("from './core-adapters'"), 'Tell.ts consumes the core adapters');

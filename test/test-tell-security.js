@@ -765,6 +765,56 @@ function assertPromptInjectionPolicy(result) {
   assert.match(listed_failed.stderr, /CUSTOM_BASE_URL/);
   assertNoExec(listed_failed);
 
+  // The second chain-limit line is core-owned (D7): the CLI prints the same
+  // string the core loop records in the timeline, never a second wording.
+  const chain_cap_result = await runTell(
+    ['--yes', '--chain', '--max-chain', '3', 'd', 'spin'],
+    Array.from({ length: 5 }, (_, index) => runBlock(`echo SPIN_${index}`)),
+    { execStdout: 'OK\n' },
+  );
+  assert.match(chain_cap_result.stderr, /Chain limit reached \(3\); asking for final answer/);
+  assert.match(chain_cap_result.stderr, new RegExp(core.chain_limit_notice(3).replace(/[();]/g, '\\$&')));
+  assert.ok(
+    chain_cap_result.stderr.includes(core.chain_limit_notice(3)),
+    'the CLI prints the core notice verbatim',
+  );
+  const tell_src = fs.readFileSync(path.join(__dirname, '..', 'packages', 'cli', 'src', 'Tell.ts'), 'utf8');
+  assert.ok(tell_src.includes('chain_limit_notice'), 'Tell.ts calls the core notice builder');
+  assert.ok(
+    !/ignoring further requested commands/.test(tell_src.replace(/`[^`]*\$\{chain_limit_notice[\s\S]*?\}/g, '')),
+    'Tell.ts owns no second chain-limit wording',
+  );
+  // F9: the "asking for final answer" line accompanies an actual final call.
+  // A cap end whose last answer already carries visible text must print only
+  // the "ignoring further requested commands" notice.
+  const cap_with_text = await runTell(
+    ['--yes', '--chain', '--max-chain', '2', 'd', 'mix prose and a command'],
+    [
+      'prose before <RUN>echo MIX_1</RUN> and after',
+      'final prose after the cap',
+    ],
+    { execStdout: 'OUT\n' },
+  );
+  assert.deepEqual(cap_with_text.execCalls, ['echo MIX_1']);
+  assert.strictEqual(cap_with_text.stdout, 'final prose after the cap\n');
+  assert.ok(
+    !cap_with_text.stderr.includes('asking for final answer'),
+    'no asking line without a needed final call (F9)',
+  );
+  assert.match(cap_with_text.stderr, /Chain limit reached \(2\); ignoring further requested commands/);
+
+  // Cap end with an empty visible answer: the final call runs, and BOTH
+  // lines print (the asking line now belongs to the final call).
+  const cap_with_empty = await runTell(
+    ['--yes', '--chain', '--max-chain', '2', 'd', 'tag only until the cap'],
+    Array.from({ length: 4 }, (_, index) => runBlock(`echo EMPTY_${index}`)),
+    { execStdout: 'OUT\n' },
+  );
+  assert.ok(cap_with_empty.stderr.includes('asking for final answer'));
+  assert.match(cap_with_empty.stderr, /Chain limit reached \(2\); ignoring further requested commands/);
+
+  console.log('chain-limit notice tests passed');
+
   console.log('tell security tests passed');
 })().catch((error) => {
   console.error(error);
