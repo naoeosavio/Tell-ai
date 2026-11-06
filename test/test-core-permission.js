@@ -62,6 +62,7 @@ describe('Denial text stops the model', () => {
   it('says stop and report, never request a different command', () => {
     assert.match(core.COMMAND_DENIED_PREAMBLE, /Do not retry it/);
     assert.match(core.COMMAND_DENIED_PREAMBLE, /Do not work around it/);
+    assert.match(core.COMMAND_DENIED_PREAMBLE, /disabled in this run/);
     assert.match(core.COMMAND_DENIED_INSTRUCTION, /Stop and report/);
     assert.ok(!core.COMMAND_DENIED_PREAMBLE.includes('Request a different command'));
     assert.ok(!core.COMMAND_DENIED_INSTRUCTION.includes('simple command'));

@@ -16,7 +16,8 @@ export const COMMAND_FEEDBACK_FAILED_PREAMBLE =
   'The command above FAILED. Analyze the error output and try a corrected approach.';
 
 /** Preamble of the denied-command feedback (child retry protocol). */
-export const COMMAND_DENIED_PREAMBLE = 'The policy denied the command above. Do not retry it. Do not work around it.';
+export const COMMAND_DENIED_PREAMBLE =
+  'The policy denied the command above. Approval prompts are disabled in this run, so the command was rejected automatically. Do not retry it. Do not work around it.';
 
 /** Preamble of the skipped-command feedback (child retry protocol). */
 export const COMMAND_SKIPPED_PREAMBLE =
