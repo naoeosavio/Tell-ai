@@ -33,7 +33,7 @@ export type PermissionVerdict = {
 export type ClassifyPermissionOptions = {
   /** Working directory for the scope check (absent means no scope check). */
   cwd?: string | undefined;
-  /** When true, system reads (`/etc`, `/boot`) are forbidden (Web). */
+  /** When true, read-verb system reads (`/etc`, `/boot`) are forbidden (Web). */
   strict?: boolean | undefined;
 };
 
@@ -49,7 +49,7 @@ export type DecidePermissionInput = {
   enabled?: boolean | undefined;
   /** Working directory for the scope check. */
   cwd?: string | undefined;
-  /** When true, system reads are forbidden (Web). */
+  /** When true, read-verb system reads are forbidden (Web). */
   strict?: boolean | undefined;
 };
 
@@ -84,6 +84,8 @@ const LOW_BASE_COMMANDS = new Set([
   'more',
   'nl',
   'tac',
+  'zcat',
+  'strings',
   'date',
   'whoami',
   'hostname',
@@ -128,6 +130,9 @@ const EVAL_FORBIDDEN_SUBSTRINGS = [
   'base64',
   'eval(',
   'exec(',
+  'os.execute',
+  'child_process',
+  'subprocess',
   'system(',
   'popen(',
 ];
@@ -174,8 +179,25 @@ const MEDIUM_GIT_SUBCOMMANDS = new Set([
   'clone',
 ]);
 
-/** System paths whose write is forbidden. */
-const SYSTEM_PATH_PATTERN = /\/(etc|usr|boot)(?:\/|$)/;
+/** System paths whose write is forbidden (privileged roots, cron, autostart, units). */
+const SYSTEM_PATH_PATTERN =
+  /\/(etc|boot|dev|proc|sys|usr|bin|sbin|lib|lib64)(?:\/|$)|\/var\/(?:spool\/cron|cron)(?:\/|$)|\/etc\/cron(?:\.(?:d|daily|hourly|monthly|weekly))?(?:\/|$)|\.config\/(?:autostart|systemd\/user)(?:\/|$)|\.local\/share\/systemd\/user(?:\/|$)/;
+
+/** Read verbs whose system-path read is forbidden when `strict` is set (Web). */
+const STRICT_READ_VERBS = new Set([
+  'cat',
+  'head',
+  'tail',
+  'less',
+  'more',
+  'stat',
+  'wc',
+  'file',
+  'nl',
+  'tac',
+  'zcat',
+  'strings',
+]);
 
 /** System paths whose read is forbidden when `strict` is set (Web). */
 const STRICT_SYSTEM_READ_PATTERN = /\/(etc|boot)(?:\/|$)/;
@@ -407,10 +429,29 @@ function is_credential_basename(base: string): boolean {
   if (base.startsWith('id_')) {
     return true;
   } else {
-    return base.endsWith('.pem') || base.endsWith('.key') || base.endsWith('.p12');
+    return (
+      base.endsWith('.pem') ||
+      base.endsWith('.key') ||
+      base.endsWith('.p12') ||
+      base.endsWith('.pfx') ||
+      base.endsWith('.token')
+    );
   }
 }
 
+/**
+ * Returns true when a basename is an env file (except the example template).
+ *
+ * @param base - Lowercase basename.
+ * @returns True for `.env`, `.env.*` and `*.env` shapes.
+ */
+function is_env_basename(base: string): boolean {
+  if (base === '.env.example' || base.startsWith('.env.example.')) {
+    return false;
+  } else {
+    return base.endsWith('.env') || base.startsWith('.env.') || base.startsWith('.env*') || base.startsWith('.env?');
+  }
+}
 /**
  * Returns true when a basename matches a known credential name or glob.
  *
@@ -438,10 +479,14 @@ function matches_credential_basename(base: string): boolean {
   } catch {
     return false;
   }
+  if (['notes.txt', 'a.txt', 'Dockerfile'].some((name) => pattern.test(name))) {
+    // Too broad (`*` alone): it matches ordinary files, so it names nothing.
+    return false;
+  }
   if (['id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519'].some((name) => pattern.test(name))) {
     return true;
   } else {
-    return pattern.test('x.pem') || pattern.test('x.key') || pattern.test('x.p12');
+    return pattern.test('x.pem') || pattern.test('x.key') || pattern.test('x.p12') || pattern.test('x.token');
   }
 }
 
@@ -459,18 +504,13 @@ function matches_credential_basename(base: string): boolean {
  */
 function is_credential_token(token: string): boolean {
   const candidate = token.startsWith('@') && token.length > 1 ? token.slice(1) : token;
-  if (candidate === '.env.example') {
-    return false;
-  }
-  if (
-    candidate === '.env' ||
-    candidate.startsWith('.env.') ||
-    candidate.startsWith('.env*') ||
-    candidate.startsWith('.env?')
-  ) {
+  const base = candidate.split('/').pop() ?? '';
+  if (base !== '' && is_env_basename(base)) {
     return true;
   }
-  const base = candidate.split('/').pop() ?? '';
+  if (candidate.startsWith('.') && /[*?[]/.test(candidate)) {
+    return true;
+  }
   if (base !== '' && matches_credential_basename(base)) {
     return true;
   }
@@ -480,10 +520,50 @@ function is_credential_token(token: string): boolean {
   if (token === '.tell' || token.startsWith('.tell/') || token.includes('/.tell/') || token.endsWith('/.tell')) {
     return true;
   }
+  if (token === '.git' || token.startsWith('.git/') || token.includes('/.git/') || token.endsWith('/.git')) {
+    return true;
+  }
   const colon_at = token.lastIndexOf(':');
   if (colon_at !== -1) {
     const suffix = token.slice(colon_at + 1).replace(/^\/+/, '');
     if (suffix !== '' && suffix !== token && is_credential_token(suffix)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Decodes ANSI-C escape sequences (`\xNN`, `\NNN`, `\uNNNN`).
+ *
+ * @param body - Raw `$'...'` body without the quotes.
+ * @returns The decoded text.
+ */
+function decode_ansi_c_body(body: string): string {
+  return body
+    .replace(/\\x([0-9a-fA-F]{2})/g, (_whole: string, hex: string): string => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_whole: string, hex: string): string => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/\\([0-7]{1,3})/g, (_whole: string, oct: string): string => String.fromCharCode(parseInt(oct, 8)));
+}
+
+/**
+ * Returns true when an ANSI-C quoted string hides a credential name.
+ *
+ * `$'\x2eenv'` is `.env`: the literal name never appears. Only bodies with
+ * hex, unicode or octal escapes are decoded; plain `$'\n'` stays allowed.
+ *
+ * @param script - Command script to inspect.
+ * @returns True when a decoded body names a credential.
+ */
+function touches_ansi_c_credential(script: string): boolean {
+  const pattern = /\$'((?:[^'\\]|\\.)*)'/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(script)) !== null) {
+    const body = match[1] ?? '';
+    if (!/\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|[0-7])/.test(body)) {
+      continue;
+    }
+    if (is_credential_token(decode_ansi_c_body(body).toLowerCase())) {
       return true;
     }
   }
@@ -502,12 +582,17 @@ function is_credential_token(token: string): boolean {
  * @returns True when the script names a credential.
  */
 function touches_credential_path(script: string): boolean {
+  if (touches_ansi_c_credential(script)) {
+    return true;
+  }
   const dequoted = script.replace(/['"]/g, '');
   for (const raw of script_path_tokens(dequoted)) {
-    const token = raw.toLowerCase();
-    if (token === '') {
-    } else if (is_credential_token(token)) {
-      return true;
+    // Brace expansion never runs here: `{a.txt,.env}` names `.env`.
+    for (const piece of raw.split(/[{,}]/)) {
+      const token = piece.toLowerCase();
+      if (token !== '' && is_credential_token(token)) {
+        return true;
+      }
     }
   }
   return false;
@@ -552,31 +637,6 @@ function touches_outside_cwd(statement: string, cwd: string): boolean {
     }
     if (is_token_inside_cwd(absolute, base)) {
     } else {
-      return true;
-    }
-  }
-  return false;
-}
-
-/**
- * Returns true when a statement names an absolute path outside `/tmp`.
- *
- * Without a working directory the scope check cannot run, but an absolute
- * path outside `/tmp` is never inside an unknown workspace. URLs and flags
- * never count.
- *
- * @param statement - Statement text without substitutions.
- * @returns True when an absolute non-tmp path is present.
- */
-function touches_absolute_path(statement: string): boolean {
-  for (const raw of script_path_tokens(statement)) {
-    const token = raw.replace(/^["']|["']$/g, '');
-    if (token === '' || token.startsWith('-') || token.includes('://')) {
-      continue;
-    } else if (!token.startsWith('/')) {
-      continue;
-    }
-    if (!is_token_inside_cwd(token, '/tmp')) {
       return true;
     }
   }
@@ -847,6 +907,9 @@ function is_high_destructive(statement: string, words: string[]): boolean {
   if (base === 'rm') {
     return !is_build_only_rm(words);
   }
+  if (base === 'dd' && /\bof=/.test(statement)) {
+    return true;
+  }
   if (base === 'find') {
     return /\s-(delete|exec|execdir|ok)\b/.test(` ${statement} `);
   }
@@ -900,7 +963,7 @@ function is_high_network_write(statement: string, words: string[]): boolean {
     const joined = ` ${args.join(' ')} `;
     return /\s-X\s+(POST|PUT|DELETE|PATCH)\b/i.test(joined) || /\s--request\s+(POST|PUT|DELETE|PATCH)\b/i.test(joined);
   }
-  if (base === 'scp') {
+  if (base === 'scp' || base === 'ftp' || base === 'telnet' || base === 'sftp') {
     return true;
   }
   if (base === 'rsync') {
@@ -1036,6 +1099,39 @@ function is_high_system(statement: string): boolean {
 }
 
 /**
+ * Tests one high procfs statement.
+ *
+ * `/proc` exposes process memory and secrets (`environ`, `mem`, `fd`).
+ * Fail-closed to high even for plain reads.
+ *
+ * @param statement - Outer statement text.
+ * @returns True when the statement touches `/proc`.
+ */
+function is_high_proc_access(statement: string): boolean {
+  return /\/proc(?:\/|$)/.test(statement);
+}
+
+/**
+ * Tests one high shell-string statement.
+ *
+ * `sh -c "..."` hides statements from the splitter, so the class cannot see
+ * `;`, `&&` or `|` inside. Fail-closed to high; network shapes are already
+ * forbidden over the whole script.
+ *
+ * @param statement - Outer statement text.
+ * @param words - Statement words.
+ * @returns True when a shell runs an explicit command string.
+ */
+function is_high_shell_string(statement: string, words: string[]): boolean {
+  const base = base_command_of(statement);
+  if (base !== 'sh' && base !== 'bash' && base !== 'dash' && base !== 'zsh' && base !== 'ksh') {
+    return false;
+  } else {
+    return words.slice(1).some((word) => word === '-c' || word === '--command');
+  }
+}
+
+/**
  * Tests one forbidden eval statement.
  *
  * @param statement - Outer statement text.
@@ -1112,14 +1208,24 @@ function is_forbidden_destroy(statement: string, words: string[]): boolean {
  * @returns True when the statement writes into a system path.
  */
 function is_forbidden_system_write(statement: string): boolean {
-  if (!SYSTEM_PATH_PATTERN.test(statement)) {
+  // A sudo/doas wrapper does not hide the write verb (`sudo tee ...`).
+  const words = statement_words(statement.trim());
+  const first = (words[0] ?? '').toLowerCase();
+  const inner = first === 'sudo' || first === 'doas' || first === 'pkexec' ? words.slice(1) : words;
+  const base = ((inner[0] ?? '').split('/').pop() ?? '').toLowerCase();
+  const verbs = ['tee', 'cp', 'mv', 'ln', 'sed', 'install', 'chmod', 'chown', 'rm', 'truncate'];
+  if (SYSTEM_PATH_PATTERN.test(statement)) {
+    if (has_file_redirect(statement)) {
+      return true;
+    } else {
+      return verbs.includes(base);
+    }
+  }
+  if (/\.service\b/.test(statement) && ['tee', 'cp', 'mv', 'ln', 'sed', 'install', 'dd'].includes(base)) {
+    return true;
+  } else {
     return false;
   }
-  if (has_file_redirect(statement)) {
-    return true;
-  }
-  const base = base_command_of(statement);
-  return ['tee', 'cp', 'mv', 'ln', 'sed', 'install', 'chmod', 'chown', 'rm', 'truncate', 'dd'].includes(base);
 }
 
 /** One ordered rule family (last match wins, as in opencode). */
@@ -1165,6 +1271,9 @@ const PERMISSION_RULES: readonly PermissionRule[] = [
     test: (statement, words) => is_high_remote_install(statement, words),
   },
   { id: 'high-system', class: 'high', test: (statement) => is_high_system(statement) },
+  { id: 'high-proc-access', class: 'high', test: (statement) => is_high_proc_access(statement) },
+  { id: 'high-proc-access', class: 'high', test: (statement) => is_high_proc_access(statement) },
+  { id: 'high-shell-string', class: 'high', test: (statement, words) => is_high_shell_string(statement, words) },
   { id: 'forbidden-eval', class: 'forbidden', test: (statement, words) => is_forbidden_eval(statement, words) },
   {
     id: 'forbidden-privileged-container',
@@ -1172,16 +1281,67 @@ const PERMISSION_RULES: readonly PermissionRule[] = [
     test: (statement, words) => is_forbidden_container(statement, words),
   },
   {
-    id: 'forbidden-destroy',
-    class: 'forbidden',
-    test: (statement, words) => is_forbidden_destroy(statement, words),
-  },
-  {
     id: 'forbidden-system-write',
     class: 'forbidden',
     test: (statement) => is_forbidden_system_write(statement),
   },
+  {
+    id: 'forbidden-destroy',
+    class: 'forbidden',
+    test: (statement, words) => is_forbidden_destroy(statement, words),
+  },
 ];
+
+/**
+ * Strips an `env`/assignment launcher prefix to reveal the real command.
+ *
+ * `env FOO=bar rm -rf /` runs `rm`, so the base-word checks must see `rm`.
+ * Bare `env` (no command) returns null; the caller keeps its own verdict.
+ *
+ * @param outer - Statement text without substitutions.
+ * @returns The launched command text, or null when there is none.
+ */
+function launcher_tail(outer: string): string | null {
+  let rest = outer;
+  const env_match = /^\s*env\b/.exec(rest);
+  if (env_match === null) {
+    const assign_only = /^(\s*[A-Za-z_][A-Za-z0-9_]*=(?:[^\s'"]+|'[^']*'|"[^"]*"))+\s+/.exec(rest);
+    if (assign_only === null) {
+      return null;
+    }
+    rest = rest.slice(assign_only[0].length);
+  } else {
+    rest = rest.slice(env_match[0].length);
+    for (;;) {
+      const unset = /^\s+-u\s+[^\s]+\s*/.exec(rest);
+      if (unset !== null) {
+        rest = rest.slice(unset[0].length);
+        continue;
+      }
+      const flag = /^\s+(?:-[A-Za-z0-9]+|--[a-z][a-z-]*)(?=\s|$)/.exec(rest);
+      if (flag !== null) {
+        rest = rest.slice(flag[0].length);
+        continue;
+      }
+      const assign = /^\s*[A-Za-z_][A-Za-z0-9_]*=(?:[^\s'"]+|'[^']*'|"[^"]*")/.exec(rest);
+      if (assign !== null) {
+        rest = rest.slice(assign[0].length);
+        continue;
+      }
+      break;
+    }
+    rest = rest.replace(/^\s+/, '');
+  }
+  const trimmed = rest.trim();
+  if (trimmed === '' || trimmed === outer.trim()) {
+    return null;
+  }
+  if (trimmed === 'env' || trimmed.startsWith('env ')) {
+    return null;
+  } else {
+    return trimmed;
+  }
+}
 
 /**
  * Classifies one outer statement with the ordered rule table.
@@ -1195,6 +1355,14 @@ function classify_outer(outer: string): { class: PermissionClass; rule: string }
   for (const rule of PERMISSION_RULES) {
     if (rule.test(outer, words)) {
       found = { class: rule.class, rule: rule.id };
+    }
+  }
+  // An env launcher hides the real command from base-word checks.
+  const tail = launcher_tail(outer);
+  if (tail !== null) {
+    const tail_found = classify_outer(tail);
+    if (CLASS_RANK[tail_found.class] >= CLASS_RANK[found.class]) {
+      found = tail_found;
     }
   }
   return found;
@@ -1215,22 +1383,25 @@ function classify_script_depth(
 ): { class: PermissionClass; rule: string } {
   const cwd = options?.cwd;
   const strict = options?.strict ?? false;
-  const trimmed = script.trim();
+  // `${IFS}` is shell whitespace: normalize it before any check, or
+  // `rm${IFS}-rf /` hides the destroy rule like a quote splice would.
+  const text = script.replace(/\$\{IFS\}|\$IFS(?![A-Za-z0-9_])/g, ' ');
+  const trimmed = text.trim();
   if (trimmed === '') {
     return { class: 'medium', rule: 'medium-unknown' };
   }
-  if (touches_credential_path(script)) {
+  if (touches_credential_path(text)) {
     return { class: 'forbidden', rule: 'forbidden-credential' };
   }
-  if (WHOLE_EXFIL_PATTERN.test(` ${script} `)) {
+  if (WHOLE_EXFIL_PATTERN.test(` ${text} `)) {
     return { class: 'forbidden', rule: 'forbidden-exfil' };
   }
   for (const pattern of WHOLE_REMOTE_PATTERNS) {
-    if (pattern.test(script)) {
+    if (pattern.test(text)) {
       return { class: 'forbidden', rule: 'forbidden-remote-code' };
     }
   }
-  const split = split_statements(script);
+  const split = split_statements(text);
   if (split.opaque) {
     return { class: 'high', rule: 'opaque-parse' };
   }
@@ -1276,14 +1447,8 @@ function classify_script_depth(
       } else if (outer_found.class === 'medium') {
         outer_found = { class: 'high', rule: 'high-outside-write' };
       }
-    } else if ((cwd === undefined || cwd.trim() === '') && touches_absolute_path(sub.outer)) {
-      if (outer_found.class === 'low') {
-        outer_found = { class: 'medium', rule: 'medium-outside-read' };
-      } else if (outer_found.class === 'medium') {
-        outer_found = { class: 'high', rule: 'high-outside-write' };
-      }
     }
-    if (strict && STRICT_SYSTEM_READ_PATTERN.test(sub.outer)) {
+    if (strict && STRICT_SYSTEM_READ_PATTERN.test(sub.outer) && STRICT_READ_VERBS.has(base_command_of(sub.outer))) {
       outer_found = { class: 'forbidden', rule: 'strict-system-read' };
     }
     if (!seen || CLASS_RANK[outer_found.class] >= CLASS_RANK[best]) {

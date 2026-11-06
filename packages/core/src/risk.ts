@@ -1,3 +1,4 @@
+import { classify_script } from './permission';
 import type { RiskAssessment, RiskCategory, RiskPort, RiskSeverity } from './runtime-api';
 
 /** Base risk profile: `permissive` mirrors the CLI, `strict` mirrors the Web. */
@@ -36,541 +37,253 @@ export type RiskRule = {
   permissive_only?: boolean;
 };
 
-// Privileged filesystem roots shared by the CLI and Web guards.
-const PRIVILEGED_PATH = [
-  String.raw`(?:/(?:etc|boot|dev|proc|sys|usr|bin|sbin|lib|lib64)(?:\b|/)|`,
-  String.raw`/(?:var/(?:spool/cron|cron)|etc/cron(?:\.(?:d|daily|hourly|monthly|weekly))?)(?:\b|/)|`,
-  String.raw`(?:~|\$HOME)/(?:\.config/(?:autostart|systemd/user)|\.local/share/systemd/user)(?:\b|/))`,
-].join('');
+/** Wording and category behind one permission family (the old texts live on). */
+type FamilyMeta = {
+  /** Severity shown for this family (`forbidden` maps to `high`). */
+  severity: Exclude<RiskSeverity, 'low'>;
+  /** Observable category for this family. */
+  category: RiskCategory;
+  /** Human-readable reason recorded when this family matches. */
+  reason: string;
+  /** Machine flags recorded when this family matches. */
+  flags: string[];
+};
 
 /**
- * Base rules observed in `packages/cli/src/Tell.ts` and
- * `packages/web/src/server/guards.ts`.
- *
- * Common rules run in both profiles. `permissive_only` rules are CLI
- * divergences kept verbatim (broad download pipes, process substitution,
- * network-gated interpreter eval, non-recursive privileged chmod).
- * Credential-file reads are a common rule: naming `.env*` (except
- * `.env.example`), keys, tokens, `.git/**` or `.tell/**` is
- * `data-exfiltration` in both profiles, so the CLI asks for explicit
- * confirmation instead of auto-running. Since Phase 5 every former
- * Web-only rule (any interpreter eval, `env`, `base64 -d`, shell
- * expansions, narrow download pipe) is common too: the CLI prompts
- * (or denies non-TTY) instead of auto-running, the Web blocks outright.
- *
- * The two profiles differ on purpose, but the strict one must never be
- * *laxer* about an interpreter eval: every `-c`/`-e`/`-r`/`eval` form the
- * permissive profile flags as `interpreter-eval` is flagged by the strict
- * profile too (the common rule covers php/lua/deno/bun as well).
+ * One owner for the wording: every permission rule id maps to the severity,
+ * category, reason and flags the old base rules used. `forbidden` has no
+ * `RiskSeverity`, so it maps to `high` (still the top of the old scale).
  */
-const BASE_RISK_RULES: readonly RiskRule[] = [
-  {
-    id: 'privilege-escalation',
-    category: 'privilege-escalation',
-    severity: 'high',
-    reason: 'privilege escalation wrapper (sudo/doas/pkexec)',
-    flags: ['sudo'],
-    pattern: /\b(?:sudo|doas|pkexec)\b/,
-  },
-  {
-    id: 'shell-command-string',
-    category: 'shell-expansion',
-    severity: 'high',
-    reason: 'explicit shell command string (sh -c)',
-    flags: ['shell-command-string'],
-    pattern: /(?:^|[\s;&|(])(?:[^\s;&|()]*\/)?(?:ba|z|da|k)?sh\b[^;&|]*\s-c(?:\s|$)/,
-  },
-  {
-    id: 'network-client',
-    category: 'network-download',
-    severity: 'high',
-    reason: 'network client (curl/wget/nc/ssh/ftp)',
-    flags: ['network-client'],
-    pattern: /(?:^|[;&|(){}<>]\s*)(?:[^\s;&|()]*\/)?(?:curl|wget|nc|ncat|netcat|telnet|ssh|scp|sftp|ftp)\b/,
-  },
-  {
-    id: 'process-info-printenv',
-    category: 'process-info',
+const FAMILY_META: Record<string, FamilyMeta> = {
+  'medium-write': {
     severity: 'medium',
-    reason: 'process environment readout (printenv)',
-    flags: ['process-info'],
-    pattern: /(?:^|[;&|(){}<>]\s*)(?:[^\s;&|()]*\/)?printenv\b/,
+    category: 'general',
+    reason: 'local reversible write (mkdir/touch/cp/mv/tee/sed -i)',
+    flags: ['local-write'],
   },
-  {
-    id: 'proc-access',
-    category: 'process-info',
+  'medium-vcs': {
+    severity: 'medium',
+    category: 'general',
+    reason: 'reversible version-control write (add/commit/pull/push)',
+    flags: ['vcs-write'],
+  },
+  'medium-install': {
+    severity: 'medium',
+    category: 'general',
+    reason: 'registry package install (postinstall runs code)',
+    flags: ['install'],
+  },
+  'medium-network-read': {
+    severity: 'medium',
+    category: 'network-download',
+    reason: 'network read without upload (curl/wget GET)',
+    flags: ['network-client'],
+  },
+  'medium-process': {
+    severity: 'medium',
+    category: 'environment-escape',
+    reason: 'process environment readout (env/printenv/export)',
+    flags: ['env-launch'],
+  },
+  'medium-eval': {
+    severity: 'medium',
+    category: 'interpreter-eval',
+    reason: 'interpreter eval with clean code',
+    flags: ['interpreter-eval'],
+  },
+  'medium-unknown': {
+    severity: 'medium',
+    category: 'general',
+    reason: 'unlisted command (default medium)',
+    flags: [],
+  },
+  'medium-outside-read': {
+    severity: 'medium',
+    category: 'general',
+    reason: 'read outside the working directory',
+    flags: ['outside-cwd'],
+  },
+  'high-destructive': {
     severity: 'high',
+    category: 'destructive',
+    reason: 'destructive or history-rewriting command (rm -rf/reset/push --force)',
+    flags: ['destructive'],
+  },
+  'high-network-write': {
+    severity: 'high',
+    category: 'network-download',
+    reason: 'network upload or remote copy (curl -d/scp/rsync)',
+    flags: ['network-client', 'upload'],
+  },
+  'high-privilege': {
+    severity: 'high',
+    category: 'privilege-escalation',
+    reason: 'privilege escalation wrapper (sudo/doas/pkexec) or system control (systemctl/crontab/kill/ssh)',
+    flags: ['sudo'],
+  },
+  'high-container': {
+    severity: 'high',
+    category: 'destructive',
+    reason: 'container state change (docker run/prune/push)',
+    flags: ['destructive'],
+  },
+  'high-publish': {
+    severity: 'high',
+    category: 'general',
+    reason: 'package publish to a registry (npm publish)',
+    flags: ['publish'],
+  },
+  'high-orchestrator': {
+    severity: 'high',
+    category: 'destructive',
+    reason: 'shared infrastructure change (kubectl/terraform/aws)',
+    flags: ['destructive'],
+  },
+  'high-remote-install': {
+    severity: 'high',
+    category: 'network-download',
+    reason: 'remote code install (pip git+/https)',
+    flags: ['install', 'network-client'],
+  },
+  'high-system': {
+    severity: 'high',
+    category: 'destructive',
+    reason: 'low-level system state change (truncate/LD_PRELOAD)',
+    flags: ['destructive'],
+  },
+  'high-proc-access': {
+    severity: 'high',
+    category: 'process-info',
     reason: 'proc filesystem access (/proc)',
     flags: ['proc-access'],
-    pattern: /\/proc(?:\/|\b)/,
   },
-  {
-    id: 'destructive-rm',
-    category: 'destructive',
+  'high-shell-string': {
     severity: 'high',
-    reason: 'recursive/forced remove (rm -rf)',
-    flags: ['destructive'],
-    pattern: /\brm(?:\s|\$\{[^}]*\})*(?:-[^\s]*[rRfF][^\s]*)(?:\s|$)/,
-  },
-  {
-    id: 'destructive-git-clean',
-    category: 'destructive',
-    severity: 'high',
-    reason: 'forced git clean',
-    flags: ['destructive'],
-    pattern: /\bgit\s+clean\b[^;&|]*(?:--force\b|-[^-][^\s]*[fdx])/,
-  },
-  {
-    id: 'destructive-system',
-    category: 'destructive',
-    severity: 'high',
-    reason: 'system destructive tool (mkfs/shutdown/reboot)',
-    flags: ['destructive'],
-    pattern: /\b(?:mkfs|shutdown|reboot)\b/,
-  },
-  {
-    id: 'destructive-dd',
-    category: 'destructive',
-    severity: 'high',
-    reason: 'raw disk write (dd of=)',
-    flags: ['destructive'],
-    pattern: /\bdd\b.*\bof=/,
-  },
-  {
-    id: 'destructive-chmod-recursive',
-    category: 'destructive',
-    severity: 'high',
-    reason: 'recursive ownership/permission change on /',
-    flags: ['destructive'],
-    pattern: /\b(chmod|chown)\s+-R\b.*\s\/(?:\s|$)/,
-  },
-  {
-    id: 'persistence-scheduler',
-    category: 'persistence',
-    severity: 'high',
-    reason: 'scheduler persistence (crontab/systemctl)',
-    flags: ['persistence'],
-    pattern: /(?:^|[\s;&|])(?:crontab|systemctl)\b/,
-  },
-  {
-    id: 'git-force-push',
-    category: 'destructive',
-    severity: 'high',
-    reason: 'forced git push',
-    flags: ['destructive'],
-    pattern: /\bgit\s+push\b[^;&|]*(?:--force\b|\s-f(?:\s|$))/,
-  },
-  {
-    id: 'git-reset-hard',
-    category: 'destructive',
-    severity: 'high',
-    reason: 'git reset --hard',
-    flags: ['destructive'],
-    pattern: /\bgit\s+reset\b[^;&|]*--hard\b/,
-  },
-  {
-    id: 'destructive-docker',
-    category: 'destructive',
-    severity: 'high',
-    reason: 'docker run or system prune',
-    flags: ['destructive'],
-    pattern: /\bdocker\s+(?:run|system\s+prune)\b/,
-  },
-  {
-    id: 'destructive-kubectl-delete',
-    category: 'destructive',
-    severity: 'high',
-    reason: 'kubectl delete',
-    flags: ['destructive'],
-    pattern: /\bkubectl\s+delete\b/,
-  },
-  {
-    id: 'destructive-aws-s3-rm',
-    category: 'destructive',
-    severity: 'high',
-    reason: 'aws s3 remove',
-    flags: ['destructive'],
-    pattern: /\baws\s+s3\s+rm\b/,
-  },
-  {
-    id: 'destructive-truncate',
-    category: 'destructive',
-    severity: 'high',
-    reason: 'truncate data file',
-    flags: ['destructive'],
-    pattern: /\btruncate\b/,
-  },
-  {
-    id: 'environment-ld-preload',
-    category: 'environment-escape',
-    severity: 'high',
-    reason: 'LD_PRELOAD injection',
-    flags: ['env-launch'],
-    pattern: /\bLD_PRELOAD\b/,
-  },
-  {
-    id: 'install-pip',
-    category: 'general',
-    severity: 'high',
-    reason: 'pip install runs setup code',
-    flags: ['install'],
-    pattern: /\bpip(?:3)?\s+install\b/,
-  },
-  {
-    id: 'privileged-write-copy',
-    category: 'privileged-write',
-    severity: 'high',
-    reason: 'copy/move/link into a privileged path',
-    flags: ['privileged-path'],
-    pattern: new RegExp(String.raw`(?:^|[\s;&|])(?:cp|mv|ln)\b[^;&|]*\s["']?${PRIVILEGED_PATH}`),
-  },
-  {
-    id: 'privileged-write-sed',
-    category: 'privileged-write',
-    severity: 'high',
-    reason: 'in-place edit of a privileged path (sed -i)',
-    flags: ['privileged-path'],
-    pattern: new RegExp(String.raw`(?:^|[\s;&|])sed\b[^;&|]*\s-i[^\s;&|]*[^;&|]*\s["']?${PRIVILEGED_PATH}`),
-  },
-  {
-    id: 'privileged-write-tee',
-    category: 'privileged-write',
-    severity: 'high',
-    reason: 'tee into a privileged path',
-    flags: ['privileged-path'],
-    pattern: new RegExp(String.raw`(?:^|[\s;&|])tee\b[^;&|]*\s["']?${PRIVILEGED_PATH}`),
-  },
-  {
-    id: 'privileged-write-redirect',
-    category: 'privileged-write',
-    severity: 'high',
-    reason: 'shell redirect into a privileged path',
-    flags: ['privileged-path'],
-    pattern: new RegExp(String.raw`(?:^|[\s;&|])\d*(?:>>?|>\||&>)\s*["']?${PRIVILEGED_PATH}`),
-  },
-  {
-    id: 'privileged-chmod-direct',
-    category: 'privileged-write',
-    severity: 'high',
-    reason: 'permission/ownership change on a privileged path',
-    flags: ['privileged-path'],
-    pattern: new RegExp(String.raw`\b(?:chmod|chown)\b[^;&|]*\s["']?${PRIVILEGED_PATH}`),
-    permissive_only: true,
-  },
-  {
-    id: 'privileged-system-read',
-    category: 'data-exfiltration',
-    severity: 'high',
-    reason: 'read of a world-sensitive system path (/etc, /boot)',
-    flags: ['privileged-path', 'system-read'],
-    // The CLI confirms outside-cwd reads interactively; the Web sandbox has
-    // no confirmation card for a plain read, so the strict profile blocks
-    // the read outright. Read-verb shape keeps `cd /etc && pwd` and
-    // redirections like `2>/dev/null` untouched; `/etc`-prefixed files are
-    // rare enough to accept the block.
-    strict_only: true,
-    dequoted: true,
-    ignore_find_path_arguments: true,
-    pattern:
-      /(?:^|[\s;&|()="'<>`])(?:cat|head|tail|less|more|stat|wc|file|nl|tac|zcat|strings)(?:\s+-{1,2}[\w-]+)*\s+["']?(?:\/|~\/|\$HOME\/|\$\{HOME\}\/)(?:etc|boot)(?:[\s"'/]|$)/,
-  },
-  {
-    id: 'download-pipe-interpreter',
-    category: 'network-download',
-    severity: 'high',
-    reason: 'download piped into an interpreter/shell',
-    flags: ['pipe-to-shell', 'network-client'],
-    pattern: /(?:curl|wget|base64)\b[^|;&]*\|\s*(?:(?:ba|z|da|k)?sh|python3?|perl|ruby|php|node)\b/,
-    permissive_only: true,
-  },
-  {
-    id: 'download-process-substitution',
-    category: 'network-download',
-    severity: 'high',
-    reason: 'process substitution feeding a download',
-    flags: ['process-substitution', 'network-client'],
-    pattern: /<\(\s*(?:curl|wget|base64)\b/,
-    permissive_only: true,
-  },
-  {
-    id: 'shell-process-substitution',
     category: 'shell-expansion',
-    severity: 'high',
-    reason: 'shell reading process substitution',
-    flags: ['process-substitution'],
-    pattern: /(?:^|[\s;&|])(?:ba|z|da|k)?sh\b[^;&|]*<\(/,
-    permissive_only: true,
+    reason: 'explicit shell command string (sh -c hides statements)',
+    flags: ['shell-command-string'],
   },
-  {
-    id: 'interpreter-network-eval',
-    category: 'interpreter-eval',
+  'high-outside-write': {
     severity: 'high',
+    category: 'general',
+    reason: 'write outside the working directory',
+    flags: ['outside-cwd'],
+  },
+  'opaque-parse': {
+    severity: 'high',
+    category: 'shell-expansion',
+    reason: 'opaque shell parse (unterminated quote/heredoc)',
+    flags: ['opaque-parse'],
+  },
+  'forbidden-credential': {
+    severity: 'high',
+    category: 'data-exfiltration',
+    reason: 'credential or secret file named (env/keys/.git/.tell)',
+    flags: ['sensitive-file'],
+  },
+  'forbidden-exfil': {
+    severity: 'high',
+    category: 'data-exfiltration',
+    reason: 'exfiltration tool or reverse shell (nc/socat//dev/tcp/bash -i)',
+    flags: ['network-client', 'exfil'],
+  },
+  'forbidden-remote-code': {
+    severity: 'high',
+    category: 'network-download',
+    reason: 'remote code into a shell (curl | sh/process substitution)',
+    flags: ['pipe-to-shell', 'network-client'],
+  },
+  'forbidden-eval': {
+    severity: 'high',
+    category: 'interpreter-eval',
     reason: 'interpreter eval touching network/decode/exec primitives',
     flags: ['interpreter-eval', 'network-client'],
-    pattern:
-      /(?:^|[\s;&|])(?:node|deno|bun|python3?|perl|ruby|php|lua)\b[^;&|]*\s-{1,2}(?:e|c|r|eval|exec|command)\b[^;&|]*(?:https?:\/\/|require\(\s*['"]https?|import\(\s*['"]https?|urllib|requests\.|ftplib|socket|base64|eval\(|exec\(|system\(|popen\()/,
-    permissive_only: true,
   },
-  {
-    id: 'download-chained-interpreter',
-    category: 'network-download',
+  'forbidden-privileged-container': {
     severity: 'high',
-    reason: 'download chained into an interpreter',
-    flags: ['network-client', 'interpreter-eval'],
-    pattern: /(?:curl|wget|base64)\b[^;&|]*[;&|]\s*(?:node|python3?|perl|ruby|php)\b/,
-    permissive_only: true,
+    category: 'destructive',
+    reason: 'privileged container or host-root mount (escape)',
+    flags: ['destructive'],
   },
-  {
-    id: 'download-pipe-shell-narrow',
-    category: 'network-download',
+  'forbidden-destroy': {
     severity: 'high',
-    reason: 'download piped into sh',
-    flags: ['pipe-to-shell', 'network-client'],
-    pattern: /(?:curl|wget)\b[^|;&]*\|\s*(?:ba)?sh\b/,
+    category: 'destructive',
+    reason: 'operating-system destruction (rm -rf //mkfs/shutdown/dd)',
+    flags: ['destructive'],
   },
-  {
-    id: 'interpreter-eval',
-    category: 'interpreter-eval',
+  'forbidden-system-write': {
     severity: 'high',
-    reason: 'interpreter eval flag (-c/-e/-r/--eval)',
-    flags: ['interpreter-eval'],
-    pattern: /\b(?:python3?|node|deno|bun|perl|ruby|php|lua)\b[^;&|]*\s(?:-c|-e|-r|--eval|eval)\b/,
+    category: 'privileged-write',
+    reason: 'write into a privileged system path',
+    flags: ['privileged-path'],
   },
-  {
-    id: 'env-launch',
-    category: 'environment-escape',
-    severity: 'medium',
-    reason: 'env used to launch commands',
-    flags: ['env-launch'],
-    pattern: /(?:^|[;&|(){}<>]\s*)(?:[^\s;&|()]*\/)?env\b/,
-  },
-  {
-    id: 'base64-decode',
-    category: 'payload-decode',
-    severity: 'medium',
-    reason: 'payload de-obfuscation (base64 -d)',
-    flags: ['base64-decode'],
-    pattern: /\bbase64\s+(?:-[a-zA-Z]+\s+)*(?:-d\b|--decode\b)/,
-  },
-  {
-    id: 'shell-brace-expansion',
-    category: 'shell-expansion',
-    severity: 'medium',
-    reason: 'shell brace expansion (${...})',
-    flags: ['shell-expansion'],
-    pattern: /\$\{[^}]*\}/,
-  },
-  {
-    id: 'shell-substitution',
-    category: 'shell-expansion',
-    severity: 'medium',
-    reason: 'shell command substitution ($(...))',
-    flags: ['shell-expansion'],
-    pattern: /\$\([^)]*\)/,
-  },
-  {
-    id: 'sensitive-file',
+  'strict-system-read': {
+    severity: 'high',
     category: 'data-exfiltration',
-    severity: 'high',
-    reason: 'credential or secret file named (env/keys/tokens/.git/.tell)',
-    flags: ['sensitive-file'],
-    // A command that names a credential file can send it to the model
-    // provider: the file API and delegated research already deny these.
-    // `.env.example` is a committed template and stays allowed. Common to
-    // both profiles: the CLI prompts (or denies non-TTY) instead of
-    // auto-running, the Web blocks outright. Tested against the dequoted
-    // copy so shell concatenation cannot hide the name.
-    dequoted: true,
-    pattern:
-      /(?:^|[\s"'=:;|&<>(){},/])(?:\.env(?!\.example)(?:\.[\w.-]+)?|id_(?:rsa|dsa|ecdsa|ed25519)|[\w.-]+\.(?:key|pem|p12)|\.git\/[\w./-]+|\.tell\/[\w./-]+|\.aws\/credentials|\.config\/[\w.-]*\.token)(?=$|[\s"'=:;|&<>(){},/])/i,
+    reason: 'read of a world-sensitive system path (/etc, /boot)',
+    flags: ['privileged-path', 'system-read'],
   },
-  {
-    id: 'sensitive-dotfile-glob',
-    category: 'data-exfiltration',
-    severity: 'high',
-    reason: 'dotfile glob can read credentials (.env/.git/.tell)',
-    flags: ['sensitive-file', 'sensitive-glob'],
-    // `.*`, `.e*`, `.en?`, `.env*` and the `for f in .*` loop all expand to
-    // `.env` in bash. Any dotfile pattern with a glob metachar is treated as
-    // a potential credential read; `ls .*` asks too (names can expose the
-    // layout, contents are the real risk). A nested-path predicate of `find`
-    // (`-path '*/.*'`) only selects paths and is not a read: ignore it.
-    dequoted: true,
-    ignore_find_path_arguments: true,
-    pattern: /(?:^|[\s=:;|&<>(){},/])\.[^\s=:;|&<>(){}]*[*?[]/,
-  },
-  {
-    id: 'sensitive-key-glob',
-    category: 'data-exfiltration',
-    severity: 'high',
-    reason: 'glob can read a credential file (keys/tokens/id_*)',
-    flags: ['sensitive-file', 'sensitive-glob'],
-    // `*.key`, `id_*`, `*.pem`, `*.token` and `i?_rsa` are reads of
-    // credential files even though the literal name is not in the script.
-    dequoted: true,
-    pattern:
-      /(?:^|[\s=:;|&<>(){},/])(?=[^\s=:;|&<>(){}]*[*?[])[^\s=:;|&<>(){}]*(?:id_|_rsa\b|_dsa\b|_ecdsa\b|_ed25519\b|\.key\b|\.pem\b|\.p12\b|\.pfx\b|\.token\b|credentials)[^\s=:;|&<>(){}]*/i,
-  },
-  {
-    id: 'ansi-c-quote',
-    category: 'payload-decode',
-    severity: 'medium',
-    reason: "ANSI-C quoted string ($'...') obfuscation",
-    flags: ['ansi-c-quote'],
-    // `$'\x2eenv'` is `.env`; the literal name never appears. Legitimate
-    // uses (dialects, control characters) are rare enough to ask/block.
-    pattern: /\$'[^']*'/,
-  },
-  {
-    id: 'shell-backtick-pipe',
-    category: 'shell-expansion',
-    severity: 'medium',
-    reason: 'backtick pipeline substitution',
-    flags: ['shell-expansion'],
-    pattern: /`[^`]*\|[^`]*`/,
-  },
-];
+};
+
+/** Fallback wording when a rule id has no family entry (never expected). */
+const UNKNOWN_FAMILY_META: FamilyMeta = {
+  severity: 'medium',
+  category: 'general',
+  reason: 'matched base risk rule',
+  flags: [],
+};
 
 /**
- * Compacts a script the same way the CLI/Web guards do (line
- * continuations become spaces, whitespace collapses, ends trimmed).
+ * Classifies one script with the permission table (no verdict).
  *
- * @param script - Raw command script.
- * @returns The compacted script tested against every rule.
- */
-function compact_script(script: string): string {
-  return script.replace(/\\\n/g, ' ').replace(/\s+/g, ' ').trim();
-}
-
-/**
- * Removes shell quote characters from a compacted script.
- *
- * Quoting is shell syntax, not part of the file name: `cat '.en'v` and
- * `cat .e"nv"` both read `.env`. Rules marked `dequoted` run against this
- * copy; the script itself is never modified.
- *
- * @param compact - Compacted script.
- * @returns The same script without single/double quotes.
- */
-function dequote_script(compact: string): string {
-  return compact.replace(/['"]/g, '');
-}
-
-/** Find actions that read or write file content (a path predicate alone does not). */
-const FIND_READ_ACTIONS = /\s-(?:exec|execdir|ok|okdir|delete|fprint|fprint0|fprintf|fls)\b/;
-
-/**
- * Removes the nested-path predicate arguments of a `find` command.
- *
- * A find path predicate with a nested hidden pattern excludes hidden files.
- * The path argument is a selector, not a read. The removal applies only to a
- * `find` command without an exec, delete or print action. Every other command
- * keeps its text.
- *
- * @param compact - Compacted script.
- * @returns The script without nested-path predicates (or the input).
- */
-function strip_find_path_arguments(compact: string): string {
-  if (!/^\s*(?:\S*\/)?find\b/.test(compact)) {
-    return compact;
-  } else if (FIND_READ_ACTIONS.test(compact)) {
-    return compact;
-  } else {
-    return compact.replace(
-      /\s-i?path\s+(?:'([^']*)'|"([^"]*)"|(\S+))/g,
-      (match: string, single?: string, double?: string, plain?: string): string => {
-        const argument = single ?? double ?? plain ?? '';
-        return argument.startsWith('*/') ? ' -path' : match;
-      },
-    );
-  }
-}
-
-/**
- * Ranks severities so the highest match wins (`high` beats `medium`).
- *
- * @param severity - Candidate severity.
- * @returns Numeric rank for comparison.
- */
-function severity_rank(severity: RiskSeverity): number {
-  if (severity === 'high') {
-    return 2;
-  } else if (severity === 'medium') {
-    return 1;
-  } else {
-    return 0;
-  }
-}
-
-/**
- * Classifies one script with the observable base rules (no verdict).
- *
- * The union of CLI/Web patterns is split by profile: common rules always
- * run and `permissive` adds the CLI-only divergences (broad pipes, process
- * substitution, network-gated eval, direct privileged chmod). The former
- * Web-only rules (any interpreter eval, `env`, `base64 -d`, shell
- * expansions, narrow download pipe) are common since Phase 5: the CLI
- * prompts instead of auto-running. Credential-file reads are common to
- * both. The result carries only severity, category, reasons and flags.
+ * The permission module owns the single rule table now: this port maps its
+ * class to the old severity scale so logs, timelines and tests keep their
+ * wording. `low` stays non-risky; `medium` stays non-risky (it asks in base
+ * and runs with `-y`, exactly like the old safe set); `high` and
+ * `forbidden` stay risky. The `strict` profile adds the Web-only system
+ * reads through the permission `strict` flag.
  *
  * @param script - Command script to classify.
  * @param profile - `permissive` (CLI) or `strict` (Web).
  * @returns The base `RiskAssessment` (never an action verdict).
  */
 export function assess_base_risk(script: string, profile: RiskProfile = DEFAULT_RISK_PROFILE): RiskAssessment {
-  const compact = compact_script(script);
-  const dequoted = dequote_script(compact);
-  const reasons: string[] = [];
-  const flags: string[] = [];
-  const rules: string[] = [];
-  let severity: RiskSeverity = 'low';
-  let category: RiskCategory = 'general';
-  let matched = false;
-
-  for (const rule of BASE_RISK_RULES) {
-    const base_text = rule.dequoted === true ? dequoted : compact;
-    if (rule.strict_only === true && profile !== 'strict') {
-    } else if (rule.permissive_only === true && profile !== 'permissive') {
-    } else if (
-      rule.pattern.test(rule.ignore_find_path_arguments === true ? strip_find_path_arguments(base_text) : base_text)
-    ) {
-      matched = true;
-      reasons.push(rule.reason);
-      rules.push(rule.id);
-      for (const flag of rule.flags) {
-        if (flags.includes(flag)) {
-        } else {
-          flags.push(flag);
-        }
-      }
-      if (severity_rank(rule.severity) > severity_rank(severity)) {
-        severity = rule.severity;
-        category = rule.category;
-      } else {
-        // Keep the highest-severity category already recorded.
-      }
-    } else {
-      // Rule did not match — nothing to record.
-    }
-  }
-
-  if (matched) {
-    const first_reason = reasons[0] ?? 'matched base risk rule';
-    return { risky: true, reason: first_reason, severity, category, reasons, flags, rules };
-  } else {
+  const found = classify_script(script, { strict: profile === 'strict' });
+  if (found.class === 'low') {
     return { risky: false, severity: 'low', category: 'general', reasons: [], flags: [], rules: [] };
   }
+  if (found.class === 'medium') {
+    const meta = FAMILY_META[found.rule] ?? UNKNOWN_FAMILY_META;
+    return {
+      risky: false,
+      reason: meta.reason,
+      severity: 'medium',
+      category: meta.category,
+      reasons: [meta.reason],
+      flags: meta.flags,
+      rules: [found.rule],
+    };
+  }
+  const meta = FAMILY_META[found.rule] ?? UNKNOWN_FAMILY_META;
+  return {
+    risky: true,
+    reason: meta.reason,
+    severity: meta.severity,
+    category: meta.category,
+    reasons: [meta.reason],
+    flags: meta.flags,
+    rules: [found.rule],
+  };
 }
 
 /**
- * Creates a `RiskPort` backed by the base classifier for one profile.
+ * Creates a `RiskPort` backed by the permission table for one profile.
  *
  * The port only observes (it is injected into `createTellRuntime` and
- * `create_core_runtime`); the future policy engine turns the assessment
- * into a verdict elsewhere.
+ * `create_core_runtime`); the verdict lives in `permission.ts`.
  *
  * @param profile - `permissive` (CLI) or `strict` (Web).
- * @returns A `RiskPort` assessing through `assess_base_risk`.
+ * @returns A `RiskPort` assessing through the permission table.
  */
 export function create_base_risk_port(profile: RiskProfile = DEFAULT_RISK_PROFILE): RiskPort {
   return {
