@@ -44,7 +44,7 @@ tell --no-exec d "run ls"  # never executes
 
 Core permissive classification (`assess_base_risk`, `packages/core/src/risk.ts`) normalizes backslash-newlines and whitespace, then matches: `sudo/doas/pkexec`, `rm -rf` (any `-rf` flag combo), `git clean -[xfd]`, `mkfs/shutdown/reboot`, `dd … of=`, `chmod|chown` on privileged paths (non-recursive included; recursive `-R` anywhere), `curl|wget|base64 … | sh|bash|python|perl|ruby|php|node`, process substitution `<(curl|wget|base64…)` / `sh … <(…)`, network/decode-coupled interpreter one-liners (`node|python|perl|ruby|php -e/-c/-r … http…|urllib|requests|socket|base64|eval|exec|system|popen`), `curl|wget|base64 … ;|&&|| … interpreter`, `crontab` / `systemctl --user enable`, writes/redirects into `/etc /boot /dev /proc /sys /usr /bin /sbin /lib* /var/spool/cron /etc/cron* ~/.config/autostart ~/.local/share/systemd/user` via `cp|mv|ln|sed -i|tee|>`. Full pattern table in [security.md](security.md).
 
-Deliberately allowed: local-only interpreter one-liners such as `node -e "console.log(1)"` — only network/decode-coupled inline code is high-risk (asserted in `test-tell-security.js:179-183`).
+Deliberately allowed is only what no rule names: `echo` in `cwd`, `git status`, a read your project owns (see [project context limits](#limits)). Every interpreter one-liner now needs confirmation, even a local-only one: `node -e "console.log(1)"` matches the `interpreter-eval` rule in the CLI profile too. [security.md](security.md) keeps the full table, and `test-tell-security.js` asserts the skip (`node -e "console.log(1)"` needs a TTY).
 
 ## Limits
 
