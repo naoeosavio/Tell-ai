@@ -137,3 +137,27 @@ describe('task naming: numbers past 999', () => {
     });
   });
 });
+
+describe('task naming: split_task_value whitespace (D1)', () => {
+  it('splits on any whitespace and trims both halves', () => {
+    // The CLI `split_ctx_value` body was byte-identical to this helper; the
+    // core owns the split so `--ctx` and `--task` can never drift.
+    assert.deepStrictEqual(core.split_task_value('%007-subj Body text'), {
+      first: '%007-subj',
+      rest: 'Body text',
+    });
+  });
+
+  it('treats surrounding spaces and tabs as separators', () => {
+    assert.deepStrictEqual(core.split_task_value('  %id\t rest  '), { first: '%id', rest: 'rest' });
+    assert.deepStrictEqual(core.split_task_value('plain words here'), {
+      first: 'plain',
+      rest: 'words here',
+    });
+  });
+
+  it('keeps a single token whole with empty rest', () => {
+    assert.deepStrictEqual(core.split_task_value('  %001-solo  '), { first: '%001-solo', rest: '' });
+    assert.deepStrictEqual(core.split_task_value('   '), { first: '', rest: '' });
+  });
+});

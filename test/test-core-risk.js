@@ -300,3 +300,33 @@ describe('assess_base_risk obfuscated credential reads (LOG-TASK-55)', () => {
     }
   });
 });
+
+describe('privileged system reads (2026-11-04 fuzz finding W6)', () => {
+  it('blocks /etc and /boot reads in the strict profile (Web has no outside-cwd card)', () => {
+    const vectors = [
+      'cat /etc/passwd',
+      'cat /etc',
+      'head -2 /boot/grub.cfg',
+      'cat /etc/hosts | grep x',
+      "cat '/etc/passwd'",
+      'tail /boot/next-boot.log',
+    ];
+    for (const script of vectors) {
+      const assessment = base(script, 'strict');
+      assert.strictEqual(assessment.risky, true, `strict: ${script}`);
+      assert.ok(assessment.flags.includes('system-read'), `strict flags: ${script}`);
+    }
+  });
+
+  it('keeps the permissive profile unflagged (the CLI asks via its outside-cwd gate)', () => {
+    for (const script of ['cat /etc/passwd | head -2', 'cat /etc/hosts', 'ls /boot']) {
+      assert.strictEqual(base(script, 'permissive').risky, false, `permissive: ${script}`);
+    }
+  });
+
+  it('does not overblock lookalikes and neutral shapes', () => {
+    for (const script of ['cat /etcx', 'cat ./rel/file', 'cd /etc && pwd', 'tar -cf /etc.bak .']) {
+      assert.strictEqual(base(script, 'strict').risky, false, `strict: ${script}`);
+    }
+  });
+});
