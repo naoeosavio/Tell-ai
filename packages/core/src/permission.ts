@@ -1272,7 +1272,6 @@ const PERMISSION_RULES: readonly PermissionRule[] = [
   },
   { id: 'high-system', class: 'high', test: (statement) => is_high_system(statement) },
   { id: 'high-proc-access', class: 'high', test: (statement) => is_high_proc_access(statement) },
-  { id: 'high-proc-access', class: 'high', test: (statement) => is_high_proc_access(statement) },
   { id: 'high-shell-string', class: 'high', test: (statement, words) => is_high_shell_string(statement, words) },
   { id: 'forbidden-eval', class: 'forbidden', test: (statement, words) => is_forbidden_eval(statement, words) },
   {

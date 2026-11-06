@@ -21,7 +21,7 @@ export const COMMAND_DENIED_PREAMBLE =
 
 /** Preamble of the skipped-command feedback (child retry protocol). */
 export const COMMAND_SKIPPED_PREAMBLE =
-  'The approval skipped the command above. Request a different command, or answer in plain text.';
+  'The user declined the command above. Stop this action and explain. Do not reach the same effect through a different command.';
 
 /** Rule reminder appended to the denied-command feedback. */
 export const COMMAND_DENIED_INSTRUCTION = 'Stop and report it in your final answer.';
