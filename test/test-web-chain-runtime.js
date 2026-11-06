@@ -224,34 +224,60 @@ async function main() {
     }
   });
 
-  await check('gate denies no-exec and unacknowledged risk first', () => {
+  await check('gate denies no-exec and forbidden first', () => {
     assert.deepStrictEqual(
-      chain.decide_chain_gate({ no_exec: true, require_approval: true, auto_execute: true, risky: true }),
+      chain.decide_chain_gate({
+        no_exec: true,
+        require_approval: true,
+        auto_execute: true,
+        permission_class: 'low',
+      }),
       { action: 'deny', reason: 'no-exec' },
     );
-    assert.deepStrictEqual(
-      chain.decide_chain_gate({ no_exec: false, require_approval: false, auto_execute: true, risky: true }),
-      { action: 'deny', reason: 'high-risk' },
-    );
+    for (const permission_class of ['low', 'medium', 'high', 'forbidden']) {
+      assert.deepStrictEqual(
+        chain.decide_chain_gate({
+          no_exec: false,
+          require_approval: false,
+          auto_execute: true,
+          permission_class,
+        }),
+        permission_class === 'forbidden' || permission_class === 'high'
+          ? { action: 'deny', reason: 'high-risk' }
+          : permission_class === 'medium'
+            ? { action: 'park' }
+            : { action: 'execute' },
+        permission_class,
+      );
+    }
   });
 
-  await check('gate executes only auto-run safe scripts and parks the rest', () => {
-    assert.deepStrictEqual(
-      chain.decide_chain_gate({ no_exec: false, require_approval: false, auto_execute: true, risky: false }),
-      { action: 'execute' },
-    );
-    assert.deepStrictEqual(
-      chain.decide_chain_gate({ no_exec: false, require_approval: true, auto_execute: true, risky: false }),
-      { action: 'execute' },
-    );
-    assert.deepStrictEqual(
-      chain.decide_chain_gate({ no_exec: false, require_approval: true, auto_execute: true, risky: true }),
-      { action: 'park' },
-    );
-    assert.deepStrictEqual(
-      chain.decide_chain_gate({ no_exec: false, require_approval: false, auto_execute: false, risky: false }),
-      { action: 'park' },
-    );
+  await check('gate follows the web flag table per class', () => {
+    const cells = [
+      // [flags, low, medium, high, forbidden]
+      [{ auto_execute: false, require_approval: false }, 'park', 'park', 'deny', 'deny'],
+      [{ auto_execute: true, require_approval: false }, 'execute', 'park', 'deny', 'deny'],
+      [{ auto_execute: true, require_approval: true }, 'execute', 'execute', 'park', 'deny'],
+      [{ auto_execute: false, require_approval: true }, 'park', 'park', 'park', 'deny'],
+    ];
+    for (const [flags, low, medium, high, forbidden] of cells) {
+      const expected = { low, medium, high, forbidden };
+      for (const permission_class of ['low', 'medium', 'high', 'forbidden']) {
+        const decision = chain.decide_chain_gate({ no_exec: false, ...flags, permission_class });
+        const want = expected[permission_class];
+        if (want === 'deny') {
+          assert.deepStrictEqual(decision, { action: 'deny', reason: 'high-risk' }, `${permission_class} ${JSON.stringify(flags)}`);
+        } else {
+          assert.deepStrictEqual(decision, { action: want }, `${permission_class} ${JSON.stringify(flags)}`);
+        }
+      }
+    }
+  });
+
+  await check('gate classifies web scripts strict with the host cwd', () => {
+    assert.strictEqual(chain.classify_web_script('echo hi', '/work'), 'low');
+    assert.strictEqual(chain.classify_web_script('touch /outside/f', '/work'), 'high');
+    assert.strictEqual(chain.classify_web_script('cat /etc/hosts', '/work'), 'forbidden');
   });
 
   await check('concurrency guard starts one more only under the cap', () => {

@@ -7,7 +7,8 @@
  * no environment reads, no state — every budget arrives as a parameter.
  */
 
-import { combine_output, format_command_result, truncate_output } from '@tell-ai/core';
+import type { PermissionClass } from '@tell-ai/core';
+import { classify_script, combine_output, format_command_result, truncate_output } from '@tell-ai/core';
 import { extract_runs } from '@tell-ai/sdk';
 
 /**
@@ -100,12 +101,12 @@ export function build_chain_command_record(input: ChainCommandRecordInput): Chai
 export type ChainGateInput = {
   /** Server runs with `--no-exec`. */
   no_exec: boolean;
-  /** Server runs with `--require-approval` (`-y` still auto-runs safe scripts). */
+  /** Server runs with `--require-approval` (`-y` still auto-runs low scripts). */
   require_approval: boolean;
-  /** Server auto-runs safe scripts (`-y`, task mode forces it). */
+  /** Server auto-runs low scripts (`-y`, task mode forces it). */
   auto_execute: boolean;
-  /** The script matched the strict risk classifier. */
-  risky: boolean;
+  /** Graded class of the script (one table, same as the CLI). */
+  permission_class: PermissionClass;
 };
 
 /** Verdict of the chain approval gate (texts stay at the call sites). */
@@ -117,23 +118,52 @@ export type ChainGateDecision =
 /**
  * Decides one chain command without running it.
  *
- * Mirrors the core fail-closed order: `--no-exec` denies first, an
- * unacknowledged risky script denies second, and only an auto-executed safe
- * script runs outright — everything else parks on the pending machinery.
+ * Mirrors the core fail-closed order: `--no-exec` denies first, `forbidden`
+ * denies second, `high` denies unless `--require-approval` parks it. Web
+ * supervised mode (`-y --require-approval`) is the only run that executes a
+ * medium script; every other medium parks on the pending machinery, and only
+ * an auto-executed low script runs outright.
  *
- * @param input - Host policy flags and the risk outcome.
+ * @param input - Host policy flags and the permission class.
  * @returns The gate verdict (call sites keep their exact texts).
  */
 export function decide_chain_gate(input: ChainGateInput): ChainGateDecision {
   if (input.no_exec) {
     return { action: 'deny', reason: 'no-exec' };
-  } else if (input.risky && !input.require_approval) {
+  } else if (input.permission_class === 'forbidden') {
     return { action: 'deny', reason: 'high-risk' };
-  } else if (input.auto_execute && !input.risky) {
+  } else if (input.permission_class === 'high') {
+    if (input.require_approval) {
+      return { action: 'park' };
+    } else {
+      return { action: 'deny', reason: 'high-risk' };
+    }
+  } else if (input.permission_class === 'medium') {
+    if (input.auto_execute && input.require_approval) {
+      return { action: 'execute' };
+    } else {
+      return { action: 'park' };
+    }
+  } else if (input.auto_execute) {
     return { action: 'execute' };
   } else {
     return { action: 'park' };
   }
+}
+
+/**
+ * Classifies one script for the Web gate (strict reads, host cwd).
+ *
+ * Single call site for the class the gate consumes: the Web passes the
+ * strict rule set to the one table and resolves paths against its anchored
+ * working directory.
+ *
+ * @param script - Command script to classify.
+ * @param cwd - Server working directory.
+ * @returns The graded class.
+ */
+export function classify_web_script(script: string, cwd: string): PermissionClass {
+  return classify_script(script, { cwd, strict: true }).class;
 }
 
 /**

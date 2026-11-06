@@ -2480,7 +2480,9 @@ describe('web sandbox: chain routes', () => {
   });
 
   describe('require-approval asks on high-risk instead of denying', () => {
-    const RISKY_REPLY = 'Reading it now.\n<RUN>cat .env</RUN>';
+    // `cat .env` is forbidden and can never park; the park flow needs a
+    // high (not forbidden) script, so the stub truncates a probe file.
+    const RISKY_REPLY = 'Truncating it now.\n<RUN>truncate -s 0 probe.db</RUN>';
     const CANARY = 'sandbox-canary-require-approval';
 
     let stub;
@@ -2573,8 +2575,8 @@ describe('web sandbox: chain routes', () => {
       it('parks high-risk on a pending carrying the risk reason', async () => {
         const run = await (await createRun(base, 'read the env file')).json();
         assert.strictEqual(run.status, 'awaiting_approval');
-        assert.strictEqual(run.pending.script, 'cat .env');
-        assert.match(run.pending.risk, /data-exfiltration/);
+        assert.strictEqual(run.pending.script, 'truncate -s 0 probe.db');
+        assert.match(run.pending.risk, /destructive/);
         const replay = await (await fetch(`${base}/api/chain/${run.runId}`)).json();
         assert.deepStrictEqual(replay.pending, run.pending);
       });
@@ -2591,9 +2593,7 @@ describe('web sandbox: chain routes', () => {
         assert.strictEqual(approved.status, 'completed');
         const executed = approved.events.filter((e) => e.type === 'executed');
         assert.strictEqual(executed.length, 1);
-        assert.strictEqual(executed[0].script, 'cat .env');
-        assert.ok(!JSON.stringify(approved).includes(CANARY), 'approved output crosses the redactor like any other');
-        assert.ok(executed[0].output.includes('[redacted]'));
+        assert.strictEqual(executed[0].script, 'truncate -s 0 probe.db');
       });
 
       it('skip continues clean without executing', async () => {
@@ -2709,7 +2709,7 @@ describe('web sandbox: chain routes', () => {
           LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${failStub.port}/v1`,
         };
         delete env.TELL_TOKEN;
-        const child = spawn(process.execPath, [DIST_SERVER, '--cwd', dir, '-m', 'q', '-y'], {
+        const child = spawn(process.execPath, [DIST_SERVER, '--cwd', dir, '-m', 'q', '-y', '--require-approval'], {
           env,
           stdio: ['ignore', 'pipe', 'pipe'],
         });

@@ -66,6 +66,7 @@ import { type ChatStreamEvent, encode_chat_stream_event } from '../shared/chat-s
 import {
   build_chain_command_record,
   can_start_chain_execution,
+  classify_web_script,
   decide_chain_gate,
   extract_run_scripts,
   format_extras_instruction,
@@ -1743,11 +1744,15 @@ function build_delegation_model(modelSpec: string): {
  */
 function new_web_runner(modelSpec: string, cancellation?: CancellationToken, runId?: string): DelegationRunner {
   const build_gate = async (request: { script: string }): Promise<'approved' | 'denied' | 'skipped'> => {
-    if (NO_EXEC) {
+    const gate = decide_chain_gate({
+      no_exec: NO_EXEC,
+      require_approval: REQUIRE_APPROVAL,
+      auto_execute: AUTO_EXECUTE,
+      permission_class: classify_web_script(request.script, CWD),
+    });
+    if (gate.action === 'deny') {
       return 'denied';
-    } else if (isHighRiskScript(request.script) && !REQUIRE_APPROVAL) {
-      return 'denied';
-    } else if (AUTO_EXECUTE && !isHighRiskScript(request.script)) {
+    } else if (gate.action === 'execute') {
       return 'approved';
     } else if (runId === undefined) {
       return 'denied';
@@ -2084,7 +2089,7 @@ async function advanceChainRun(runId: string, modelSpec: string, system: string)
       no_exec: NO_EXEC,
       require_approval: REQUIRE_APPROVAL,
       auto_execute: AUTO_EXECUTE,
-      risky: isHighRiskScript(script),
+      permission_class: classify_web_script(script, CWD),
     });
     if (gate.action === 'deny' && gate.reason === 'no-exec') {
       // Contract wording: denied/disabled with --no-exec source, never
