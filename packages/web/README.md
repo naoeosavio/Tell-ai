@@ -45,8 +45,8 @@ tell-web --help
 | `--cwd <path>` | current cwd | Sandbox directory |
 | `--prompt <text>` | — | Fill the chat inbox (never auto-sent, never a message) |
 | `-m, --model <id>` | `TELL_MODEL` or `l` | Model shortcode or spec |
-| `-t, --task [ref]` | off | Task mode: resolves `task-NNN-name`, forces `--chain -y --require-approval --stream`, and teaches `<DELEGATE>`/`<SUBTASK>` (forwarded by `tell --web --task`) |
-| `--task-reset` | off | Start the task context empty (the CLI forwards `-n` here) |
+| `-t, --task [ref]` | off | Task mode: resolves `task-NNN-name` (a new id claims its directory atomically; a new task without `--prompt` exits 2 — pass the objective through `--prompt`), forces `--chain -y --require-approval --stream`, and teaches `<DELEGATE>`/`<SUBTASK>` (forwarded by `tell --web --task`). The task context file (`main.txt`) stays CLI-owned: this host reads it and never writes turns into it |
+| `--task-reset` | off | Full wipe: `main.txt` AND every `delegate-NNN.txt`/`subtask-NNN.txt` record go; the directory, the history and other files stay (the CLI `-t %id -n` semantics, now shared through the core task store) |
 | `--port <n>` | `PORT` or `3000` | TCP port |
 | `--host <addr>` | `127.0.0.1` | Bind address (`0.0.0.0` for LAN) |
 | `--exec-timeout <ms>` | `120000` (max `600000`) | Timeout per command |
@@ -55,7 +55,7 @@ tell-web --help
 | `--output-max-bytes <n>` | `204800` | Delivered output cap in bytes; truncated once over the combined stdout+stderr with the core `[output truncated at N bytes]` marker (forwarded by `tell --web --output-max-bytes`) |
 | `--context-chars <n>` | — | Context chars override, exposed on `/api/config` (forwarded by `tell --web --context-max-chars`) |
 | `--profile <name>` | — | Tellrc profile name, exposed on `/api/config` (forwarded by `tell --web --profile`) |
-| `--system-file <path>` | — | Custom instructions file (64 KB cap), composed into the system prompt (forwarded by `tell --web --system-file`) |
+| `--system-file <path>` | — | Resolved custom-instructions text, delivered by the CLI as a `0600` temp file (the CLI composes top-level system + system-file + profile data through `resolve_tellrc_system_text`; the sandbox never receives a raw path, and a relative path in the CLI resolves against the CLI cwd, not `--cwd`) |
 | `--temperature <n>` | provider default | Sampling temperature `0..2`, applied to both the one-shot and the streamed reply and exposed on `/api/config` (forwarded by `tell --web --temperature`; out-of-range values are dropped, never clamped) |
 | `--stdin-timeout-ms <n>` | — | Stdin timeout override, exposed on `/api/config` (web has no stdin; a disabled deadline is omitted) |
 | `--max-delegations <n>` | `2` | Delegation budget `0..2` (`0` disables), exposed on `/api/config` (forwarded by `tell --web --max-delegations`) |

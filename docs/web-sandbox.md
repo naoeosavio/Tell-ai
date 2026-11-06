@@ -352,7 +352,9 @@ them on a pending approval instead — see [Security notes](#security-notes).
 
 In Chain Mode the App submits to `/api/chain` instead of looping in the
 browser: the model loop (up to 8 model turns — every turn spends one round,
-command, delegation and final answer alike), the pending script and the approval
+command, delegation and final answer alike; the sandbox cap stays 8 by
+design even when the CLI forwarded a bigger `--max-chain-steps`, which
+clamps down instead of failing the boot), the pending script and the approval
 state all stay on the server. The client renders the sequenced events and
 answers approvals by decision id; the local loop remains as the offline
 fallback, and `/api/tell`, `/api/execute` and `/api/risk-check` stay stable
@@ -464,11 +466,21 @@ With `TELL_TOKEN` set:
   `--stdin-timeout-ms`, `--exec-timeout`; explicit CLI flags/env win over
   tellrc, absent layers keep server defaults): the exec buffer and the
   server-side chain round cap (clamped to the core `1..8` contract, notice
-  reports the effective cap) follow the override, `/api/config` exposes them
+  reports the effective cap; the sandbox cap stays 8 even when a bigger
+  `--max-chain-steps` arrives — accepted divergence, the CLI owns higher
+  caps) follow the override, `/api/config` exposes them
   under `limits`, and `/api/chain` + approval state stay server-side — the
   browser never runs a second loop. `--stdin-max-bytes`/`--output-max-bytes`
   are CLI-only (the web has no stdin; delivered output uses the local
-  200 KB cap).
+  200 KB cap). Custom system text crosses fully resolved (`tell --web`
+  composes top-level system, `--system-file` and profile data into one
+  text); the sandbox never receives a path, and
+  `tell -w --cwd /other --system-file ./SYS.md` reads `./SYS.md` from the
+  CLI working directory — `--cwd` only sets the sandbox directory; pass
+  `--system-file /other/SYS.md` for the other file. In task mode the sandbox
+  reads the saved `main.txt` and never writes task context into it (the CLI
+  owns the task context); `--task-reset` wipes `main.txt` plus every
+  `delegate-NNN.txt`/`subtask-NNN.txt` record through the core task store.
 
 **Logging in from the browser:** open the page and a dedicated login screen
 asks for the token (animated Tell logo included). The main environment —
