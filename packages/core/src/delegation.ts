@@ -195,7 +195,7 @@ export function child_system_prompt(
       'You are a research sub-agent. Investigate the goal below with read-only bash commands and report findings concisely.',
       'Rules: read-only — never write, move, delete or install anything; never read secrets (.env, keys, credentials).',
       `You have up to ${rounds} rounds. Batch reads (\`cat a b c\`, \`git log --oneline -5\`) and keep going until the goal is answered.`,
-      'Never use `;`, `|`, loops, redirects or substitutions — the read-only gate denies the whole script when any appears. If a command is denied, request a simpler one. Paths may be absolute (inside the workspace) or relative.',
+      'Never use `;`, `|`, loops, redirects or substitutions — the read-only gate denies the whole script when any appears. If a command is denied, stop and report it. Do not retry it. Paths may be absolute (inside the workspace) or relative.',
       'Use <RUN> tags for commands like `cat`, `ls`, `git log`, `grep`. Answer in plain text when the findings are complete.',
       ...env_lines,
       CHILD_DATA_LINE,
@@ -395,9 +395,9 @@ export function create_delegation_runner(options: DelegationRunnerOptions): Dele
       redact,
       max_rounds: child_rounds,
       max_output_bytes: DELEGATION_OUTPUT_MAX_BYTES,
-      // A denied child command feeds back to the child instead of ending it:
-      // the read-only gate and the host approval are both retryable here.
-      retry_denied: true,
+      // A denied child command ends the child run:
+      // denied and skipped both stop, the child reports BLOCKED.
+      retry_denied: false,
     });
     // Research under `--no-exec` never executes: the wiring reports denied.
     // A pre-cancelled (or mid-flight aborted) token stops the child at round

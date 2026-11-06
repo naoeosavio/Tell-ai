@@ -16,15 +16,14 @@ export const COMMAND_FEEDBACK_FAILED_PREAMBLE =
   'The command above FAILED. Analyze the error output and try a corrected approach.';
 
 /** Preamble of the denied-command feedback (child retry protocol). */
-export const COMMAND_DENIED_PREAMBLE = 'The policy denied the command above. Request a different command.';
+export const COMMAND_DENIED_PREAMBLE = 'The policy denied the command above. Do not retry it. Do not work around it.';
 
 /** Preamble of the skipped-command feedback (child retry protocol). */
 export const COMMAND_SKIPPED_PREAMBLE =
   'The approval skipped the command above. Request a different command, or answer in plain text.';
 
 /** Rule reminder appended to the denied-command feedback. */
-export const COMMAND_DENIED_INSTRUCTION =
-  'Use one simple command without `;`, `&&`, `|`, redirections, `cd`, or secret paths.';
+export const COMMAND_DENIED_INSTRUCTION = 'Stop and report it in your final answer.';
 
 /** Kind of command outcome a feedback text describes. */
 export type CommandFeedbackKind = 'executed' | 'failed' | 'skipped' | 'cancelled';
