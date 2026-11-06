@@ -91,10 +91,14 @@ export type {
   PendingConfirmResult,
 } from './pending-approvals';
 export { create_pending_approvals } from './pending-approvals';
+export type { PermissionClass, PermissionEffect, PermissionVerdict } from './permission';
+export { classify_script, decide_permission, split_statements } from './permission';
 export {
   create_read_only_approval,
+  has_file_redirect,
   is_read_only_script,
   is_sensitive_rel_path,
+  is_token_inside_cwd,
   script_path_tokens,
   script_touches_sensitive_path,
 } from './read-only';

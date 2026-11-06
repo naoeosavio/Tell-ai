@@ -142,7 +142,7 @@ function normalize_posix_path(value: string): string {
  * @param cwd - Host working directory.
  * @returns True when the token is lexically inside the cwd.
  */
-function is_token_inside_cwd(token: string, cwd: string): boolean {
+export function is_token_inside_cwd(token: string, cwd: string): boolean {
   const base = normalize_posix_path(cwd);
   const target = normalize_posix_path(token);
   if (base === '/') {
@@ -282,7 +282,7 @@ function base_command(script: string): string {
  * @param script - Command script to inspect.
  * @returns True when the script writes a file or backgrounds.
  */
-function has_file_redirect(script: string): boolean {
+export function has_file_redirect(script: string): boolean {
   for (let i = 0; i < script.length; i++) {
     if (script[i] === '>') {
       const next = script[i + 1] ?? '';
