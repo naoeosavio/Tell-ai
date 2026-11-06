@@ -3016,6 +3016,79 @@ describe('web sandbox: chain routes', () => {
 // the stub speaks OpenAI chat-completions and the `q` alias is pointed at it
 // via LOCAL_OPENAI_BASE_URL (same trick as the chain routes above).
 // ---------------------------------------------------------------------------
+
+const postJsonAny = (base, urlPath, body, headers = {}) =>
+  fetch(`${base}${urlPath}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...headers },
+    body: JSON.stringify(body),
+  });
+
+// Shared delegation stub and boot helpers (the delegation suite and the F7/F8
+// suites both need a scripted OpenAI-compatible model and a hermetic server).
+// Keys ending in `_API_KEY` stay stripped so "keyless" assertions hold.
+function startDelegateStub(handler) {
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (chunk) => {
+      body += chunk;
+    });
+    req.on('end', () => {
+      let payload = {};
+      try {
+        payload = JSON.parse(body || '{}');
+      } catch {
+        /* ignore */
+      }
+      const messages = Array.isArray(payload.messages) ? payload.messages : [];
+      const last = messages[messages.length - 1];
+      const content = typeof last?.content === 'string' ? last.content : '';
+      const reply = handler(content);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          id: 'stub',
+          object: 'chat.completion',
+          created: 1,
+          model: payload.model,
+          choices: [{ index: 0, message: { role: 'assistant', content: reply }, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 },
+        }),
+      );
+    });
+  });
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port }));
+  });
+}
+
+function bootDelegate(extraArgs = [], extraEnv = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-web-delegate-'));
+  fs.writeFileSync(path.join(dir, 'hello.txt'), 'hi\n');
+  // Task mode writes under `~/.ai/tell_context`: keep the suite hermetic.
+  const home = path.join(dir, 'home');
+  fs.mkdirSync(home, { recursive: true });
+  const env = { ...process.env, HOME: home, PORT: '0', NODE_ENV: 'production', ...extraEnv };
+  delete env.TELL_TOKEN;
+  // Hermetic keys: the guards suite asserts keyless behavior ("no model
+  // needed"), so inherited vendor keys must not leak into the child. Every
+  // key env name ends in `_API_KEY`; explicit extraEnv keys survive because
+  // no caller passes one (stubs use `LOCAL_OPENAI_BASE_URL`, a URL).
+  for (const name of Object.keys(env)) {
+    if (name.endsWith('_API_KEY')) delete env[name];
+  }
+  const child = spawn(process.execPath, [DIST_SERVER, '--cwd', dir, ...extraArgs], {
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  return { dir, home, child, basePromise: waitForServer(child) };
+}
+
+async function shutdown(handle) {
+  if (handle.child && !handle.child.killed) handle.child.kill('SIGTERM');
+  if (handle.dir) fs.rmSync(handle.dir, { recursive: true, force: true });
+}
+
 describe('web sandbox: delegation (sub-tell)', () => {
   const postJson = (base, urlPath, body) =>
     fetch(`${base}${urlPath}`, {
@@ -3024,74 +3097,12 @@ describe('web sandbox: delegation (sub-tell)', () => {
       body: JSON.stringify(body),
     });
 
-  function startDelegateStub(handler) {
-    const server = http.createServer((req, res) => {
-      let body = '';
-      req.on('data', (chunk) => {
-        body += chunk;
-      });
-      req.on('end', () => {
-        let payload = {};
-        try {
-          payload = JSON.parse(body || '{}');
-        } catch {
-          /* ignore */
-        }
-        const messages = Array.isArray(payload.messages) ? payload.messages : [];
-        const last = messages[messages.length - 1];
-        const content = typeof last?.content === 'string' ? last.content : '';
-        const reply = handler(content);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(
-          JSON.stringify({
-            id: 'stub',
-            object: 'chat.completion',
-            created: 1,
-            model: payload.model,
-            choices: [{ index: 0, message: { role: 'assistant', content: reply }, finish_reason: 'stop' }],
-            usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 },
-          }),
-        );
-      });
-    });
-    return new Promise((resolve) => {
-      server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port }));
-    });
-  }
-
-  function bootDelegate(extraArgs = [], extraEnv = {}) {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-web-delegate-'));
-    fs.writeFileSync(path.join(dir, 'hello.txt'), 'hi\n');
-    // Task mode writes under `~/.ai/tell_context`: keep the suite hermetic.
-    const home = path.join(dir, 'home');
-    fs.mkdirSync(home, { recursive: true });
-    const env = { ...process.env, HOME: home, PORT: '0', NODE_ENV: 'production', ...extraEnv };
-    delete env.TELL_TOKEN;
-    // Hermetic keys: the guards suite asserts keyless behavior ("no model
-    // needed"), so inherited vendor keys must not leak into the child. Every
-    // key env name ends in `_API_KEY`; explicit extraEnv keys survive because
-    // no caller passes one (stubs use `LOCAL_OPENAI_BASE_URL`, a URL).
-    for (const name of Object.keys(env)) {
-      if (name.endsWith('_API_KEY')) delete env[name];
-    }
-    const child = spawn(process.execPath, [DIST_SERVER, '--cwd', dir, ...extraArgs], {
-      env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    return { dir, home, child, basePromise: waitForServer(child) };
-  }
-
-  async function shutdown(handle) {
-    if (handle.child && !handle.child.killed) handle.child.kill('SIGTERM');
-    if (handle.dir) fs.rmSync(handle.dir, { recursive: true, force: true });
-  }
-
   describe('/api/delegate guards (no model needed)', () => {
     let handle;
     let base;
 
     before(async () => {
-      handle = bootDelegate(['-t', '%guards']);
+      handle = bootDelegate(['-t', '%guards', '--prompt', 'guard probe']);
       base = await handle.basePromise;
     });
 
@@ -3172,7 +3183,7 @@ describe('web sandbox: delegation (sub-tell)', () => {
         if (content.includes('list the txt files')) return '<RUN>ls</RUN>';
         return 'Final answer.';
       });
-      handle = bootDelegate(['-m', 'q', '-t', '%research'], { LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stub.port}/v1` });
+      handle = bootDelegate(['-m', 'q', '-t', '%research', '--prompt', 'research session'], { LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stub.port}/v1` });
       base = await handle.basePromise;
     });
 
@@ -3236,7 +3247,7 @@ describe('web sandbox: delegation (sub-tell)', () => {
         if (content.includes('create out.txt with hi')) return '<RUN>echo hi > out.txt</RUN>';
         return 'Final answer.';
       });
-      handle = bootDelegate(['-m', 'q', '-t', '%build', '-y'], { LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stub.port}/v1` });
+      handle = bootDelegate(['-m', 'q', '-t', '%build', '--prompt', 'build session', '-y'], { LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stub.port}/v1` });
       base = await handle.basePromise;
     });
 
@@ -3271,7 +3282,7 @@ describe('web sandbox: delegation (sub-tell)', () => {
         if (content.includes('Task result (')) return 'Build done, no more commands.';
         return 'Final answer.';
       });
-      handle = bootDelegate(['-m', 'q', '-t', '%build-auto'], {
+      handle = bootDelegate(['-m', 'q', '-t', '%build-auto', '--prompt', 'auto build'], {
         LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stub.port}/v1`,
       });
       base = await handle.basePromise;
@@ -3307,7 +3318,7 @@ describe('web sandbox: delegation (sub-tell)', () => {
         if (content.includes('please build')) return '<RUN>echo hi > out.txt</RUN>';
         return 'Built it.';
       });
-      handle = bootDelegate(['-m', 'q', '-t', '%delegate-auto'], {
+      handle = bootDelegate(['-m', 'q', '-t', '%delegate-auto', '--prompt', 'auto delegate'], {
         LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stub.port}/v1`,
       });
       base = await handle.basePromise;
@@ -3350,7 +3361,7 @@ describe('web sandbox: delegation (sub-tell)', () => {
         if (content.includes('objective')) return '<RUN>ls</RUN>';
         return 'Final answer.';
       });
-      handle = bootDelegate(['-m', 'q', '-t', '%build', '-y'], { LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stub.port}/v1` });
+      handle = bootDelegate(['-m', 'q', '-t', '%build', '--prompt', 'build session', '-y'], { LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stub.port}/v1` });
       base = await handle.basePromise;
     });
 
@@ -3410,6 +3421,190 @@ describe('web sandbox: delegation (sub-tell)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// F7: the server chain asks once for a final visible answer when the round
+// cap arrives after commands (the CLI rule, core `needs_final_answer`).
+// F8: the non-stream /api/tell path sanitizes or drops reasoning (never
+// crashes on a provider that returns none).
+// A3 (accepted divergence, pinned): `/api/execute` joins stdout and stderr
+// without a separator — the chain record keeps the core `combine_output`.
+// ---------------------------------------------------------------------------
+const postJson = (base, urlPath, body, headers = {}) => postJsonAny(base, urlPath, body, headers);
+
+describe('web sandbox: chain final answer, reasoning, execute join', () => {
+  function bootChat(extraArgs = [], extraEnv = {}) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-web-chat-'));
+    const home = path.join(dir, 'home');
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, HOME: home, PORT: '0', NODE_ENV: 'production', ...extraEnv };
+    delete env.TELL_TOKEN;
+    const child = spawn(process.execPath, [DIST_SERVER, '--cwd', dir, ...extraArgs], {
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return { dir, home, child, basePromise: waitForServer(child) };
+  }
+
+  async function shutdownChat(handle) {
+    if (handle.child && !handle.child.killed) handle.child.kill('SIGTERM');
+    fs.rmSync(handle.dir, { recursive: true, force: true });
+  }
+
+  let env_stub;
+  let env_handle;
+  let env_base;
+
+  before(async () => {
+    env_handle = bootChat(['-m', 'q', '-y'], { LOCAL_OPENAI_BASE_URL: 'http://127.0.0.1:1/v1' });
+    env_base = await env_handle.basePromise;
+  });
+
+  after(async () => shutdownChat(env_handle));
+
+  it('joins stdout and stderr without a separator in /api/execute (A3)', async () => {
+    const res = await postJson(env_base, '/api/execute', { command: 'printf AAAA; printf BBBB 1>&2' });
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    // The legacy join is `${stdout}${stderr}`: no newline, no separator.
+    assert.strictEqual(body.output, 'AAAABBBB');
+    assert.strictEqual(body.exit_code, 0);
+  });
+
+  describe('chain final answer after empty rounds (F7, stub model)', () => {
+    let stub;
+    let handle;
+    let base;
+
+    before(async () => {
+      const next_script = (() => {
+        // One stub instance serves one run; the counter lives outside the
+        // HTTP handler so each round's feedback advances by one script.
+        let next = 0;
+        return () => `<RUN>echo STEP_${next++}</RUN>`;
+      })();
+      stub = await startDelegateStub((content) => {
+        if (content.includes('Provide the final visible answer now')) return 'final answer from the chain cap';
+        if (content.includes('Executed command:')) return next_script();
+        return '<RUN>echo STEP_0</RUN>';
+      });
+      handle = bootDelegate(['-m', 'q', '-y', '--max-chain-steps', '3'], {
+        LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stub.port}/v1`,
+      });
+      base = await handle.basePromise;
+    });
+
+    after(async () => {
+      await shutdown(handle);
+      stub.server.closeAllConnections?.();
+      stub.server.close();
+    });
+
+    it('asks once at the cap and stores the final answer (F7)', async () => {
+      const res = await postJson(base, '/api/chain', { messages: [{ role: 'user', content: 'start' }] });
+      assert.strictEqual(res.status, 200);
+      const run = await res.json();
+      assert.strictEqual(run.status, 'completed');
+      assert.strictEqual(run.rounds, 3, 'the cap was reached');
+      const texts = run.events.filter((event) => event.type === 'message').map((event) => event.text || '');
+      assert.ok(texts.includes('final answer from the chain cap'), 'the final reply reached the event log');
+      assert.strictEqual(run.text, 'final answer from the chain cap', 'the run no longer completes empty (F7)');
+      // The final answer is a real extra model call: the terminal user turn
+      // carries the core instruction.
+      assert.ok(
+        run.events.some((event) => event.type === 'completed' && /Chain limit reached \(3\)/.test(event.text || '')),
+      );
+    });
+  });
+
+  describe('final answer is idempotent per run (F7)', () => {
+    // A direct chain-store probe: markFinalAsked refuses a second mark.
+    it('marks the final ask once per run id (per-run flag)', () => {
+      const store = loadModule('src/server/chain-store.ts').createChainStore();
+      const run = store.createRun([{ role: 'user', content: 'go' }]);
+      assert.strictEqual(store.markFinalAsked(run.runId), true);
+      assert.strictEqual(store.markFinalAsked(run.runId), false, 'the flag is once per run');
+      assert.strictEqual(store.markFinalAsked('chain-no-such-run'), false, 'unknown ids refuse');
+    });
+  });
+
+  describe('non-stream reasoning sanitation (F8, stub model)', () => {
+    function start_reasoning_stub(message) {
+      const server = http.createServer((req, res) => {
+        let body = '';
+        req.on('data', (chunk) => {
+          body += chunk;
+        });
+        req.on('end', () => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              id: 'stub-reasoning',
+              object: 'chat.completion',
+              created: 1,
+              model: 'stub',
+              choices: [
+                { index: 0, message: { role: 'assistant', content: 'plain answer', reasoning: message }, finish_reason: 'stop' },
+              ],
+              usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 },
+            }),
+          );
+        });
+      });
+      return new Promise((resolve) => {
+        server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port }));
+      });
+    }
+
+    it('returns null reasoning when the provider sent none', async () => {
+      const stub = await startDelegateStub(() => 'plain answer with no reasoning');
+      let handle;
+      try {
+        handle = bootDelegate(['-m', 'q'], { LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stub.port}/v1` });
+        const base = await handle.basePromise;
+        const res = await postJson(base, '/api/tell', {
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: false,
+        });
+        assert.strictEqual(res.status, 200, 'the missing reasoning never 500s the route');
+        const body = await res.json();
+        assert.strictEqual(body.reasoning, null);
+        assert.strictEqual(body.text, 'plain answer with no reasoning');
+      } finally {
+        if (handle) await shutdown(handle);
+        stub.server.closeAllConnections?.();
+        stub.server.close();
+      }
+    });
+
+    it('sanitizes the reasoning string (no raw angle brackets)', async () => {
+      const stub = await start_reasoning_stub('<script>alert(1)</script> thinking');
+      let handle;
+      try {
+        handle = bootDelegate(['-m', 'q'], { LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stub.port}/v1` });
+        const base = await handle.basePromise;
+        const res = await postJson(base, '/api/tell', {
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: false,
+        });
+        assert.strictEqual(res.status, 200);
+        const body = await res.json();
+        if (typeof body.reasoning === 'string') {
+          assert.ok(!body.reasoning.includes('<'), 'reasoning markup is neutralized (F8)');
+          assert.ok(body.reasoning.includes('‹'), 'the sanitizer applied');
+        } else {
+          // The wire layer dropped the stub field entirely: still no leak.
+          assert.strictEqual(body.reasoning, null);
+        }
+        assert.strictEqual(body.text, 'plain answer');
+      } finally {
+        if (handle) await shutdown(handle);
+        stub.server.closeAllConnections?.();
+        stub.server.close();
+      }
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Task mode (`-t/--task`): id resolution, forced toggles and the task-only
 // delegation contract. No model calls here, so no stub is needed.
 // ---------------------------------------------------------------------------
@@ -3434,7 +3629,7 @@ describe('web sandbox: task mode', () => {
   }
 
   it('resolves task-NNN-name, exposes taskId and seeds the forced toggles', async () => {
-    const handle = bootTask(['-t', '%My_Task']);
+    const handle = bootTask(['-t', '%My_Task', '--prompt', 'find the README']);
     try {
       const base = await handle.basePromise;
       const config = await (await fetch(`${base}/api/config`)).json();
@@ -3498,6 +3693,100 @@ describe('web sandbox: task mode', () => {
       });
       assert.strictEqual(denied.status, 403);
       assert.match((await denied.json()).error, /task mode/);
+    } finally {
+      stopTask(handle);
+    }
+  });
+
+  // A1 (accepted divergence, pinned): the Web task prompt block includes the
+  // saved context; the CLI one does not (pinned in test-tell-task.js).
+  it('web task prompt block keeps its saved-context string (A1)', async () => {
+    const handle = bootTask(['-t', '%A1Pinned', '--prompt', 'seed'], ({ home }) => {
+      const file = path.join(home, '.ai', 'tell_context', 'task-001-a1pinned', 'main.txt');
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, 'saved prior line\n', 'utf8');
+    });
+    try {
+      const base = await handle.basePromise;
+      const context = await (await fetch(`${base}/api/context`)).json();
+      assert.ok(
+        context.systemPrompt.includes('Task mode (task-001-a1pinned): this session is one task with a saved context.'),
+        'the Web block wording stays host-owned',
+      );
+      assert.ok(context.systemPrompt.includes('Task context so far:'), 'the Web block embeds the saved context');
+      assert.ok(context.systemPrompt.includes('saved prior line'), 'the saved context text travels');
+    } finally {
+      stopTask(handle);
+    }
+  });
+
+  // F5: the server stops when a brand-new task arrives without any prompt
+  // text (the CLI rule travels with the shared store). Exit 2, no anchor.
+  it('refuses a new task without a prompt (exit 2, F5)', async () => {
+    const handle = bootTask(['-t']);
+    handle.basePromise.catch(() => {});
+    let stderr = '';
+    handle.child.stderr.setEncoding('utf8');
+    handle.child.stderr.on('data', (chunk) => {
+      stderr += chunk;
+    });
+    try {
+      const code = await new Promise((resolve) => handle.child.on('exit', resolve));
+      assert.strictEqual(code, 2);
+      assert.match(stderr, /a new task needs an objective/);
+      const anchor = path.join(handle.home, '.ai', 'tell_context');
+      const entries = fs.existsSync(anchor) ? fs.readdirSync(anchor) : [];
+      assert.deepStrictEqual(entries, [], 'a refused create leaves no task directory behind');
+    } finally {
+      stopTask(handle);
+    }
+  });
+
+  // F3: `--task-reset` takes the child records (delegate/subtask) with it —
+  // the old host only rewrote main.txt and kept them; unrelated files stay.
+  it('wipes child records on --task-reset (F3), keeps other files', async () => {
+    const handle = bootTask(['-t', '%Stored', '--task-reset'], ({ home }) => {
+      const dir = path.join(home, '.ai', 'tell_context', 'task-001-stored');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'main.txt'), 'stale context\n', 'utf8');
+      fs.writeFileSync(path.join(dir, 'delegate-001.txt'), 'old research\n', 'utf8');
+      fs.writeFileSync(path.join(dir, 'subtask-001.txt'), 'old build\n', 'utf8');
+      fs.writeFileSync(path.join(dir, 'notes.txt'), 'operator notes\n', 'utf8');
+    });
+    try {
+      const base = await handle.basePromise;
+      const config = await (await fetch(`${base}/api/config`)).json();
+      assert.strictEqual(config.taskId, 'task-001-stored');
+      const dir = path.join(handle.home, '.ai', 'tell_context', 'task-001-stored');
+      assert.ok(fs.statSync(dir).isDirectory(), 'the NNN anchor stays');
+      assert.deepStrictEqual(
+        fs.readdirSync(dir),
+        ['main.txt', 'notes.txt'],
+        'only the empty anchor and the unrelated file survive the wipe',
+      );
+      // A second boot without the reset keeps the (empty) context.
+    } finally {
+      stopTask(handle);
+    }
+  });
+
+  // F6: a task-named FILE in the context root is invisible to the Web host
+  // (directories only), so it can never be addressed as a task.
+  it('ignores a task-named file when resolving an id (F6)', async () => {
+    const handle = bootTask(['-t', '%not-a-task', '--prompt', 'do things'], ({ home }) => {
+      const root = path.join(home, '.ai', 'tell_context');
+      fs.mkdirSync(path.join(root, 'task-001-real'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'task-002-not-a-task'), 'I am a file', 'utf8');
+    });
+    try {
+      const base = await handle.basePromise;
+      const config = await (await fetch(`${base}/api/config`)).json();
+      // The file cannot absorb the reference: a fresh number 003 claims it.
+      assert.strictEqual(config.taskId, 'task-003-not-a-task');
+      const fake = path.join(handle.home, '.ai', 'tell_context', 'task-002-not-a-task');
+      assert.ok(fs.existsSync(fake), 'the stray file stays untouched');
+      assert.strictEqual(fs.statSync(fake).isDirectory(), false, 'it was never treated as a task');
+      assert.ok(fs.statSync(path.join(handle.home, '.ai', 'tell_context', 'task-003-not-a-task')).isDirectory());
     } finally {
       stopTask(handle);
     }

