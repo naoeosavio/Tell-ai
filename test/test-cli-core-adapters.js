@@ -321,6 +321,34 @@ describe('cli approval port realizes the permission verdict', () => {
     assert.strictEqual(asked, 2);
   });
 
+  it('maps a declined ask to skipped in every asking cell', async () => {
+    const cells = [
+      [{ enabled: true }, 'echo hi'],
+      [{ enabled: true }, 'touch a'],
+      [{ enabled: true, approve_high: true }, 'echo hi'],
+      [{ enabled: true, approve_high: true }, 'touch a'],
+      [{ enabled: true, approve_high: true }, 'git push --force origin main'],
+      [{ enabled: true, auto: true, approve_high: true }, 'git push --force origin main'],
+    ];
+    for (const [input, script] of cells) {
+      let asked = 0;
+      const approval = adapters.create_cli_approval(input, async () => {
+        asked += 1;
+        return false;
+      }, undefined, true);
+      assert.strictEqual(await approval({ script }), 'skipped', `${JSON.stringify(input)}: ${script}`);
+      assert.strictEqual(asked, 1, `${JSON.stringify(input)}: ${script} prompts once`);
+    }
+  });
+
+  it('asks with a TTY and denies the same ask without one', async () => {
+    const input = { enabled: true, auto: true, approve_high: true };
+    const script = 'git push --force origin main';
+    const tty = adapters.create_cli_approval(input, async () => false, undefined, true);
+    assert.strictEqual(await tty({ script }), 'skipped');
+    const no_tty = adapters.create_cli_approval(input, throwing_confirm(), undefined, false);
+    assert.strictEqual(await no_tty({ script }), 'denied');
+  });
   it('denies --no-exec for every class without a prompt', async () => {
     for (const script of Object.values(SCRIPTS)) {
       const approval = adapters.create_cli_approval({ enabled: false }, throwing_confirm(), undefined, true);

@@ -11,6 +11,7 @@
 
 const assert = require('node:assert');
 const { EventEmitter } = require('node:events');
+const { Readable } = require('node:stream');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -79,7 +80,18 @@ const tellrc_source = ts.transpileModule(
   { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } },
 ).outputText;
 
-function fake_stdin(text) {
+function fake_stdin(text, opts = {}) {
+  if (opts.tty === true) {
+    // Interactive stdin: a real Readable with isTTY set, so the readline
+    // prompt answers from the scripted list (`y` approves, `n` declines).
+    // Answers are pre-pushed: readline buffers them until asked.
+    const stdin = new Readable({ read() {} });
+    stdin.isTTY = true;
+    for (const answer of opts.answers || []) {
+      stdin.push(`${answer}\n`);
+    }
+    return stdin;
+  }
   const stdin = new EventEmitter();
   stdin.isTTY = false;
   setImmediate(() => {
@@ -162,7 +174,7 @@ async function run_tell(args, response, opts = {}) {
   const fake_process = {
     argv: ['node', 'Tell.js', ...args],
     env: sanitizedFakeEnv(home),
-    stdin: fake_stdin(opts.stdin || ''),
+    stdin: fake_stdin(opts.stdin || '', opts),
     stdout: { isTTY: false, write: write_stdout },
     stderr: { isTTY: false, write: write_stderr },
     cwd: () => work,
@@ -429,6 +441,33 @@ async function test_stream_commands_still_detected_and_run() {
   assert.strictEqual(occurrences, 1, 'final answer must be streamed exactly once');
 }
 
+async function test_chain_tty_decline_skips_and_resumes() {
+  const result = await run_tell(['d', '--stream', '--chain', 'run it'], [
+    '<RUN>\necho hi\n</RUN>',
+    'All good.',
+  ], { tty: true, answers: ['n'] });
+  // Base flags ask a low command; the TTY decline records `skipped`
+  // (not `denied`) and chain mode resumes with the repeat ban.
+  assert_includes(result.stderr, 'Command requested:');
+  assert_includes(result.stderr, 'Command skipped by user.');
+  assert.strictEqual(result.tellCalls.length, 2, 'one run plus one resume');
+  assert_includes(result.tellMessages[1], 'Skipped by user:');
+  assert_includes(result.tellMessages[1], 'Do not request the command above again.');
+  assert.deepStrictEqual(result.execCalls, []);
+  assert_includes(result.stdout, 'All good.');
+}
+
+async function test_chain_tty_accept_runs_high_with_approval() {
+  const result = await run_tell(['d', '--stream', '--chain', '-y', '--require-approval', 'run it'], [
+    '<RUN>\nsudo ls /\n</RUN>',
+    'Done.',
+  ], { tty: true, answers: ['y'], execStdout: 'OK\n' });
+  // Supervised mode asks a high command; the TTY accept approves and runs it.
+  assert_includes(result.stderr, 'High-risk command requested');
+  assert.deepStrictEqual(result.execCalls, ['sudo ls /']);
+  assert.strictEqual(result.tellCalls.length, 2, 'one run plus the follow-up turn');
+  assert_includes(result.stdout, 'Done.');
+}
 async function test_chain_denial_ends_attempt_without_resume() {
   const result = await run_tell(['d', '--stream', '--chain', 'run it'], [
     '<RUN>\nrm -rf /\n</RUN>',
@@ -544,6 +583,8 @@ const TESTS = [
   test_stream_keeps_full_response_in_log_and_context,
   test_stream_chain_streams_each_round,
   test_stream_commands_still_detected_and_run,
+  test_chain_tty_decline_skips_and_resumes,
+  test_chain_tty_accept_runs_high_with_approval,
   test_chain_denial_ends_attempt_without_resume,
   test_tags_flag_shows_raw_markup,
   test_default_tag_hider_handles_split_deltas,

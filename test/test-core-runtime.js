@@ -158,6 +158,31 @@ describe('core primitive loop', () => {
     assert.strictEqual(model.calls(), 1);
   });
 
+  it('records a declined approval as skipped without executing', async () => {
+    const model = script_model(['run it\n<RUN>\necho one\n</RUN>']);
+    const executor = sequence_executor([{ stdout: 'one', stderr: '', exit_code: 0 }]);
+    let skipped = null;
+    const runtime = core.create_core_runtime({
+      config: core_config(),
+      model,
+      executor: (options) => executor.run(options),
+      approval: async () => 'skipped',
+      callbacks: {
+        onCommandSkip: async (event) => {
+          skipped = event;
+        },
+      },
+    });
+    const result = await runtime.run('hi');
+    assert.strictEqual(result.status, 'completed');
+    assert.strictEqual(result.commands.length, 1);
+    assert.strictEqual(result.commands[0].status, 'skipped');
+    assert.strictEqual(result.commands[0].script, 'echo one');
+    assert.strictEqual(executor.calls(), 0);
+    assert.strictEqual(model.calls(), 1);
+    assert.deepStrictEqual(skipped, { script: 'echo one', status: 'skipped' });
+  });
+
   it('cancels before the first round and during the loop', async () => {
     const before = core.create_core_runtime({
       config: core_config(),
