@@ -212,6 +212,7 @@ export function validateTellPayload(body: unknown): string | null {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return 'messages array is required';
   const { messages, systemPrompt } = body as { messages?: unknown; systemPrompt?: unknown };
   if (!Array.isArray(messages)) return 'messages array is required';
+  if (messages.length === 0) return 'messages array must not be empty';
   if (messages.length > TELL_MAX_MESSAGES) {
     return `messages limited to ${TELL_MAX_MESSAGES} items`;
   }

@@ -1,6 +1,11 @@
 import path from 'path';
 
-import { MAX_EXEC_TIMEOUT_MS, MIN_EXEC_TIMEOUT_MS, validate_tellrc_limit_value } from '@tell-ai/core';
+import {
+  MAX_EXEC_TIMEOUT_MS,
+  MIN_EXEC_TIMEOUT_MS,
+  validate_tellrc_limit_value,
+  validate_temperature,
+} from '@tell-ai/core';
 
 /**
  * True when a bind address admits local clients only.
@@ -126,9 +131,10 @@ export function parseCliArgs(argv: string[], defaultCwd: string): CliArgs {
   const delegationRepostRaw = argValue(argv, '--delegation-repost', '--delegation-repost-chars');
   const delegationMaxRoundsRaw = argValue(argv, '--delegation-max-rounds');
   const toTemperature = (raw: string | undefined): number | undefined => {
+    // One interval rule owner (`@tell-ai/core`): the CLI tellrc parser and
+    // this parser accept the same 0..2 span, undefined when invalid.
     if (raw === undefined) return undefined;
-    const value = Number(raw);
-    return Number.isFinite(value) && value >= 0 && value <= 2 ? value : undefined;
+    return validate_temperature(raw);
   };
   const invalid: string[] = [];
   const limitValue = (raw: string | undefined, flag: string, key: string): number | undefined => {

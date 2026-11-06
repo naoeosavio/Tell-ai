@@ -11,12 +11,17 @@ import {
   canonical_write_path,
   chain_limit_notice,
   collect_exec_secrets,
+  FINAL_ANSWER_INSTRUCTION,
+  needs_final_answer,
+  RESEARCH_HEADER,
+  SUBTASK_HEADER,
   create_cancellation_token,
   create_delegation_runner,
   create_node_executor,
   create_pending_approvals,
   compose_custom_system,
   DEFAULT_CONTEXT_MAX_CHARS,
+  SYSTEM_FILE_MAX_BYTES,
   DEFAULT_EXEC_TIMEOUT_MS,
   DELEGATION_SUMMARY_MAX_CHARS,
   DELEGATION_MAX_ROUNDS,
@@ -30,21 +35,29 @@ import {
   format_command_skipped,
   has_lexical_target,
   is_path_inside_base,
-  is_task_id,
+  init_task_context,
+  read_task_context,
+  reserve_task_dir,
+  resolve_task_value,
+  wipe_task_dir,
   missing_vendor_key,
   resolve_max_delegations,
-  resolve_task_id,
-  split_task_value,
   strip_delegation_tags,
-  task_name_from_ref,
-  truncate_context,
   truncate_output,
   type CancellationToken,
   type DelegationRunner,
   type PendingApprovals,
   validate_chain_decision_payload,
 } from '@tell-ai/core';
-import { create_ask_ai, extract_runs, get_model, MODELS, resolve_model_spec, strip_think_tags } from '@tell-ai/sdk';
+import {
+  create_ask_ai,
+  extract_runs,
+  get_model,
+  MODELS,
+  resolve_model_spec,
+  strip_run_tags,
+  strip_think_tags,
+} from '@tell-ai/sdk';
 import { generateText } from 'ai';
 import { config as loadEnv } from 'dotenv';
 import express from 'express';
@@ -176,95 +189,40 @@ const TASK_CONTEXT_MAX_CHARS = FORWARDED_LIMITS.contextChars ?? DEFAULT_CONTEXT_
 type HostTask = {
   /** The task id (`task-NNN-name`). */
   id: string;
+  /** The task directory (`~/.ai/tell_context/<id>`). */
+  dir: string;
   /** The task context file (`~/.ai/tell_context/<id>/main.txt`). */
   file: string;
   /** True when the id already existed (a resume, not a create). */
   resumed: boolean;
 };
 
-/** Saved task ids; a missing directory means that no task exists yet. */
-function list_task_ids(): string[] {
+/** Task-id listing, claim, read, reset and release all come from the core
+ * store (`@tell-ai/core`): a directory counts as an id (F6), the claim is an
+ * atomic mkdir (F4), a new task without a prompt fails closed (F5), and a
+ * full wipe takes the child records with it (F3). The task context file
+ * itself (`main.txt`) stays CLI-owned (A4): this host only seeds it. */
+/** The task for this server, or undefined when the sandbox runs without `-t`. */
+const TASK = ((): HostTask | undefined => {
+  if (cliArgs.task === undefined) return undefined;
   try {
-    return fs.readdirSync(CONTEXT_DIR).filter((name) => is_task_id(name));
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Reads the saved task context (`main.txt`), capped.
- *
- * @param task - The resolved task pointer.
- * @returns The stored context text (empty when the file is absent).
- */
-function read_task_context(task: HostTask): string {
-  try {
-    return truncate_context(fs.readFileSync(task.file, 'utf8').trim(), TASK_CONTEXT_MAX_CHARS);
-  } catch {
-    return '';
-  }
-}
-
-/**
- * Creates the task directory and an empty context file.
- *
- * Anchors the task number for the CLI: a task that the Web opened must exist
- * on disk, or the CLI would allocate the same number again.
- *
- * @param task - The resolved task pointer.
- */
-function init_task_context(task: HostTask): void {
-  try {
-    fs.mkdirSync(path.dirname(task.file), { recursive: true, mode: 0o700 });
-    fs.writeFileSync(task.file, '', { encoding: 'utf8', mode: 0o600 });
-  } catch (error) {
-    console.error('Task context could not be created:', error instanceof Error ? error.message : String(error));
-  }
-}
-
-/**
- * Resolves the boot `--task` value into a task pointer.
- *
- * @param raw - The `-t/--task` value ('' when the flag is bare).
- * @param prompt - The initial prompt (`--prompt`), used for the hash name.
- * @param reset - Whether `--task-reset` starts the context empty.
- * @returns The task pointer, or undefined when task mode is off.
- */
-function resolve_host_task(raw: string | undefined, prompt: string, reset: boolean): HostTask | undefined {
-  if (raw === undefined) {
-    return undefined;
-  } else {
-    const { first, rest } = split_task_value(raw);
-    const reference = first.startsWith('%') ? first.slice(1) : null;
-    const task_prompt = [rest, prompt].filter(Boolean).join(' ').trim();
-    const name =
-      reference !== null
-        ? task_name_from_ref(reference)
-        : crypto.createHash('sha256').update(`${CWD}\n${task_prompt}`).digest('hex').slice(0, 8);
-    if (name === '') {
-      throw new Error('Invalid task name — use letters, digits and dashes');
-    } else {
-      // The name is usable; resolve it below.
-    }
-    const resolved = resolve_task_id(reference, name, list_task_ids());
-    const task: HostTask = {
-      id: resolved.id,
-      file: path.join(CONTEXT_DIR, resolved.id, 'main.txt'),
-      resumed: resolved.resumed,
-    };
-    if (!resolved.resumed || reset) {
-      init_task_context(task);
+    const value = resolve_task_value(cliArgs.task, INITIAL_PROMPT ?? '', CWD, CONTEXT_DIR);
+    // A new id claims its directory atomically here; a resume keeps whatever
+    // the CLI host (or another server run) already saved.
+    const pointer = value.resumed ? value : reserve_task_dir(CONTEXT_DIR, value.reference, value.name);
+    if (cliArgs.taskReset) {
+      // Full wipe: main.txt AND every child record go; the directory and the
+      // history entries stay (the CLI `-t %id -n` wording).
+      wipe_task_dir(pointer);
+      init_task_context(pointer);
+    } else if (!pointer.resumed) {
+      // Seed the anchor so a CLI run resumes this task instead of
+      // re-allocating the number while the sandbox is still empty.
+      init_task_context(pointer);
     } else {
       // An existing task keeps its saved context.
     }
-    return task;
-  }
-}
-
-/** The task for this server, or undefined when the sandbox runs without `-t`. */
-const TASK = ((): HostTask | undefined => {
-  try {
-    return resolve_host_task(cliArgs.task, INITIAL_PROMPT ?? '', cliArgs.taskReset);
+    return { id: pointer.id, dir: pointer.dir, file: pointer.file, resumed: pointer.resumed };
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(EXIT_CONFIG_ERROR);
@@ -310,7 +268,8 @@ function load_forwarded_system_text(file: string | undefined): string | undefine
   if (!file) return undefined;
   try {
     const stat = fs.statSync(file);
-    if (!stat.isFile() || stat.size > 64 * 1024) return undefined;
+    // The cap is the core constant (D9) — the same 64 KB the CLI file gate applies.
+    if (!stat.isFile() || stat.size > SYSTEM_FILE_MAX_BYTES) return undefined;
     const text = fs.readFileSync(file, 'utf8');
     if (text.includes('\0')) return undefined;
     const trimmed = text.trim();
@@ -329,7 +288,7 @@ function compose_forwarded_system(base: string): string {
 
 /** Host-owned task block appended after the SDK prompt (task mode only). */
 function task_system_section(task: HostTask): string {
-  const prior = read_task_context(task);
+  const prior = read_task_context(task, TASK_CONTEXT_MAX_CHARS);
   const head = `\n\nTask mode (${task.id}): this session is one task with a saved context. Keep the context small; delegate research and builds instead of restating history.`;
   return prior === '' ? head : `${head}\n\nTask context so far:\n${prior}`;
 }
@@ -1616,7 +1575,13 @@ async function generateOnce(
     ...(handle.providerOptions ? { providerOptions: handle.providerOptions } : {}),
   });
 
-  return { text: result.text, reasoning: sanitizeReasoning((result as any).reasoning) };
+  // Reasoning is display data (F8): sanitized when the provider returned
+  // one, null when absent (never a crash on `undefined.replace`).
+  const raw_reasoning: unknown = (result as { reasoning?: unknown }).reasoning;
+  return {
+    text: result.text,
+    reasoning: typeof raw_reasoning === 'string' ? sanitizeReasoning(raw_reasoning) : null,
+  };
 }
 
 // API: Model execution route (using Vercel AI SDK)
@@ -1677,7 +1642,14 @@ app.post('/api/tell', async (req, res) => {
       reasoning: generated.reasoning,
     });
   } catch (error: any) {
-    console.error('Error generating AI text:', model_error_message(error));
+    const message = model_error_message(error);
+    // OpenRouter (and some gateways) validate the model id at request time:
+    // the invalid-model error is a client mistake, so answer 400 with the
+    // model's own text instead of a blind 500.
+    if (/not a valid model/i.test(message)) {
+      return res.status(400).json({ error: message });
+    }
+    console.error('Error generating AI text:', message);
     return res.status(500).json({ error: 'AI generation failed. Check server logs.' });
   }
 });
@@ -2144,6 +2116,39 @@ async function advanceChainRun(runId: string, modelSpec: string, system: string)
   if (capped === null || capped.status !== 'running') {
     return capped;
   } else {
+    // CLI parity (F7): commands or delegations ran and the visible answer is
+    // empty — ask ONCE for the final answer before completing, never leave
+    // the chat on an empty reply. The per-run flag (`markFinalAsked`) keeps
+    // the request idempotent across re-entries.
+    const commands_ran = capped.events.some((event) => event.type === 'executed' || event.type === 'failed');
+    const delegated = capped.events.some(
+      (event) =>
+        event.type === 'message' &&
+        (event.text?.startsWith(RESEARCH_HEADER) === true || event.text?.startsWith(SUBTASK_HEADER) === true),
+    );
+    if (
+      // CLI `result.text` parity: a tag-only answer strips to empty, so a
+      // `<RUN>` at the cap still asks for the final visible answer.
+      needs_final_answer({ commands_ran, delegated, text: strip_run_tags(capped.text) }) &&
+      chainStore.markFinalAsked(runId) === true
+    ) {
+      chainStore.pushMessage(runId, { role: 'user', content: FINAL_ANSWER_INSTRUCTION });
+      const reply = await generateOnce(modelSpec, chainStore.messagesOf(runId), system);
+      // A cancel that landed during the final model call wins, like in the
+      // loop body above: never append to a run that is no longer live.
+      const live_run = chainStore.getRun(runId);
+      if (live_run === null || live_run.status !== 'running') {
+        return live_run;
+      } else {
+        // Still live — record the final answer below.
+      }
+      const final_text = strip_delegation_tags(strip_think_tags(reply.text));
+      chainStore.pushMessage(runId, { role: 'assistant', content: final_text });
+      chainStore.setText(runId, final_text);
+      chainStore.appendEvent(runId, { type: 'message', text: final_text });
+    } else {
+      // Nothing ran, an answer already exists, or the ask already happened.
+    }
     chainStore.appendEvent(runId, { type: 'completed', text: chain_limit_notice(CHAIN_ROUND_CAP) });
     return chainStore.completeRun(runId);
   }

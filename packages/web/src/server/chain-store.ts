@@ -138,6 +138,8 @@ type ChainRun = {
   pending: ChainPending | null;
   childPending: ChainPending | null;
   decided: Record<string, DecidedEntry>;
+  /** True once the final-answer request ran (one per run, F7). */
+  finalAsked: boolean;
   createdAt: number;
   updatedAt: number;
 };
@@ -168,6 +170,8 @@ export function createChainStore(options: ChainStoreOptions = {}): {
   pushMessage(runId: string, message: ChainMessage): boolean;
   setText(runId: string, text: string): boolean;
   countRound(runId: string): boolean;
+  /** Marks the final-answer request done (idempotent, F7); false on unknown run. */
+  markFinalAsked(runId: string): boolean;
   requestApproval(runId: string, script: string, level?: ChainApprovalLevel, risk?: string): ChainPending | null;
   tryBeginConfirm(
     runId: string,
@@ -289,6 +293,7 @@ export function createChainStore(options: ChainStoreOptions = {}): {
         pending: null,
         childPending: null,
         decided: {},
+        finalAsked: false,
         createdAt: at,
         updatedAt: at,
       };
@@ -351,6 +356,19 @@ export function createChainStore(options: ChainStoreOptions = {}): {
         return false;
       } else {
         run.rounds += 1;
+        run.updatedAt = now();
+        return true;
+      }
+    },
+
+    markFinalAsked(runId: string): boolean {
+      const run = live(runId);
+      if (run === null) {
+        return false;
+      } else if (run.finalAsked) {
+        return false;
+      } else {
+        run.finalAsked = true;
         run.updatedAt = now();
         return true;
       }
