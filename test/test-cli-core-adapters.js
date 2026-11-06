@@ -2,7 +2,7 @@
 // Proves `packages/cli/src/core-adapters.ts` delegates risk, env and exec to
 // `@tell-ai/core` without changing CLI behavior: risk parity with the core
 // permissive profile, env scrubbing, executor mapping, approval mapping for
-// every `ExecMode`, single config resolution with host default `g`, and the
+// every gate input, single config resolution with host default `g`, and the
 // static boundaries (`Tell.ts` keeps its default/mentions/history/env layer,
 // `env.ts` keeps no `TELL_KEY` until the tellkey handoff).
 // Run with: node --test test/test-cli-core-adapters.js (after the core build).
@@ -213,53 +213,178 @@ describe('cli executor is the only CLI transport', () => {
   });
 });
 
-describe('cli approval port preserves -y/--require-approval/--no-exec', () => {
-  it('denies no-exec without asking', async () => {
-    let asked = 0;
-    const approval = adapters.create_cli_approval('no-exec', async () => {
-      asked += 1;
-      return true;
+describe('cli exec input resolves once from the flags', () => {
+  it('maps -y to auto and --require-approval to approve_high', () => {
+    assert.deepStrictEqual(adapters.resolve_cli_exec_input({}), {
+      enabled: true,
+      auto: false,
+      approve_high: false,
     });
-    assert.strictEqual(await approval({ script: 'echo hi' }), 'denied');
-    assert.strictEqual(asked, 0);
+    assert.deepStrictEqual(adapters.resolve_cli_exec_input({ yes: true }), {
+      enabled: true,
+      auto: true,
+      approve_high: false,
+    });
+    assert.deepStrictEqual(adapters.resolve_cli_exec_input({ requireApproval: true }), {
+      enabled: true,
+      auto: false,
+      approve_high: true,
+    });
+    assert.deepStrictEqual(adapters.resolve_cli_exec_input({ yes: true, requireApproval: true }), {
+      enabled: true,
+      auto: true,
+      approve_high: true,
+    });
+    assert.deepStrictEqual(adapters.resolve_cli_exec_input({ exec: false }), {
+      enabled: false,
+      auto: false,
+      approve_high: false,
+    });
   });
 
-  it('auto-approves safe inside-cwd scripts without asking', async () => {
+  it('never forces -y for task mode (auto comes only from the flag)', () => {
+    // Discovery 13: task mode forces chain, never auto-approval.
+    assert.strictEqual(adapters.resolve_cli_exec_input({ exec: true }).auto, false);
+    assert.strictEqual(adapters.resolve_cli_exec_input({ exec: true, yes: true }).auto, true);
+  });
+});
+
+describe('cli approval port realizes the permission verdict', () => {
+  const SCRIPTS = {
+    low: 'echo hi',
+    medium: 'touch a',
+    high: 'git push --force origin main',
+    forbidden: 'cat .env',
+  };
+  function throwing_confirm() {
+    return async () => {
+      throw new Error('must not prompt for a terminal verdict');
+    };
+  }
+
+  it('follows the flag table without prompting on terminal verdicts', async () => {
+    const rows = [
+      // [input name, class, prompt count, outcome with confirm true]
+      ['base', 'low', 1, 'approved'],
+      ['base', 'medium', 1, 'approved'],
+      ['base', 'high', 0, 'denied'],
+      ['base', 'forbidden', 0, 'denied'],
+      ['-y', 'low', 0, 'approved'],
+      ['-y', 'medium', 0, 'approved'],
+      ['-y', 'high', 0, 'denied'],
+      ['-y', 'forbidden', 0, 'denied'],
+      ['-y+approve', 'low', 0, 'approved'],
+      ['-y+approve', 'medium', 0, 'approved'],
+      ['-y+approve', 'high', 1, 'approved'],
+      ['-y+approve', 'forbidden', 0, 'denied'],
+      ['approve', 'low', 1, 'approved'],
+      ['approve', 'medium', 1, 'approved'],
+      ['approve', 'high', 1, 'approved'],
+      ['approve', 'forbidden', 0, 'denied'],
+      ['noexec', 'low', 0, 'denied'],
+      ['noexec', 'medium', 0, 'denied'],
+      ['noexec', 'high', 0, 'denied'],
+      ['noexec', 'forbidden', 0, 'denied'],
+    ];
+    const inputs = {
+      base: { enabled: true, auto: false, approve_high: false },
+      '-y': { enabled: true, auto: true, approve_high: false },
+      '-y+approve': { enabled: true, auto: true, approve_high: true },
+      approve: { enabled: true, auto: false, approve_high: true },
+      noexec: { enabled: false, auto: false, approve_high: false },
+    };
+    for (const [name, cls, prompts, expected] of rows) {
+      let asked = 0;
+      const approval = adapters.create_cli_approval(
+        inputs[name],
+        async () => {
+          asked += 1;
+          return true;
+        },
+        undefined,
+        true,
+      );
+      assert.strictEqual(await approval({ script: SCRIPTS[cls] }), expected, `${name}: ${cls}`);
+      assert.strictEqual(asked, prompts, `${name}: ${cls} prompts`);
+    }
+  });
+
+  it('maps a declined ask to skipped and keeps asking base low/medium', async () => {
     let asked = 0;
-    const approval = adapters.create_cli_approval('auto-risk', async () => {
+    const approval = adapters.create_cli_approval({ enabled: true }, async () => {
       asked += 1;
       return false;
-    });
-    assert.strictEqual(await approval({ script: 'echo hi' }), 'approved');
-    assert.strictEqual(asked, 0);
+    }, undefined, true);
+    assert.strictEqual(await approval({ script: 'echo hi' }), 'skipped');
+    assert.strictEqual(await approval({ script: 'touch a' }), 'skipped');
+    assert.strictEqual(await approval({ script: 'git push --force origin main' }), 'denied');
+    assert.strictEqual(asked, 2);
   });
 
-  it('asks for high-risk and outside-cwd scripts, mapping decline to skipped', async () => {
-    const calls = [];
-    const approval = adapters.create_cli_approval('auto-risk', async (script) => {
-      calls.push(script);
-      return script === 'sudo ls /';
-    });
-    assert.strictEqual(await approval({ script: 'sudo ls /' }), 'approved');
-    assert.strictEqual(await approval({ script: 'rm -rf /tmp/x' }), 'skipped');
-    assert.strictEqual(await approval({ script: 'cat /etc/passwd' }), 'skipped');
-    assert.deepStrictEqual(calls, ['sudo ls /', 'rm -rf /tmp/x', 'cat /etc/passwd']);
+  it('denies --no-exec for every class without a prompt', async () => {
+    for (const script of Object.values(SCRIPTS)) {
+      const approval = adapters.create_cli_approval({ enabled: false }, throwing_confirm(), undefined, true);
+      assert.strictEqual(await approval({ script }), 'denied', script);
+    }
   });
 
-  it('never auto-approves credential-file reads, even inside cwd', async () => {
+  it('denies -y high and forbidden without a prompt', async () => {
+    for (const script of [SCRIPTS.high, SCRIPTS.forbidden]) {
+      const approval = adapters.create_cli_approval({ enabled: true, auto: true }, throwing_confirm(), undefined, true);
+      assert.strictEqual(await approval({ script }), 'denied', script);
+    }
+  });
+
+  it('fails closed without a TTY: allow runs, deny stops, ask denies', async () => {
+    const yes = { enabled: true, auto: true };
+    for (const [script, expected] of [
+      [SCRIPTS.low, 'approved'],
+      [SCRIPTS.medium, 'approved'],
+      [SCRIPTS.high, 'denied'],
+      [SCRIPTS.forbidden, 'denied'],
+    ]) {
+      const approval = adapters.create_cli_approval(yes, throwing_confirm(), undefined, false);
+      assert.strictEqual(await approval({ script }), expected, script);
+    }
+    // Discovery 6: an ask with no TTY denies instead of prompting.
+    const approval = adapters.create_cli_approval({ enabled: true }, throwing_confirm(), undefined, false);
+    assert.strictEqual(await approval({ script: SCRIPTS.low }), 'denied');
+  });
+
+  it('never runs credential-file reads automatically', async () => {
     for (const script of ['cat .env', 'cat ~/.config/openrouter.token', 'cat id_rsa', 'git show HEAD:.env']) {
       assert.strictEqual(adapters.is_high_risk_script(script), true, script);
-      assert.strictEqual(adapters.can_auto_approve(script, 'auto-risk', process.cwd()), false, script);
+      const approval = adapters.create_cli_approval(
+        { enabled: true, auto: true, approve_high: true },
+        throwing_confirm(),
+        undefined,
+        true,
+      );
+      assert.strictEqual(await approval({ script }), 'denied', script);
     }
-    let asked = 0;
-    const approval = adapters.create_cli_approval('auto-risk', async () => {
-      asked += 1;
-      return false;
-    });
-    assert.strictEqual(await approval({ script: 'cat .env' }), 'skipped');
-    assert.strictEqual(asked, 1);
     for (const script of SENSITIVE_SAFE_SCRIPTS) {
       assert.strictEqual(adapters.is_high_risk_script(script), false, script);
+    }
+  });
+
+  it('grades scope lexically: outside reads run with -y, outside writes deny', async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-adapters-scope-'));
+    try {
+      const yes = { enabled: true, auto: true };
+      assert.strictEqual(
+        await adapters.create_cli_approval(yes, throwing_confirm(), cwd, true)({ script: 'cat /etc/os-release' }),
+        'approved',
+      );
+      assert.strictEqual(
+        await adapters.create_cli_approval(yes, throwing_confirm(), cwd, true)({ script: 'touch /outside/f' }),
+        'denied',
+      );
+      assert.strictEqual(
+        await adapters.create_cli_approval(yes, throwing_confirm(), cwd, true)({ script: 'cat /work/a' }),
+        'approved',
+      );
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
     }
   });
 
@@ -273,27 +398,16 @@ describe('cli approval port preserves -y/--require-approval/--no-exec', () => {
       'echo abc | base64 -d',
     ]) {
       assert.strictEqual(adapters.is_high_risk_script(script), false, script);
-      assert.strictEqual(adapters.can_auto_approve(script, 'auto-risk', process.cwd()), true, script);
+      const approval = adapters.create_cli_approval({ enabled: true, auto: true }, throwing_confirm(), undefined, true);
+      assert.strictEqual(await approval({ script }), 'approved', script);
     }
-    // `${HOME}` stays outside: the outside-cwd gate still asks for it.
-    assert.strictEqual(adapters.can_auto_approve('echo ${HOME}', 'auto-risk', process.cwd()), false);
     let asked = 0;
-    const approval = adapters.create_cli_approval('auto-risk', async () => {
+    const approval = adapters.create_cli_approval({ enabled: true, auto: true }, async () => {
       asked += 1;
       return false;
-    });
-    assert.strictEqual(await approval({ script: 'sudo ls /' }), 'skipped');
-    assert.strictEqual(asked, 1);
-  });
-
-  it('always asks in confirm-all mode', async () => {
-    let asked = 0;
-    const approval = adapters.create_cli_approval('confirm-all', async () => {
-      asked += 1;
-      return true;
-    });
-    assert.strictEqual(await approval({ script: 'echo hi' }), 'approved');
-    assert.strictEqual(asked, 1);
+    }, undefined, true);
+    assert.strictEqual(await approval({ script: 'sudo ls /' }), 'denied');
+    assert.strictEqual(asked, 0);
   });
 });
 

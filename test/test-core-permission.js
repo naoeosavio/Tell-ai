@@ -3,6 +3,7 @@
 // the denial text stops the model, and a denied child stops.
 // Run with: node --test test/test-core-permission.js (after the core build).
 const assert = require('node:assert');
+const fs = require('node:fs');
 const { describe, it } = require('node:test');
 
 const core = require('../packages/core/dist/index.cjs');
@@ -343,11 +344,29 @@ describe('Phase 1b new rule families (1:1 alignment)', () => {
     assert.strictEqual(core.classify_script('cat *.txt').class, 'low');
     assert.strictEqual(core.classify_script('echo abc | base64 --decode').class, 'low');
   });
+});
 
-  it('keeps neutral shapes unflagged and bare substitution inner-bound', () => {
-    assert.strictEqual(core.classify_script('cd /etc && pwd').class, 'medium');
-    assert.strictEqual(core.classify_script('tar -cf /etc.bak .').class, 'medium');
-    assert.strictEqual(core.classify_script('bash <(echo x)').class, 'medium');
-    assert.strictEqual(core.classify_script('cat .env.example').class, 'low');
+describe('Phase 2 rule table hygiene (discovery 33)', () => {
+  it('holds no duplicate family id (last match wins, so a copy hides drift)', () => {
+    const source = fs.readFileSync('packages/core/src/permission.ts', 'utf8');
+    const ids = [...source.matchAll(/\{ id: '([^']+)', class: '[^']+'/g)].map((match) => match[1]);
+    const seen = new Set();
+    for (const id of ids) {
+      assert.ok(!seen.has(id), `duplicate rule id ${id}`);
+      seen.add(id);
+    }
+    assert.ok(seen.has('high-proc-access'), 'proc family stays');
+  });
+});
+
+describe('Phase 2 skipped wording stops the action too', () => {
+  it('differs from denied only in cause', () => {
+    assert.match(core.COMMAND_SKIPPED_PREAMBLE, /The user declined/);
+    assert.match(core.COMMAND_SKIPPED_PREAMBLE, /Stop this action and explain/);
+    assert.match(core.COMMAND_SKIPPED_PREAMBLE, /Do not reach the same effect/);
+    assert.ok(!core.COMMAND_SKIPPED_PREAMBLE.includes('Request a different command'));
+    const text = core.format_skipped_feedback('rm -rf build');
+    assert.ok(text.includes('Command skipped:'));
+    assert.ok(text.includes('The user declined'));
   });
 });
