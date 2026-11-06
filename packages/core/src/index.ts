@@ -6,6 +6,10 @@ export {
   HOST_DEFAULT_MODEL,
   load_env_layer,
   resolve_core_config,
+  SYSTEM_FILE_MAX_BYTES,
+  TEMPERATURE_MAX,
+  TEMPERATURE_MIN,
+  validate_temperature,
 } from './config';
 export { CUSTOM_SYSTEM_PREFIX, compose_custom_system } from './custom-system';
 export type {
@@ -68,7 +72,10 @@ export {
   CONTINUE_INSTRUCTION,
   chain_limit_notice,
   DELEGATION_REFUSED_FOLLOW_UP,
+  FINAL_ANSWER_INSTRUCTION,
   LOOP_MAX_ROUNDS,
+  merge_tell_results,
+  needs_final_answer,
   run_primitive_loop,
 } from './loop';
 export type {
@@ -149,6 +156,7 @@ export {
   type DelegationRecord,
   type ExecutorOptions,
   type ExecutorResult,
+  extract_think_content,
   type FetchLike,
   type FetchRequest,
   type FetchResponse,
@@ -237,3 +245,15 @@ export {
   task_name_from_ref,
   to_task_name,
 } from './task-naming';
+export type { ReservedTask, TaskValue } from './task-store';
+export {
+  discard_unused_task,
+  init_task_context,
+  list_task_ids,
+  read_task_context,
+  reserve_task_dir,
+  resolve_task_value,
+  task_context_file,
+  task_name_from_prompt,
+  wipe_task_dir,
+} from './task-store';

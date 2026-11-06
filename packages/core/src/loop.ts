@@ -34,6 +34,35 @@ export const CONTINUE_INSTRUCTION = COMMAND_FEEDBACK_INSTRUCTION;
 export const DELEGATION_REFUSED_FOLLOW_UP =
   'Delegation budget exceeded. Answer now in plain text, without <RUN>, <DELEGATE> or <SUBTASK> tags.';
 
+/** Follow-up that asks for one final visible answer (no tags). */
+export const FINAL_ANSWER_INSTRUCTION =
+  'Provide the final visible answer now in plain text, without <RUN>, <DELEGATE> or <SUBTASK> tags.';
+
+/** Inputs of the final-answer rule (the same predicate in both hosts). */
+export type FinalAnswerInput = {
+  /** True when at least one command executed (or failed) this run. */
+  commands_ran: boolean;
+  /** True when a delegation record climbed into the context this run. */
+  delegated: boolean;
+  /** Current visible answer (tag-stripped). */
+  text: string;
+};
+
+/**
+ * Returns true when one more model request must fetch the final answer.
+ *
+ * The CLI legacy rule (`handle_final_answer`) and the Web chain follow the
+ * same rule: commands ran but the visible answer is empty, so the run would
+ * end with nothing on screen otherwise. Delegations count like commands —
+ * a tag-only parent answer strips to empty text with no commands.
+ *
+ * @param input - What ran so far and the current visible text.
+ * @returns True when the final-answer request is required.
+ */
+export function needs_final_answer(input: FinalAnswerInput): boolean {
+  return (input.commands_ran || input.delegated) && input.text === '';
+}
+
 /** Options for `run_primitive_loop` (ports arrive inside the injected runner). */
 export type CoreLoopOptions = {
   /**
@@ -115,6 +144,29 @@ function merge_timeline(aggregated: string[], round_timeline: string[], first_ro
   for (const entry of entries) {
     aggregated.push(entry);
   }
+}
+
+/**
+ * Merges one continuation run into the aggregated run.
+ *
+ * The text and the status come from the new run (it decided the final state);
+ * the new timeline's repeated `User:` line is dropped the same way the loop
+ * drops it per round. One owner for the merge: the CLI resume loop and any
+ * host-side chain that aggregates runs must stay identical.
+ *
+ * @param aggregated - Run accumulated so far.
+ * @param next - Finished continuation run.
+ * @returns The merged result.
+ */
+export function merge_tell_results(aggregated: TellResult, next: TellResult): TellResult {
+  const timeline = [...aggregated.timeline];
+  merge_timeline(timeline, next.timeline, false);
+  return {
+    status: next.status,
+    text: next.text,
+    timeline,
+    commands: [...aggregated.commands, ...next.commands],
+  };
 }
 
 /**

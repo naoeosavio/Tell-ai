@@ -416,7 +416,7 @@ export function create_cancellation_token(): CancellationToken & { cancel(): voi
  * @param raw - Raw model answer.
  * @returns Trimmed think content, or empty string when absent.
  */
-function extract_think_content(raw: string): string {
+export function extract_think_content(raw: string): string {
   const content = /<think>([\s\S]*?)<\/think>/i.exec(raw)?.[1]?.trim();
   if (content) {
     return content;

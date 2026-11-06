@@ -194,6 +194,23 @@ const BASE_RISK_RULES: readonly RiskRule[] = [
     permissive_only: true,
   },
   {
+    id: 'privileged-system-read',
+    category: 'data-exfiltration',
+    severity: 'high',
+    reason: 'read of a world-sensitive system path (/etc, /boot)',
+    flags: ['privileged-path', 'system-read'],
+    // The CLI confirms outside-cwd reads interactively; the Web sandbox has
+    // no confirmation card for a plain read, so the strict profile blocks
+    // the read outright. Read-verb shape keeps `cd /etc && pwd` and
+    // redirections like `2>/dev/null` untouched; `/etc`-prefixed files are
+    // rare enough to accept the block.
+    strict_only: true,
+    dequoted: true,
+    ignore_find_path_arguments: true,
+    pattern:
+      /(?:^|[\s;&|()="'<>`])(?:cat|head|tail|less|more|stat|wc|file|nl|tac|zcat|strings)(?:\s+-{1,2}[\w-]+)*\s+["']?(?:\/|~\/|\$HOME\/|\$\{HOME\}\/)(?:etc|boot)(?:[\s"'/]|$)/,
+  },
+  {
     id: 'download-pipe-interpreter',
     category: 'network-download',
     severity: 'high',

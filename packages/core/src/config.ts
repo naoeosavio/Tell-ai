@@ -6,6 +6,36 @@ export type CoreHost = 'cli' | 'web';
 /** Model default per host: the CLI keeps `g`, the Web keeps `l`. */
 export const HOST_DEFAULT_MODEL: Record<CoreHost, string> = { cli: 'g', web: 'l' };
 
+/** Max bytes of a custom-system file (`--system-file`, tellrc, Web forwarding). */
+export const SYSTEM_FILE_MAX_BYTES = 64 * 1024;
+
+/** Lowest temperature a provider accepts. */
+export const TEMPERATURE_MIN = 0;
+/** Highest temperature a provider accepts. */
+export const TEMPERATURE_MAX = 2;
+
+/**
+ * Validates one temperature value from INI/env/flags/CLI flags.
+ *
+ * Strings parse with `Number`; anything non-finite or outside
+ * `TEMPERATURE_MIN..TEMPERATURE_MAX` is rejected (never clamped). One rule
+ * owner here: the CLI tellrc parser and the Web flag parser both call it, so
+ * the two hosts can never accept a different interval.
+ *
+ * @param raw - Raw numeric value.
+ * @returns The temperature, or undefined when invalid.
+ */
+export function validate_temperature(raw: unknown): number | undefined {
+  const value = typeof raw === 'string' ? Number(raw) : (raw as number);
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return undefined;
+  } else if (value < TEMPERATURE_MIN || value > TEMPERATURE_MAX) {
+    return undefined;
+  } else {
+    return value;
+  }
+}
+
 /** Fully resolved core options injected into the runtime ports. */
 export type CoreConfig = {
   /** Model alias or full spec (already trimmed, never blank). */
