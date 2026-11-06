@@ -72,6 +72,7 @@ import {
 } from '@tell-ai/sdk';
 import { Command } from 'commander';
 import {
+  type CliExecInput,
   type CoreConfig,
   assess_cli_risk,
   cli_risk_port,
@@ -80,10 +81,10 @@ import {
   create_cli_memory_storage,
   create_cli_model,
   create_core_runtime,
-  type ExecMode,
   is_high_risk_script,
   lock_process_environment,
   READLINE_CONFIRM_TIMEOUT_MS,
+  resolve_cli_exec_input,
   type RuntimeCallbacks,
   resolve_cli_core_config,
   script_touches_outside_cwd,
@@ -189,14 +190,14 @@ type TaskPlan = {
 
 // Discard/release uses the core owner (`discard_unused_task`): TaskPlan carries the same shape.
 
-// Effective execution mode lives in `./core-adapters` (single owner shared
+// The effective gate input lives in `./core-adapters` (single owner shared
 // with the approval port); the readline prompt below only renders it.
 
 type ConversationState = {
   firstPrompt: string;
   timeline: string[];
   autoContinue: boolean;
-  execMode: ExecMode;
+  exec_input: CliExecInput;
   saveContext: boolean;
   stream: boolean;
   think: boolean;
@@ -790,10 +791,16 @@ function save_incremental_context(contextPath: string, previousContext: string, 
 // Risk classification and outside-cwd path checks moved to
 // `./core-adapters` (core-owned ports); the prompt below only renders them.
 
-async function confirm_command(script: string, mode: ExecMode): Promise<boolean> {
+async function confirm_command(script: string): Promise<boolean> {
+  // Display-only labels: the approval port already decided (allow runs, deny
+  // stops); this prompt only renders for ask effects.
   const high_risk = is_high_risk_script(script);
-  const touches_outside = mode === 'auto-risk' && !high_risk && script_touches_outside_cwd(script, process.cwd());
-  if (mode === 'auto-risk' && !high_risk && !touches_outside) return true;
+  const touches_outside = !high_risk && script_touches_outside_cwd(script, process.cwd());
+  if (!high_risk && !touches_outside) {
+    // Plain command — still asks (the port decided it must).
+  } else {
+    // Risky or outside — the label below names the cause.
+  }
   if (!process.stdin.isTTY) return false;
   const rl = readline.createInterface({
     input: process.stdin,
@@ -1150,9 +1157,9 @@ async function run_response_loop(
       // No delegation line on screen.
     }
   }
-  const approval = create_cli_approval(state.execMode, (pending) => {
+  const approval = create_cli_approval(state.exec_input, (pending) => {
     clear_delegation_line();
-    return confirm_command(pending, state.execMode);
+    return confirm_command(pending);
   });
   // Shared ports across runs: storage accumulates the conversation so resumed
   // runs compose follow-ups continuously; everything else is stateless.
@@ -1722,15 +1729,20 @@ async function run_tell(
   const save_context = plan.$ !== 'none';
   // Core config resolved once per invocation (exec/chain only — provider
   // keys and URLs stay in `./env` until the explicit tellkey handoff).
-  // `--no-exec` wins over everything; `-y` enables the risk-gated auto mode.
-  // `--require-approval` is declarative in the CLI (high-risk always asks even
-  // with -y, which is already `auto-risk` behavior) and is forwarded to -w.
-  // Task mode forces chain + auto-risk; `--no-exec` never reaches this point.
+  // Core config resolved once per invocation (exec/chain only — provider
+  // keys and URLs stay in `./env` until the explicit tellkey handoff).
+  // `--no-exec` wins over everything; `-y` sets auto (low and medium run);
+  // `--require-approval` sets approve_high (high asks instead of denying).
+  // Task mode forces exec (never `--no-exec`) but never forces `-y`: without
+  // it every command asks, with it safe commands auto-run.
   const core_config =
     task !== undefined
       ? resolve_cli_core_config({ exec: true, chain: true, exec_timeout_ms: limits.exec_timeout_ms })
       : resolve_cli_core_config({ exec: opts.exec, chain: opts.chain, exec_timeout_ms: limits.exec_timeout_ms });
-  const exec_mode: ExecMode = core_config.exec_enabled === false ? 'no-exec' : opts.yes ? 'auto-risk' : 'confirm-all';
+  const exec_input: CliExecInput =
+    task !== undefined
+      ? resolve_cli_exec_input({ exec: true, yes: opts.yes, requireApproval: opts.requireApproval })
+      : resolve_cli_exec_input({ exec: opts.exec, yes: opts.yes, requireApproval: opts.requireApproval });
   // 'create' always starts empty, even if it reuses an existing name (an explicit reset).
   const active_task = task;
   if (active_task?.reset === true) {
@@ -1758,7 +1770,7 @@ async function run_tell(
     firstPrompt: full_prompt,
     timeline: [`User:\n${full_prompt}`],
     autoContinue: task !== undefined ? true : core_config.chain,
-    execMode: exec_mode,
+    exec_input: exec_input,
     saveContext: save_context,
     stream: task !== undefined ? true : Boolean(opts.stream),
     think: Boolean(opts.think),

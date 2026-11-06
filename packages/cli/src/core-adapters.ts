@@ -8,6 +8,7 @@ import {
   create_base_risk_port,
   create_core_runtime,
   create_node_executor,
+  decide_permission,
   DEFAULT_STORAGE_KEY,
   EXEC_DEFAULT_TIMEOUT_MS,
   extract_think_content,
@@ -33,8 +34,15 @@ export type { CoreConfig, RuntimeCallbacks, TellResult };
 /** Readline confirmation budget in milliseconds (mirrors the exec timeout, as before). */
 export const READLINE_CONFIRM_TIMEOUT_MS = EXEC_DEFAULT_TIMEOUT_MS;
 
-/** Effective execution mode, resolved once from the flags (fail-closed). */
-export type ExecMode = 'no-exec' | 'confirm-all' | 'auto-risk';
+/** Input for the CLI permission gate (resolved once from the flags). */
+export type CliExecInput = {
+  /** False when `--no-exec` is present (blocks every class first). */
+  enabled?: boolean | undefined;
+  /** True when `-y` is present (low and medium run). */
+  auto?: boolean | undefined;
+  /** True when `--require-approval` is present (high asks). */
+  approve_high?: boolean | undefined;
+};
 
 /** User confirmation callback (readline prompt in the CLI, stubbed in tests). */
 export type CliConfirmFn = (script: string) => Promise<boolean>;
@@ -187,53 +195,68 @@ export function create_cli_executor(defaults?: { timeout_ms?: number; max_output
 }
 
 /**
- * Decides whether one script needs interactive confirmation.
+ * Resolves the CLI flags once into the permission gate input.
  *
- * Pure helper behind both the readline prompt and the approval port:
- * `auto-risk` runs safe inside-cwd scripts directly and asks for
- * high-risk or outside-cwd ones; `confirm-all` always asks.
+ * Task mode forces `exec` through its own call (it never reaches
+ * `--no-exec`); `-y` only sets `auto` and never approves high commands.
  *
- * @param script - Command script to decide about.
- * @param mode - Effective execution mode.
- * @param cwd - Working directory outside checks resolve against.
- * @returns True when the script may run without asking.
+ * @param flags - Commander `exec`/`yes`/`requireApproval` subset.
+ * @returns The gate input for `create_cli_approval`.
  */
-export function can_auto_approve(script: string, mode: ExecMode, cwd: string): boolean {
-  if (mode !== 'auto-risk') {
-    return false;
-  } else if (is_high_risk_script(script)) {
-    return false;
-  } else if (script_touches_outside_cwd(script, cwd)) {
-    return false;
-  } else {
-    return true;
-  }
+export function resolve_cli_exec_input(flags: {
+  exec?: boolean | undefined;
+  yes?: boolean | undefined;
+  requireApproval?: boolean | undefined;
+}): CliExecInput {
+  return {
+    enabled: flags.exec !== false,
+    auto: flags.yes === true,
+    approve_high: flags.requireApproval === true,
+  };
 }
 
 /**
- * Creates the CLI approval port over an injected confirmation callback.
+ * Creates the CLI approval port over the core permission verdict.
  *
- * `no-exec` is always `denied` (the caller prints the disabled notice and
- * never executes); safe auto-risk scripts are `approved` without asking;
- * anything else follows the callback, with a decline recorded as `skipped`
- * (matching the historical "Skipped by user" wording). The future policy
- * engine remains the only source of `PolicyDecision`.
+ * The core `decide_permission` owns the class and the effect; this port only
+ * realizes it. `allow` runs without asking. `deny` and `block` stop without
+ * asking. `ask` follows the callback, and a decline is `skipped`. An ask with
+ * no TTY is `denied`: a missing channel fails closed, as DSH does with an
+ * unavailable answerer. The host never decides the class again.
  *
- * @param mode - Effective execution mode.
+ * @param input - Effective gate input (`enabled`, `auto`, `approve_high`).
  * @param confirm - Interactive confirmation (readline in the CLI).
- * @param cwd - Working directory outside checks resolve against.
+ * @param cwd - Working directory the scope check resolves against.
+ * @param is_tty - TTY override for tests (default reads `process.stdin`).
  * @returns An `ApprovalPort` authorizing one requested script.
  */
-export function create_cli_approval(mode: ExecMode, confirm: CliConfirmFn, cwd?: string): ApprovalPort {
+export function create_cli_approval(
+  input: CliExecInput,
+  confirm: CliConfirmFn,
+  cwd?: string,
+  is_tty?: boolean,
+): ApprovalPort {
   return async (request: { script: string; risk?: RiskAssessment }): Promise<'approved' | 'denied' | 'skipped'> => {
-    if (mode === 'no-exec') {
+    const verdict = decide_permission({
+      script: request.script,
+      auto: input.auto,
+      approve_high: input.approve_high,
+      enabled: input.enabled,
+      cwd: cwd ?? process.cwd(),
+    });
+    if (verdict.effect === 'allow') {
+      return 'approved';
+    } else if (verdict.effect === 'deny' || verdict.effect === 'block') {
       return 'denied';
-    } else if (can_auto_approve(request.script, mode, cwd ?? process.cwd())) {
-      return 'approved';
-    } else if (await confirm(request.script)) {
-      return 'approved';
     } else {
-      return 'skipped';
+      const tty = is_tty ?? process.stdin?.isTTY === true;
+      if (!tty) {
+        return 'denied';
+      } else if (await confirm(request.script)) {
+        return 'approved';
+      } else {
+        return 'skipped';
+      }
     }
   };
 }
