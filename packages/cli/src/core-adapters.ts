@@ -8,8 +8,11 @@ import {
   create_base_risk_port,
   create_core_runtime,
   create_node_executor,
+  DEFAULT_STORAGE_KEY,
   EXEC_DEFAULT_TIMEOUT_MS,
+  extract_think_content,
   LOOP_MAX_ROUNDS,
+  MemoryStorageAdapter,
   type ModelPort,
   type RiskAssessment,
   type RiskPort,
@@ -49,11 +52,11 @@ export type CliCoreConfigFlags = {
 /**
  * Classifies one script through the core base rules (CLI permissive profile).
  *
- * Local interpreter one-liners stay allowed by design; only
- * network/decode-coupled eval is risky — the same matrix the CLI always
- * enforced, now owned by `@tell-ai/core`. Credential-file reads are the
- * exception: they are high-risk in both profiles, so `cat .env` needs
- * explicit confirmation even with `-y`.
+ * Every interpreter one-liner is risky since core Phase 5 — a local
+ * `node -e "console.log(1)"` asks for confirmation too (the prompt, then the
+ * skip record). Credential-file reads are high-risk in both profiles, so
+ * `cat .env` needs explicit confirmation even with `-y`. The Web strict
+ * profile denies the same shapes outright.
  *
  * @param script - Command script to classify.
  * @returns The base `RiskAssessment` (never an action verdict).
@@ -274,16 +277,6 @@ export type CliModelIO = {
 };
 
 /**
- * Pulls the reasoning text out of a raw `<think>...</think>` response.
- *
- * @param response - Raw model response.
- * @returns Trimmed reasoning content, or empty string when absent.
- */
-function extract_think(response: string): string {
-  return /<think>([\s\S]*?)<\/think>/i.exec(response)?.[1]?.trim() ?? '';
-}
-
-/**
  * Sanitizes a wrapped `<think>` reasoning span for terminal display.
  *
  * @param response - Raw model response.
@@ -343,7 +336,7 @@ async function ask_silently(ai: AskInstance, message: string, system: string, io
     return response;
   }
   if (io.think) {
-    print_reasoning(extract_think(response));
+    print_reasoning(extract_think_content(response));
   } else {
     // Reasoning stays hidden without --think.
   }
@@ -563,28 +556,15 @@ export function create_cli_model(ai: AskInstance, io: CliModelIO): ModelPort {
 /**
  * Creates an in-memory storage port seeded with previous context.
  *
- * `load` serves the seed (the context file content, so the core prompt
- * composition matches the legacy `Previous context:` wrapper byte for
- * byte); per-turn writes stay in memory while the CLI mirrors its own log
- * and context files through the runtime callbacks.
+ * Delegates to the core `MemoryStorageAdapter` (single storage owner): the
+ * seed rides the default context key, so `load` serves the context file
+ * content and the core prompt composition matches the legacy `Previous
+ * context:` wrapper byte for byte. Per-turn writes stay in memory while the
+ * CLI mirrors its own log and context files through the runtime callbacks.
  *
  * @param seed - Previous context text (empty when no context applies).
  * @returns A `StoragePort` for the core runtime.
  */
 export function create_cli_memory_storage(seed: string): StoragePort {
-  let current = seed;
-  return {
-    async load(_key: string): Promise<string> {
-      return current;
-    },
-    async save(_key: string, value: string): Promise<void> {
-      current = value;
-    },
-    async clear(_key: string): Promise<void> {
-      current = '';
-    },
-    async appendLog(_key: string, entry: string): Promise<void> {
-      current += entry;
-    },
-  };
+  return new MemoryStorageAdapter(undefined, { [DEFAULT_STORAGE_KEY]: seed });
 }

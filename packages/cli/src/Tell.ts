@@ -6,6 +6,8 @@ import * as path from 'path';
 import * as readline from 'readline';
 import {
   build_execution_options,
+  chain_limit_notice,
+  discard_unused_task,
   collect_exec_secrets,
   collect_sensitive_file_secrets,
   create_delegation_runner,
@@ -28,24 +30,33 @@ import {
   EXIT_LIMIT,
   EXIT_MODEL_ERROR,
   EXIT_TIMEOUT,
+  FINAL_ANSWER_INSTRUCTION,
   format_command_result,
   HOST_DEFAULT_MODEL,
   format_command_skipped,
   is_task_id,
+  needs_final_answer,
+  list_task_ids,
+  merge_tell_results,
   missing_vendor_key,
   MAX_CHAIN_STEPS,
   delegation_prompt_section,
   parse_runtime_limits,
   type Redactor,
+  reserve_task_dir,
   resolve_max_delegations,
   resolve_task_id,
   type RuntimeLimits,
   runtime_env_from_process,
+  split_task_value,
   StdinLimitError,
   strip_delegation_tags,
+  task_context_file,
+  task_name_from_prompt,
   task_name_from_ref,
   truncate_context,
   truncate_output,
+  wipe_task_dir,
 } from '@tell-ai/core';
 import {
   type AskInstance,
@@ -93,15 +104,17 @@ import {
 import { expand_mentions } from './mentions';
 import {
   compose_system_prompt,
-  load_system_file_text,
   load_tellrc,
   resolve_model_input,
   resolve_tellrc,
-  tellrc_custom_text,
+  resolve_tellrc_system_text,
   validate_temperature,
 } from './tellrc';
 
-const DEFAULT_MODEL = process.env['TELL_MODEL'] || HOST_DEFAULT_MODEL.cli;
+// The host default only: `TELL_MODEL` belongs to the tellrc env layer
+// (`resolve_tellrc` reads it), so this constant must not read it a second
+// time — one layer, one read. Flag and positional alias win above it.
+const DEFAULT_MODEL = HOST_DEFAULT_MODEL.cli;
 const STDIN_TIMEOUT = DEFAULT_STDIN_TIMEOUT_MS;
 // Chars of accumulated conversation context; beyond this the oldest part is
 // summarized away (LLM windows are far below 64K chars of raw history).
@@ -174,30 +187,7 @@ type TaskPlan = {
   prompt: string;
 };
 
-/**
- * Releases a task directory claimed by a run that never persisted `main.txt`.
- *
- * The number is claimed with `mkdir` before the model is called, so every
- * failure path (bad model spec, provider error, a crash before the first
- * save) must give it back; otherwise an invisible empty task consumes the
- * number forever. Resumed tasks keep their directory, and a task whose
- * `main.txt` exists was persisted, so neither is removed.
- *
- * @param task - Resolved task plan for this invocation, if any.
- */
-function discard_unused_task(task: TaskPlan | undefined): void {
-  if (task === undefined || task.resumed) {
-    return;
-  } else if (fs.existsSync(task.file)) {
-    return;
-  } else {
-    try {
-      fs.rmdirSync(task.dir);
-    } catch {
-      // The directory is gone or not empty — nothing to clean.
-    }
-  }
-}
+// Discard/release uses the core owner (`discard_unused_task`): TaskPlan carries the same shape.
 
 // Effective execution mode lives in `./core-adapters` (single owner shared
 // with the approval port); the readline prompt below only renders it.
@@ -405,49 +395,8 @@ function named_context_file(name: string): string {
   return path.join(context_dir(), `${name}.txt`);
 }
 
-// The context file of a task: `task-NNN-name/main.txt`. The directory also
-// holds the child records (`delegate-NNN.txt` / `subtask-NNN.txt`).
-function task_context_file(id: string): string {
-  return path.join(context_dir(), id, 'main.txt');
-}
-
-// Task ids that exist on disk. A directory counts even before `main.txt`
-// exists: another run may have claimed the number and still be in flight.
-function list_task_ids(): string[] {
-  let dirents: fs.Dirent[] = [];
-  try {
-    dirents = fs.readdirSync(context_dir(), { withFileTypes: true });
-  } catch {
-    return [];
-  }
-  return dirents.filter((dirent) => dirent.isDirectory() && is_task_id(dirent.name)).map((dirent) => dirent.name);
-}
-
-// Claims a task directory atomically. `mkdir` without `recursive` fails with
-// EEXIST when a concurrent run took the number first; retry with fresh ids so
-// two runs can never share a number.
-function reserve_task_dir(raw_ref: string | null, name: string): { id: string; resumed: boolean } {
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    const resolved = resolve_task_id(raw_ref, name, list_task_ids());
-    if (resolved.resumed) {
-      return resolved;
-    } else {
-      ensure_dir(context_dir());
-      try {
-        fs.mkdirSync(path.join(context_dir(), resolved.id));
-        return resolved;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-          // Another run claimed the number between the listing and the mkdir.
-        } else {
-          throw error;
-        }
-      }
-    }
-  }
-  throw new Error('Could not allocate a task number — retry the run');
-}
-
+// Task-id listing went to the core store (directories only, F6).
+// Task-dir claim went to the core store (`mkdir` + EEXIST retry, F4).
 // Every saved context file, newest first (index 0 == `@0`,
 // mirroring `git stash@{0}`). A task is a directory (`task-NNN-name/`) and its
 // id is the directory name; `main.txt` provides the preview and the mtime.
@@ -462,7 +411,7 @@ function list_context_entries(): ContextEntry[] {
   for (const dirent of dirents) {
     if (dirent.isDirectory()) {
       if (!is_task_id(dirent.name)) continue;
-      const file = task_context_file(dirent.name);
+      const file = task_context_file(context_dir(), dirent.name);
       try {
         entries.push({ file, id: dirent.name, mtimeMs: fs.statSync(file).mtimeMs });
       } catch {
@@ -545,19 +494,14 @@ function sanitize_context_name(raw: string): string | null {
   return value;
 }
 
-// Splits a `--ctx` value into its first word and the remaining text. The
-// first word is the ref only when it is `@N` or starts with `%`; the rest is
-// prompt text for that context.
-function split_ctx_value(value: string): { first: string; rest: string } {
-  const trimmed = value.trim();
-  const separator = trimmed.search(/\s/);
-  if (separator === -1) return { first: trimmed, rest: '' };
-  return { first: trimmed.slice(0, separator), rest: trimmed.slice(separator + 1).trim() };
-}
-
-// True when a token opens a context ref: `@N` (recency index) or `%id`
-// (use-or-create). A bare `@path` token is NOT a ref — it stays prompt text
-// and is expanded by `expand_mentions` afterwards.
+// Context values split with the core `split_task_value` (one word-splitting
+// owner for `--ctx` and `--task`): the first word is the ref only when it
+// starts with `%` (or is `@N`, checked at the call site); the rest is prompt
+// text for that context.
+/** True when a token opens a context ref: `@N` (recency index) or `%id`
+ * (use-or-create). A bare `@path` token is NOT a ref — it stays prompt text
+ * and is expanded by `expand_mentions` afterwards.
+ */
 function is_context_ref_token(token: string): boolean {
   return /^@\d+$/i.test(token) || token.startsWith('%');
 }
@@ -566,7 +510,7 @@ function is_context_ref_token(token: string): boolean {
 // ref, or a value whose first word is not a ref at all. `main()` uses this to
 // decide whether `--ctx` alone satisfies the missing-prompt check.
 function ctx_value_has_prompt(value: string): boolean {
-  const { first, rest } = split_ctx_value(value);
+  const { first, rest } = split_task_value(value);
   if (!first) return false;
   return rest.length > 0 || !is_context_ref_token(first);
 }
@@ -607,7 +551,7 @@ function resolve_context_ref(
   has_positional_prompt: boolean,
 ): ContextPlan {
   const value = raw.trim();
-  const { first, rest } = split_ctx_value(value);
+  const { first, rest } = split_task_value(value);
 
   if (/^@\d+$/i.test(first)) {
     const index = Number(first.slice(1));
@@ -654,7 +598,7 @@ const TASK_RESUME_INSTRUCTION = 'Continue the task from the saved context. Take 
 // without a ref creates `task-NNN-<hash8>`. A new task needs an objective; a
 // resume without a prompt continues from the saved context.
 function build_task_plan(opts: CliOptions, prompt: string, reserve = true): TaskPlan {
-  const { first, rest } = split_ctx_value(typeof opts.task === 'string' ? opts.task : '');
+  const { first, rest } = split_task_value(typeof opts.task === 'string' ? opts.task : '');
   const raw_ref = first.startsWith('%') ? first.slice(1) : null;
   if (raw_ref !== null && sanitize_context_name(raw_ref) === null) {
     throw new Error(`Invalid task reference "${sanitize_label(first)}" — use % followed by a task id`);
@@ -664,10 +608,9 @@ function build_task_plan(opts: CliOptions, prompt: string, reserve = true): Task
   if (reset && raw_ref === null) {
     throw new Error('-n/--name requires a task id in task mode: --task %<id> -n');
   }
-  const name =
-    raw_ref !== null
-      ? task_name_from_ref(raw_ref)
-      : createHash('sha256').update(`${process.cwd()}\n${task_prompt}`).digest('hex').slice(0, 8);
+  // The hash name comes from the core owner (D6): both hosts derive the
+  // same id from the same cwd and prompt.
+  const name = raw_ref !== null ? task_name_from_ref(raw_ref) : task_name_from_prompt(process.cwd(), task_prompt);
   if (name === '') {
     throw new Error('Invalid task name — use letters, digits and dashes');
   } else {
@@ -676,13 +619,13 @@ function build_task_plan(opts: CliOptions, prompt: string, reserve = true): Task
   // The prompt check runs before any directory claim, so a create that can
   // never run leaves nothing behind. Web mode never claims here: the child
   // host resolves (and creates) the task from the same raw value and cwd.
-  const probe = resolve_task_id(raw_ref, name, list_task_ids());
+  const probe = resolve_task_id(raw_ref, name, list_task_ids(context_dir()));
   if (!probe.resumed && task_prompt === '') {
     throw new Error('error: missing prompt — a new task needs an objective');
   } else {
     // The task can run; claim its number below.
   }
-  const resolved = reserve ? reserve_task_dir(raw_ref, name) : probe;
+  const resolved = reserve ? reserve_task_dir(context_dir(), raw_ref, name) : probe;
   if (!resolved.resumed && task_prompt === '') {
     // A concurrent run could claim the id between the probe and the claim.
     throw new Error('error: missing prompt — a new task needs an objective');
@@ -690,7 +633,7 @@ function build_task_plan(opts: CliOptions, prompt: string, reserve = true): Task
     // A resume without a prompt continues from the saved context.
   }
   const effective_prompt = task_prompt === '' ? TASK_RESUME_INSTRUCTION : task_prompt;
-  const file = task_context_file(resolved.id);
+  const file = task_context_file(context_dir(), resolved.id);
   return {
     id: resolved.id,
     dir: path.dirname(file),
@@ -708,37 +651,7 @@ function task_prompt_section(id: string, can_delegate: boolean): string {
   return `\nTask mode (${id}): this run is one turn of a saved task context. Keep the answer focused on the next step.${delegation}`;
 }
 
-// Full-wipe reset for task mode (`--task %id -n`): removes `main.txt` and
-// every child record, keeps the directory (the NNN anchor), then writes an
-// empty `main.txt` so the task stays visible in `-l`. History is kept.
-function wipe_task_dir(dir: string): void {
-  let names: string[] = [];
-  try {
-    names = fs.readdirSync(dir);
-  } catch {
-    return;
-  }
-  for (const name of names) {
-    if (name === 'main.txt' || /^(delegate|subtask)-\d+\.txt$/.test(name)) {
-      try {
-        fs.unlinkSync(path.join(dir, name));
-      } catch {
-        // Best effort — a missing file races nothing.
-      }
-    } else {
-      // Other files stay.
-    }
-  }
-  try {
-    ensure_dir(dir);
-    fs.writeFileSync(path.join(dir, 'main.txt'), '', { encoding: 'utf8', mode: 0o600 });
-    tighten_permissions(path.join(dir, 'main.txt'), 0o600);
-  } catch (error) {
-    process.stderr.write(
-      `\x1b[33mWarning: failed to reset ${dir}: ${error instanceof Error ? error.message : String(error)}\x1b[0m\n`,
-    );
-  }
-}
+// Full-wipe reset uses the core `wipe_task_dir` (child records included, F3).
 
 // Writes one child record (`delegate-NNN.txt` / `subtask-NNN.txt`) beside
 // `main.txt`. The number is the highest present plus one, so a reset never
@@ -801,7 +714,7 @@ function build_context_plan(
   has_positional_prompt: boolean,
 ): ContextPlan {
   if (opts.name) {
-    const { first, rest } = split_ctx_value(typeof opts.ctx === 'string' ? opts.ctx : '');
+    const { first, rest } = split_task_value(typeof opts.ctx === 'string' ? opts.ctx : '');
     const id = first.startsWith('%') ? sanitize_context_name(first.slice(1)) : null;
     if (!id) throw new Error('-n/--name requires a context id: --ctx %<id> -n');
     return rest
@@ -1135,16 +1048,8 @@ function should_resume_after_decline(result: TellResult): boolean {
   }
 }
 
-// Merges a continuation run into the aggregated result (dropping the
-// repeated `User:` line, like the core loop does per round).
-function merge_run_result(aggregated: TellResult, next: TellResult): TellResult {
-  return {
-    status: next.status,
-    text: next.text,
-    timeline: [...aggregated.timeline, ...next.timeline.slice(1)],
-    commands: [...aggregated.commands, ...next.commands],
-  };
-}
+// Result merging uses the core `merge_tell_results` (D5): the continuation's
+// repeated `User:` line is dropped exactly like the core loop drops it.
 
 async function run_response_loop(
   ai: AskInstance,
@@ -1434,23 +1339,27 @@ async function run_response_loop(
     runtime = create_runtime(chain_budget - parent_turns);
     latest = await runtime.run(feedback);
     warn_delegation_budget_once(latest.timeline);
-    result = merge_run_result(result, latest);
+    result = merge_tell_results(result, latest);
   }
-  if (state.autoContinue && parent_turns >= chain_budget) {
-    process.stderr.write(`\x1b[33mChain limit reached (${chain_budget}); asking for final answer.\x1b[0m\n`);
-    process.stderr.write(
-      `\x1b[33mChain limit reached (${chain_budget}); ignoring further requested commands.\x1b[0m\n`,
-    );
+  const budget_ended = state.autoContinue && parent_turns >= chain_budget;
+  if (budget_ended) {
+    process.stderr.write(`\x1b[33m${chain_limit_notice(chain_budget)}\x1b[0m\n`);
   } else {
     // Limit not reached — nothing to announce.
   }
-  // Final answer (legacy `handle_final_answer`): commands ran but the visible
-  // answer is empty — ask once more without `<RUN>`. Chain mode asks too, so
-  // a run that ends at the round cap never leaves stdout empty. Delegation
-  // counts the same as commands: a tag-only parent answer strips to empty
-  // text with no commands, and without this the run would print nothing.
-  if ((result.commands.length > 0 || did_delegate) && !result.text) {
-    const final_prompt = `${strip_think_tags(conversation_text(state))}\n\nProvide the final visible answer now in plain text, without <RUN>, <DELEGATE> or <SUBTASK> tags.`;
+  // Final answer (legacy `handle_final_answer`): the rule lives in the core
+  // (`needs_final_answer`) — commands ran but the visible answer is empty, so
+  // the run would end with nothing on screen. Delegation counts the same as
+  // commands: a tag-only parent answer strips to empty text with no
+  // commands. The "asking for final answer" line accompanies the actual
+  // final call at the round cap, never a budget end without one (F9).
+  if (needs_final_answer({ commands_ran: result.commands.length > 0, delegated: did_delegate, text: result.text })) {
+    if (budget_ended) {
+      process.stderr.write(`\x1b[33mChain limit reached (${chain_budget}); asking for final answer.\x1b[0m\n`);
+    } else {
+      // Mid-budget runs ask silently (legacy behavior, no extra line).
+    }
+    const final_prompt = `${strip_think_tags(conversation_text(state))}\n\n${FINAL_ANSWER_INSTRUCTION}`;
     const final_response = await model.ask(final_prompt, { system, stream: false });
     const final_text = strip_delegation_tags(strip_run_tags(strip_think_tags(final_response)));
     if (final_text && !state.stream) console.log(final_text);
@@ -1508,7 +1417,6 @@ async function launch_web(opts: {
   stream?: boolean | undefined;
   think?: boolean | undefined;
   profile?: string | undefined;
-  systemFile?: string | undefined;
   systemText?: string | undefined;
   temperature?: number | undefined;
   maxChainSteps?: number | undefined;
@@ -1556,9 +1464,9 @@ async function launch_web(opts: {
   if (opts.temperature !== undefined) child_args.push('--temperature', String(opts.temperature));
   let temp_system_file: string | null = null;
   try {
-    if (opts.systemFile) {
-      child_args.push('--system-file', opts.systemFile);
-    } else if (opts.systemText) {
+    if (opts.systemText) {
+      // The sandbox only receives RESOLVED custom text (F1/F2/F10): the
+      // file rides a 0600 temp file, removed after the child exits.
       temp_system_file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tell-system-')), 'system.txt');
       fs.writeFileSync(temp_system_file, opts.systemText, { mode: 0o600 });
       try {
@@ -1825,7 +1733,7 @@ async function run_tell(
   // 'create' always starts empty, even if it reuses an existing name (an explicit reset).
   const active_task = task;
   if (active_task?.reset === true) {
-    wipe_task_dir(active_task.dir);
+    wipe_task_dir(active_task);
   } else {
     // No reset — existing records stay.
   }
@@ -1838,34 +1746,11 @@ async function run_tell(
       : plan.$ === 'default' || plan.$ === 'existing'
         ? read_text(plan.file)
         : '';
-  // Tellrc system-file (64 KB cap, regular file, project gate) plus inline
-  // system and profile data compose as custom instructions before safety.
-  // Profile system-file follows the same gates; its origin decides the gate.
-  let system_file_text: string | undefined;
-  if (tellrc.system_file) {
-    const from_project = (tellrc.provenance['system_file'] ?? '').endsWith(path.join(process.cwd(), '.tellrc'));
-    system_file_text = load_system_file_text(tellrc.system_file, process.cwd(), os.homedir(), from_project);
-  } else {
-    // No system-file configured.
-  }
-  let profile_system_text: string | undefined;
-  const profile_system_file = tellrc.profile_data?.system_file;
-  if (profile_system_file) {
-    const from_project = (tellrc.profile_data?.system_file_from ?? '').endsWith(path.join(process.cwd(), '.tellrc'));
-    profile_system_text = load_system_file_text(profile_system_file, process.cwd(), os.homedir(), from_project);
-  } else {
-    // No profile system-file configured.
-  }
-  const resolved_for_text = {
-    ...tellrc,
-    ...(system_file_text !== undefined ? { system_text: system_file_text } : {}),
-  };
-  if (resolved_for_text.profile_data && profile_system_text !== undefined) {
-    resolved_for_text.profile_data = { ...resolved_for_text.profile_data, system_text: profile_system_text };
-  } else {
-    // No profile file text to attach.
-  }
-  const custom_system_text = tellrc_custom_text(resolved_for_text);
+  // Tellrc custom text resolves in one shared helper (`resolve_tellrc_system_text`):
+  // every system-file carries the same gates (64 KB cap, regular file,
+  // project-cwd escape), profile data keep their fill-if-empty rule, and the
+  // full composed text is exactly what the Web host forwards (F1/F2/F10).
+  const custom_system_text = resolve_tellrc_system_text(tellrc, process.cwd());
   // The prompt stays unwrapped: the core runtime composes the identical
   // `Previous context:` wrapper from the seeded storage on round one.
   const state: ConversationState = {
@@ -1986,9 +1871,10 @@ async function main() {
     return;
   }
 
-  // Tellrc-aware model default: flag > env > project > user > positional >
-  // built-in. Aliases resolve without mutating MODELS; a positional custom
-  // alias is accepted in the same slot the parser accepts for models.
+  // Tellrc-aware model default: `-m` flag > positional alias > env
+  // (`TELL_MODEL`) and tellrc files > host default (`g`). The positional
+  // alias beats env/tellrc (`parse_args` drops a positional model spec only
+  // when `-m` is present); aliases resolve without mutating MODELS.
   // Quiet unless this is a web launch (run_tell re-resolves and prints).
   const early_tellrc = resolve_invocation_tellrc(opts, process.cwd(), !opts.web);
   let early_limits: RuntimeLimits;
@@ -2032,7 +1918,7 @@ async function main() {
   let task: TaskPlan | undefined;
   let final_prompt = prompt;
   if (opts.task !== undefined) {
-    const { first, rest } = split_ctx_value(typeof opts.task === 'string' ? opts.task : '');
+    const { first, rest } = split_task_value(typeof opts.task === 'string' ? opts.task : '');
     const has_ref = first.startsWith('%');
     const task_prompt = [rest, prompt].filter(Boolean).join(' ').trim();
     if (task_prompt === '' && !has_ref) {
@@ -2055,8 +1941,10 @@ async function main() {
     // Not task mode: the legacy prompt rules apply.
   }
   if (opts.web) {
-    const web_system_file = opts.systemFile ?? early_tellrc.system_file;
-    const web_system_text = opts.system ?? early_tellrc.system;
+    // The full custom text (inline, file, profile) resolves HERE, against
+    // the CLI cwd (process.cwd(), never `--cwd` — F10); the sandbox only
+    // ever receives the resolved text, never a raw path (F1/F2).
+    const web_system_text = resolve_tellrc_system_text(early_tellrc, process.cwd());
     // Limit forwarding prefers explicit CLI flags/env (already validated
     // into `early_limits`) over tellrc; absent layers stay absent so the web
     // server keeps its own defaults. `--stdin-max-bytes` stays CLI-only (the
@@ -2083,8 +1971,7 @@ async function main() {
       stream: opts.stream,
       think: opts.think,
       profile: opts.profile ?? early_tellrc.profile,
-      systemFile: web_system_file,
-      systemText: web_system_file ? undefined : web_system_text,
+      systemText: web_system_text,
       maxChainSteps:
         opts.maxChain !== undefined || web_env.TELL_MAX_CHAIN_STEPS !== undefined
           ? early_limits.max_chain_steps

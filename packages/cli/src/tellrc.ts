@@ -2,15 +2,22 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import { compose_custom_system, TELLRC_LIMIT_KEYS, validate_tellrc_limit_value } from '@tell-ai/core';
+import {
+  compose_custom_system,
+  SYSTEM_FILE_MAX_BYTES,
+  TELLRC_LIMIT_KEYS,
+  validate_tellrc_limit_value,
+  validate_temperature,
+} from '@tell-ai/core';
 
 /** Max bytes of a `.tellrc` file read before it is ignored with a warning. */
 export const TELLRC_MAX_BYTES = 256 * 1024;
-/** Max bytes of a `system-file` payload injected as custom instructions. */
-export const SYSTEM_FILE_MAX_BYTES = 64 * 1024;
-/** Valid temperature interval forwarded to the provider. */
-export const TEMPERATURE_MIN = 0;
-export const TEMPERATURE_MAX = 2;
+// The system-file cap is a core constant now (D9): the CLI file loader and
+// the Web forwarded-text loader share it; re-exported for the old import path.
+export { SYSTEM_FILE_MAX_BYTES } from '@tell-ai/core';
+// Temperature bounds and the validator are core-owned (one rule for both
+// hosts); re-exported here so tellrc callers keep one import path.
+export { TEMPERATURE_MAX, TEMPERATURE_MIN } from '@tell-ai/core';
 /** Built-in profile names shipped as data (enforcement lives in policy-sandbox). */
 export const BUILTIN_PROFILES = ['node', 'security', 'devops'] as const;
 /** Profile name type for the three built-in profiles. */
@@ -192,21 +199,12 @@ function split_deny_value(value: string): string[] {
 }
 
 /**
- * Validates a temperature value from INI/env/flags.
+ * Re-exports the core temperature validator.
  *
- * @param raw - Raw numeric value.
- * @returns The temperature, or undefined when invalid.
+ * The CLI and the Web flag parser share one interval rule owned by
+ * `@tell-ai/core`; the tellrc layer keeps its historical import path.
  */
-export function validate_temperature(raw: unknown): number | undefined {
-  const value = typeof raw === 'string' ? Number(raw) : (raw as number);
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
-    return undefined;
-  } else if (value < TEMPERATURE_MIN || value > TEMPERATURE_MAX) {
-    return undefined;
-  } else {
-    return value;
-  }
-}
+export { validate_temperature };
 
 /**
  * Creates an empty parsed tellrc for one source.
@@ -974,6 +972,49 @@ export function load_system_file_text(
  */
 export function compose_system_prompt(safety_prompt: string, custom_text?: string): string {
   return compose_custom_system(custom_text ?? '', safety_prompt);
+}
+
+/**
+ * Resolves the full custom system text of a resolved tellrc (F1/F2/F10).
+ *
+ * Loads every `system-file` through `load_system_file_text` with the same
+ * rules the direct run applies: the 64 KB cap, the regular-file check, and
+ * the project-cwd escape gate (F2). Profile data keeps its fill-if-empty
+ * rule, so the profile `system`, `prompt`, `style` and `system-file` all
+ * cross to the Web host (F1) instead of staying behind in the profile data.
+ *
+ * @param resolved - Resolved tellrc (file layers + env + flags already merged).
+ * @param cwd - Working directory the system files resolve against (the CLI
+ * always passes `process.cwd()`, never the sandbox `--cwd` — F10).
+ * @returns The combined custom text (undefined when nothing applies).
+ */
+export function resolve_tellrc_system_text(resolved: ResolvedTellrc, cwd: string): string | undefined {
+  let system_file_text: string | undefined;
+  if (resolved.system_file) {
+    const from_project = (resolved.provenance['system_file'] ?? '').endsWith(path.join(cwd, '.tellrc'));
+    system_file_text = load_system_file_text(resolved.system_file, cwd, os.homedir(), from_project);
+  } else {
+    // No top-level system file.
+  }
+  let profile_system_text: string | undefined;
+  const profile_system_file = resolved.profile_data?.system_file;
+  if (profile_system_file) {
+    const from_project = (resolved.profile_data?.system_file_from ?? '').endsWith(path.join(cwd, '.tellrc'));
+    profile_system_text = load_system_file_text(profile_system_file, cwd, os.homedir(), from_project);
+  } else {
+    // No profile system file.
+  }
+  const for_text: ResolvedTellrc = {
+    ...resolved,
+    ...(system_file_text !== undefined ? { system_text: system_file_text } : {}),
+  };
+  if (for_text.profile_data && profile_system_text !== undefined) {
+    for_text.profile_data = { ...for_text.profile_data, system_text: profile_system_text };
+  } else {
+    // No profile file text to attach.
+  }
+  const composed = tellrc_custom_text(for_text);
+  return composed === '' ? undefined : composed;
 }
 
 /**
