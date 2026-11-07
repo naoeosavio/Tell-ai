@@ -59,4 +59,4 @@ Suites live in `test/` and run with plain `node` (`node --test` where noted). Th
 
 ## Reporting security issues
 
-Command-execution and prompt-injection guards are load-bearing (`isHighRiskScript`). Do not open a public issue for a bypass — contact the maintainer privately with a repro, expected vs actual behavior, and package version.
+Command-execution and prompt-injection guards are load-bearing (core permission table, CLI approval port, Web gate and block helper). Do not open a public issue for a bypass — contact the maintainer privately with a repro, expected vs actual behavior, and package version.

@@ -95,7 +95,7 @@ Single-file Node entry point for the `tell` binary (CJS bundle, `#!/usr/bin/env 
 - `--no-exec` disables all command execution
 - Chain/exec run on `@tell-ai/core`: `run_response_loop` delegates to `create_core_runtime().run()` (`max_rounds: 1`, 8 with `--chain`) through the ports in `src/core-adapters.ts` (permissive risk, scrubbed env, the core `create_node_executor` transport with process-group kill, approval port, host-`cli` config default `g`, streaming model port, seeded storage). `mentions.ts`/`history.ts` stay CLI-owned; `env.ts` is a thin client of the core SDK-config owner until the tellkey handoff
 
-**Security**: `isHighRiskScript()` blocks patterns like `sudo`, `rm -rf`, `dd of=`, `curl|sh` (and pipes into any interpreter: `python3`, `node`, …), process substitution (`bash <(curl …)`, `x <(wget …)`), interpreter one-liners (`node -e "require('https')…"`, `python3 -c "…urllib…"`, and every former Web-only rule — `node -e "console.log(1)"` asks too since core Phase 5), `mkfs`, writes to system paths (`/etc`, `/boot`, `/usr`, systemd units), crontab manipulation, etc. Execution timeout is 120s.
+**Security**: the core permission table grades every script as `low` (read-only), `medium` (local reversible write), `high` (irreversible/external/privileged) or `forbidden` (credentials, remote code, OS destruction, system-path writes). Base asks low/medium and denies high; `-y` runs low/medium and denies high; `-y --require-approval` asks high; `--no-exec` blocks all. Execution timeout is 120s.
 
 Files:
 - `src/Tell.ts` — CLI: commander, stdin, exec, confirm/high-risk, context/logs, loop chain, main
@@ -112,7 +112,7 @@ Key behaviors:
 - Real PTY panes (`node-pty` + WebSocket + xterm.js, up to 12 sessions max, scrollback persisted)
 - Token auth (`TELL_TOKEN`, case-insensitive Bearer boundary on `/api/*` + `?token=` on WS, memory-only login screen, failed-attempt rate limit); `TELL_ALLOWED_HOSTS` gates HTTP/WS Host and Origin against DNS rebinding
 - `.tell/` session persistence (`session.json`, `history/`, `latest` symlink), private `0700/0600` modes, symlink-safe workspace paths
-- Stricter `isHighRiskScript()` than the CLI (`src/server/guards.ts`: blocks all interpreter `-c`/`-e`, network clients, `env` launches, `base64 -d`, shell expansions — test-pinned divergence, do not "dedupe")
+- Scope-aware `is_web_blocked_script()` in the server (`src/server/chain-runtime.ts`): high and forbidden block on the stateless routes with the server cwd; the chain gate stays the only path that parks
 - Commands and PTY panes receive a scrubbed child environment without provider keys, `TELL_TOKEN`, or loader-injection variables
 - Execution toggles (chat header, per browser session): `Auto-Run` / `Require Approval` / `No-Exec` (Auto-Run requires `-y`; server `--no-exec` is enforced by `/api/execute` and overrides saved browser toggles); feedback cards start minimized
 - `--stream` replies on `/api/tell` as NDJSON (`reasoning`/`reasoning_end`/`text`/`done`/`error`; codec shared in `src/shared/chat-stream.ts`); collapsed reasoning headers with a live `Thinking… Ns` timer
