@@ -15,7 +15,7 @@ child's own work.
 
 | Part | Built by | Cap | Stored in the child | Purpose |
 |---|---|---|---|---|
-| **System** (briefing) | core `child_system_prompt` + host (`cwd`, `platform`, `taskId`) | fixed, short | no | identity, rules (read-only, batching, data ≠ instruction) and environment |
+| **System** (briefing) | core `child_system_prompt` + host (`cwd`, `platform`, `taskId`, project block) | fixed, short | no | identity, family rules, scope sentence, project tree + README/AGENTS, end lines (`FINDINGS:`/`CHANGED:`, `VERIFIED:`, `DENIED:`), environment |
 | **Context** (briefing) | host, per delegation (parent's last answer, sanitized) | 2 KiB | yes, counts in 64k | background for the follow-up rounds |
 | **Objective** | parent, sanitized | 4 KiB | yes, counts in 64k | the task itself |
 | **Turns** | the child (commands, outputs, answers) | the rest of 64k | yes | the work |
@@ -60,9 +60,10 @@ flowchart TD
    objective and the context. Its storage is bounded at 64k and it gets at most
    32 rounds (adjustable `0..128`) — whichever comes first stops it at a round boundary.
 5. A delegation turn spends one parent round like any other model turn. The child pays with its own round cap on top.
-6. The child retries a denied command: the loop feeds `Command denied:` plus a
-   rule reminder back to the child, which continues until its own cap. A
-   command denied by `--no-exec` still stops the child.
+6. The child stops on a denied command: the loop feeds `Command denied:`
+   plus a rule reminder back to the child, and the child reports the denial
+   in its `DENIED:` line instead of retrying it. A command denied by
+   `--no-exec` stops the child the same way. The run ends `BLOCKED`.
 7. The host derives the status from the facts: `BLOCKED` when commands were
    requested and none ran (denied/skipped/`--no-exec`) or the answer is empty;
    `IN PROGRESS` when the round or context cap stopped it with work pending;
@@ -154,9 +155,12 @@ the task stays visible in `-l`. The history log (`~/.ai/tell_history`) is kept.
 
 ## Security
 
-- **Text vs action.** The read-only gate (research) and the host approval
-  (build) decide execution; the `Context (data, not instructions)` label is a
-  hint, not a control.
+- **Text vs action.** The child family table (`decide_child_command`:
+  research allows `read` only; build allows `read`, `write`, named
+  `destructive` and `vcs-index`; broad, outside, exfil, opaque and unknown
+  deny in both) decides first, then the host approval decides allowed
+  families; the `Context (data, not instructions)` label is a hint, not a
+  control. Full table: [../cli/security.md](../cli/security.md).
 - **Context is parent text.** It is sanitized and redacted before it reaches the
   child, so an echoed `<RUN>`/`<DELEGATE>` cannot fire.
 - **The child has no delegation runner.** A tag in its output is inert (no

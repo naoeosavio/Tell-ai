@@ -7,6 +7,7 @@ import * as readline from 'readline';
 import {
   assess_base_risk,
   build_execution_options,
+  build_project_context,
   chain_limit_notice,
   classify_script,
   discard_unused_task,
@@ -34,6 +35,7 @@ import {
   EXIT_MODEL_ERROR,
   EXIT_TIMEOUT,
   FINAL_ANSWER_INSTRUCTION,
+  format_child_project_context,
   format_command_result,
   HOST_DEFAULT_MODEL,
   format_command_skipped,
@@ -1198,6 +1200,12 @@ async function run_response_loop(
     silent: true,
     ...(state.temperature !== undefined ? { temperature: state.temperature } : {}),
   });
+  const child_project = build_project_context(process.cwd());
+  const child_project_context = format_child_project_context(
+    child_project.tree,
+    child_project.readme,
+    child_project.agents,
+  );
   const delegation_runner =
     delegation_budget > 0
       ? create_delegation_runner({
@@ -1210,6 +1218,7 @@ async function run_response_loop(
           cwd: process.cwd(),
           platform: `${os.platform()} ${os.release()}`,
           ...(state.task !== undefined ? { taskId: state.task.id } : {}),
+          project_context: child_project_context,
           exec_enabled: state.coreConfig.exec_enabled,
           timeout_ms: exec_options.timeout_ms,
           max_delegations: delegation_budget,
