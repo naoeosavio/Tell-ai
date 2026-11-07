@@ -11,6 +11,7 @@
 // tags; a plain `--chain` run keeps the baseline prompt (commit 09269bb).
 
 const assert = require('node:assert');
+const { describe, it } = require('node:test');
 const { EventEmitter } = require('node:events');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -1029,72 +1030,57 @@ async function test_task_delegation_denied_reason_shown() {
   }
 }
 
-async function main() {
-  const tests = [
-    test_task_no_exec_conflict,
-    test_task_ctx_conflict,
-    test_task_help_lists_flag,
-    test_task_missing_prompt_on_create,
-    test_task_reset_requires_ref,
-    test_task_invalid_ref,
-    test_task_create_from_prompt,
-    test_task_unquoted_prompt_is_not_swallowed,
-    test_task_named_create_and_numbering,
-    test_task_resume_without_prompt,
-    test_task_empty_reply_saves_no_assistant_turn,
-    test_task_default_hides_tags_and_command_output,
-    test_task_tags_flag_shows_markup,
-    test_task_output_flag_shows_command_output,
-    test_task_without_yes_asks_and_skips_commands,
-    test_task_delegation_flag_shows_indicator_and_record,
-    test_task_reset_full_wipe_keeps_dir,
-    test_task_delegation_record_file,
-    test_task_model_failure_announces_nothing,
-    test_invalid_model_leaves_no_task_dir,
-    test_task_child_record_numbering_past_999,
-    test_task_tag_only_answer_gets_final_ask,
-    test_task_resume_merge_matches_core,
-    test_task_prompt_section_string,
-    test_task_web_forwards_flags,
-    test_log_write_failure_does_not_abort,
-    test_task_same_prompt_resumes,
-    test_task_extra_tag_warns,
-    test_task_think_tag_is_inert,
-    test_task_poisoned_context_is_inert,
-    test_task_high_risk_child_never_auto_approved,
-    test_task_delete_and_recreate_keeps_numbering,
-    test_task_concurrent_creates_keep_distinct_numbers,
-    test_task_visible_in_history,
-    test_chain_without_task_keeps_baseline_prompt,
-    test_chain_without_task_ignores_delegation_tag,
-    test_task_low_chain_budget_hides_delegation,
-    test_task_resume_budget_counts_turns,
-    test_task_delegation_budget_two_and_third_warns,
-    test_task_delegation_dedup_reuses_record_file,
-    test_task_briefing_reaches_child,
-    test_task_status_in_record_file,
-    test_task_max_delegations_zero_disables,
-    test_task_delegation_repost_custom_target,
-    test_task_huge_turn_skips_summarize,
-    test_task_delegation_denied_reason_shown,
-  ];
-  let failed = 0;
-  for (const test of tests) {
-    try {
-      await test();
-      console.log(`ok ${test.name}`);
-    } catch (error) {
-      failed += 1;
-      console.error(`not ok ${test.name}`);
-      console.error(error instanceof Error ? error.stack : String(error));
-    }
-  }
-  if (failed > 0) {
-    console.error(`\n${failed} test(s) failed`);
-    process.exitCode = 1;
-  } else {
-    console.log(`\n${tests.length} tests passed`);
-  }
-}
+describe('task flags and validation', () => {
+  it('rejects --no-exec', test_task_no_exec_conflict);
+  it('rejects --ctx/-c', test_task_ctx_conflict);
+  it('lists --task in --help', test_task_help_lists_flag);
+  it('requires a prompt on create', test_task_missing_prompt_on_create);
+  it('requires a task id for reset', test_task_reset_requires_ref);
+  it('rejects an invalid task reference', test_task_invalid_ref);
+});
 
-main();
+describe('task create, numbering and resume', () => {
+  it('creates a task from prompt text', test_task_create_from_prompt);
+  it('keeps unquoted prompt words as prompt text', test_task_unquoted_prompt_is_not_swallowed);
+  it('numbers named tasks without reuse', test_task_named_create_and_numbering);
+  it('resumes without a new prompt', test_task_resume_without_prompt);
+  it('saves no assistant turn for an empty reply', test_task_empty_reply_saves_no_assistant_turn);
+  it('hides tags and command output by default', test_task_default_hides_tags_and_command_output);
+  it('shows markup with --tags', test_task_tags_flag_shows_markup);
+  it('shows command output with --output', test_task_output_flag_shows_command_output);
+  it('asks and skips commands without -y', test_task_without_yes_asks_and_skips_commands);
+  it('shows the delegation indicator with --delegation', test_task_delegation_flag_shows_indicator_and_record);
+  it('wipes on reset but keeps the directory', test_task_reset_full_wipe_keeps_dir);
+});
+
+describe('task delegation is task-only', () => {
+  it('writes the delegation record file', test_task_delegation_record_file);
+  it('announces nothing on model failure', test_task_model_failure_announces_nothing);
+  it('leaves no task dir for an invalid model', test_invalid_model_leaves_no_task_dir);
+  it('numbers child records past 999', test_task_child_record_numbering_past_999);
+  it('asks once more after a tag-only answer', test_task_tag_only_answer_gets_final_ask);
+  it('merges the resume like the core', test_task_resume_merge_matches_core);
+  it('keeps the pinned prompt section string', test_task_prompt_section_string);
+  it('forwards flags to tell-web', test_task_web_forwards_flags);
+  it('survives a log write failure', test_log_write_failure_does_not_abort);
+  it('resumes on a repeated prompt', test_task_same_prompt_resumes);
+  it('warns on an extra delegation tag', test_task_extra_tag_warns);
+  it('treats think-wrapped tags as inert', test_task_think_tag_is_inert);
+  it('treats poisoned saved context as inert', test_task_poisoned_context_is_inert);
+  it('never auto-approves a high-risk child command', test_task_high_risk_child_never_auto_approved);
+  it('keeps numbering after delete and recreate', test_task_delete_and_recreate_keeps_numbering);
+  it('keeps distinct numbers for concurrent creates', test_task_concurrent_creates_keep_distinct_numbers);
+  it('shows tasks in history', test_task_visible_in_history);
+  it('keeps the baseline prompt without task mode', test_chain_without_task_keeps_baseline_prompt);
+  it('ignores the delegation tag without task mode', test_chain_without_task_ignores_delegation_tag);
+  it('hides delegation on a low chain budget', test_task_low_chain_budget_hides_delegation);
+  it('counts turns against the resume budget', test_task_resume_budget_counts_turns);
+  it('warns when the delegation budget is exceeded', test_task_delegation_budget_two_and_third_warns);
+  it('reuses the record file for duplicate goals', test_task_delegation_dedup_reuses_record_file);
+  it('reaches the child with the briefing', test_task_briefing_reaches_child);
+  it('records the status in the record file', test_task_status_in_record_file);
+  it('disables delegation at zero budget', test_task_max_delegations_zero_disables);
+  it('prefers the short summary at a custom repost target', test_task_delegation_repost_custom_target);
+  it('skips summarize for a huge turn', test_task_huge_turn_skips_summarize);
+  it('shows the delegation denial reason', test_task_delegation_denied_reason_shown);
+});

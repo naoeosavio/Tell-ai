@@ -6,6 +6,7 @@
 // `cli-args` parsing (pure) plus launch_web arg assertions.
 
 const assert = require('node:assert');
+const { describe, it } = require('node:test');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -559,60 +560,48 @@ function test_system_file_cap_is_core() {
   assert.ok(web_src.includes('SYSTEM_FILE_MAX_BYTES'), 'the web loader names the core constant');
 }
 
-const TESTS = [
-  test_missing_file_is_silent,
-  test_comments_duplicates_unknown_section,
-  test_hash_semicolon_preserved_in_values,
-  test_tilde_expands_only_in_paths,
-  test_nul_rejected,
-  test_size_cap_ignored,
-  test_directory_rejected_for_system_file,
-  test_system_file_cap_and_symlink_gate,
-  test_system_file_ok,
-  test_precedence_matrix,
-  test_deny_union_monotonic,
-  test_profiles_data,
-  test_custom_profile_name_accepted,
-  test_invalid_profile_section_name,
-  test_profile_system_fill_and_precedence,
-  test_profile_system_file_resolved,
-  test_profile_aliases_subsection_and_order,
-  test_profile_alias_subsection_invalid_name,
-  test_alias_resolution_no_mutation,
-  test_temperature_validation,
-  test_temperature_validation_uses_core,
-  test_model_precedence_flag_positional_env,
-  test_limits_validated,
-  test_limits_delegate_to_runtime_limits,
-  test_limits_accept_zero_stdin_deadline_and_full_chain_range,
-  test_profile_limits_use_the_same_table,
-  test_compose_system_safety_last,
-  test_sdk_temperature_propagates,
-  test_web_cli_args_forwarding,
-  test_web_forwarding_uses_resolved_tellrc,
-  test_resolve_tellrc_system_text_helper,
-  test_web_forwarding_includes_profile_system,
-  test_web_forwarding_rejects_project_system_file_escape,
-  test_web_system_file_uses_cli_cwd_not_sandbox_cwd,
-  test_system_file_cap_is_core,
-];
-
-(async () => {
-  let failures = 0;
-  for (const test_fn of TESTS) {
-    try {
-      await test_fn();
-      console.log(`ok - ${test_fn.name}`);
-    } catch (error) {
-      failures += 1;
-      console.error(`not ok - ${test_fn.name}`);
-      console.error(error);
-    }
-  }
-  if (failures > 0) {
-    console.error(`\n${failures} test(s) failed`);
-    process.exitCode = 1;
-  } else {
-    console.log('\ntell tellrc tests passed');
-  }
-})();
+describe('tell tellrc parsing', () => {
+  it('missing file is silent', test_missing_file_is_silent);
+  it('comments duplicates unknown section', test_comments_duplicates_unknown_section);
+  it('hash semicolon preserved in values', test_hash_semicolon_preserved_in_values);
+  it('tilde expands only in paths', test_tilde_expands_only_in_paths);
+  it('nul rejected', test_nul_rejected);
+  it('size cap ignored', test_size_cap_ignored);
+});
+describe('tell tellrc system file', () => {
+  it('directory rejected for system file', test_directory_rejected_for_system_file);
+  it('system file cap and symlink gate', test_system_file_cap_and_symlink_gate);
+  it('system file ok', test_system_file_ok);
+});
+describe('tell tellrc precedence and profiles', () => {
+  it('precedence matrix', test_precedence_matrix);
+  it('deny union monotonic', test_deny_union_monotonic);
+  it('profiles data', test_profiles_data);
+  it('custom profile name accepted', test_custom_profile_name_accepted);
+  it('invalid profile section name', test_invalid_profile_section_name);
+  it('profile system fill and precedence', test_profile_system_fill_and_precedence);
+  it('profile system file resolved', test_profile_system_file_resolved);
+  it('profile aliases subsection and order', test_profile_aliases_subsection_and_order);
+  it('profile alias subsection invalid name', test_profile_alias_subsection_invalid_name);
+  it('alias resolution no mutation', test_alias_resolution_no_mutation);
+});
+describe('tell tellrc temperature model limits', () => {
+  it('temperature validation', test_temperature_validation);
+  it('temperature validation uses core', test_temperature_validation_uses_core);
+  it('model precedence flag positional env', test_model_precedence_flag_positional_env);
+  it('limits validated', test_limits_validated);
+  it('limits delegate to runtime limits', test_limits_delegate_to_runtime_limits);
+  it('limits accept zero stdin deadline and full chain range', test_limits_accept_zero_stdin_deadline_and_full_chain_range);
+  it('profile limits use the same table', test_profile_limits_use_the_same_table);
+  it('compose system safety last', test_compose_system_safety_last);
+  it('sdk temperature propagates', test_sdk_temperature_propagates);
+});
+describe('tell tellrc web forwarding', () => {
+  it('web cli args forwarding', test_web_cli_args_forwarding);
+  it('web forwarding uses resolved tellrc', test_web_forwarding_uses_resolved_tellrc);
+  it('resolve tellrc system text helper', test_resolve_tellrc_system_text_helper);
+  it('web forwarding includes profile system', test_web_forwarding_includes_profile_system);
+  it('web forwarding rejects project system file escape', test_web_forwarding_rejects_project_system_file_escape);
+  it('web system file uses cli cwd not sandbox cwd', test_web_system_file_uses_cli_cwd_not_sandbox_cwd);
+  it('system file cap is core', test_system_file_cap_is_core);
+});

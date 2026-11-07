@@ -6,8 +6,9 @@
 // cannot drift. Follows the `test-web-backend.js` loader (transpile web
 // sources, compile core straight from source, `@tell-ai/sdk` from dist).
 //
-// Run with: bun run --filter @tell-ai/sdk build && bun run --filter @tell-ai/core build && node test/test-web-chain-runtime.js
+// Run with: bun run build && node test/test-web-chain-runtime.js
 const assert = require('node:assert');
+const { describe, it } = require('node:test');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -88,41 +89,19 @@ function loadWeb(name) {
 const chain = loadWeb('src/server/chain-runtime.ts');
 const core = require(BARE_SOURCES['@tell-ai/core']);
 
-const failures = [];
-function check(name, fn) {
-  try {
-    const result = fn();
-    if (result !== undefined && typeof result.then === 'function') {
-      return result.then(
-        () => console.log(`ok - ${name}`),
-        (error) => {
-          failures.push(name);
-          console.error(`FAIL - ${name}: ${error.message}`);
-        },
-      );
-    }
-    console.log(`ok - ${name}`);
-    return Promise.resolve();
-  } catch (error) {
-    failures.push(name);
-    console.error(`FAIL - ${name}: ${error.message}`);
-    return Promise.resolve();
-  }
-}
-
-async function main() {
-  await check('extract_run_scripts lists every script trimmed', () => {
+describe('web chain runtime', () => {
+  it('extract_run_scripts lists every script trimmed', () => {
     assert.deepStrictEqual(chain.extract_run_scripts('a<RUN>\nls\n</RUN>b<RUN>\necho hi\n</RUN>'), ['ls', 'echo hi']);
     assert.deepStrictEqual(chain.extract_run_scripts('no tags'), []);
     assert.deepStrictEqual(chain.extract_run_scripts('<RUN>   \n  </RUN>'), []);
   });
 
-  await check('tail_chain_output keeps short text and marks long tails', () => {
+  it('tail_chain_output keeps short text and marks long tails', () => {
     assert.strictEqual(chain.tail_chain_output('short', 1024), 'short');
     assert.strictEqual(chain.tail_chain_output('x'.repeat(5000), 1024), `…[truncated]\n${'x'.repeat(1024)}`);
   });
 
-  await check('record uses executed wording on exit 0', () => {
+  it('record uses executed wording on exit 0', () => {
     const record = chain.build_chain_command_record({
       script: 'echo hi',
       stdout: 'hi\n',
@@ -137,7 +116,7 @@ async function main() {
     assert.strictEqual(record.output, 'hi');
   });
 
-  await check('record uses failed wording on non-zero exit', () => {
+  it('record uses failed wording on non-zero exit', () => {
     const record = chain.build_chain_command_record({
       script: 'exit 3',
       stdout: '',
@@ -152,7 +131,7 @@ async function main() {
     assert.ok(record.message.includes('Command failed (exit code 3):'));
   });
 
-  await check('record drops the parenthetical without a status', () => {
+  it('record drops the parenthetical without a status', () => {
     const record = chain.build_chain_command_record({
       script: 'ls',
       stdout: 'executor exploded',
@@ -166,7 +145,7 @@ async function main() {
     assert.strictEqual(record.message, core.format_failed_command('ls', 'executor exploded', null));
   });
 
-  await check('record joins stdout/stderr like the core owner', () => {
+  it('record joins stdout/stderr like the core owner', () => {
     const record = chain.build_chain_command_record({
       script: 'both',
       stdout: 'out',
@@ -180,7 +159,7 @@ async function main() {
     assert.strictEqual(record.output, 'out\nerr');
   });
 
-  await check('record redacts before the tail and tails only the message', () => {
+  it('record redacts before the tail and tails only the message', () => {
     const record = chain.build_chain_command_record({
       script: 'leak',
       stdout: `sk-live-secret ${'x'.repeat(5000)}`,
@@ -196,7 +175,7 @@ async function main() {
     assert.ok(!record.output.includes('…[truncated]'), 'stored output keeps the full capped text');
   });
 
-  await check('record matches the core single-turn timeline byte for byte', async () => {
+  it('record matches the core single-turn timeline byte for byte', async () => {
     for (const [stdout, stderr, exit_code] of [
       ['hi\n', '', 0],
       ['', 'boom', 1],
@@ -224,7 +203,7 @@ async function main() {
     }
   });
 
-  await check('gate denies no-exec and forbidden first', () => {
+  it('gate denies no-exec and forbidden first', () => {
     assert.deepStrictEqual(
       chain.decide_chain_gate({
         no_exec: true,
@@ -252,7 +231,7 @@ async function main() {
     }
   });
 
-  await check('gate follows the web flag table per class', () => {
+  it('gate follows the web flag table per class', () => {
     const cells = [
       // [flags, low, medium, high, forbidden]
       [{ auto_execute: false, require_approval: false }, 'park', 'park', 'deny', 'deny'],
@@ -274,20 +253,20 @@ async function main() {
     }
   });
 
-  await check('gate classifies web scripts strict with the host cwd', () => {
+  it('gate classifies web scripts strict with the host cwd', () => {
     assert.strictEqual(chain.classify_web_script('echo hi', '/work'), 'low');
     assert.strictEqual(chain.classify_web_script('touch /outside/f', '/work'), 'high');
     assert.strictEqual(chain.classify_web_script('cat /etc/hosts', '/work'), 'forbidden');
   });
 
-  await check('concurrency guard starts one more only under the cap', () => {
+  it('concurrency guard starts one more only under the cap', () => {
     assert.strictEqual(chain.can_start_chain_execution(0, 2), true);
     assert.strictEqual(chain.can_start_chain_execution(1, 2), true);
     assert.strictEqual(chain.can_start_chain_execution(2, 2), false);
     assert.strictEqual(chain.can_start_chain_execution(3, 2), false);
   });
 
-  await check('extra tag instruction asks for the final answer once', () => {
+  it('extra tag instruction asks for the final answer once', () => {
     const text = chain.format_extras_instruction(['cat a.txt', 'cat b.txt']);
     assert.ok(text.includes('Only the first <RUN> block ran.'), text);
     assert.ok(text.includes('Do not repeat them.'), text);
@@ -295,16 +274,4 @@ async function main() {
     assert.ok(text.includes('- cat a.txt') && text.includes('- cat b.txt'), text);
     assert.ok(!text.includes('Skipped by user:'), text);
   });
-
-  if (failures.length > 0) {
-    console.error(`\n${failures.length} chain-runtime check(s) failed`);
-    process.exitCode = 1;
-  } else {
-    console.log('\nchain-runtime gate passed');
-  }
-}
-
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
 });

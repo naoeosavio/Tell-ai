@@ -1,4 +1,5 @@
 const assert = require('node:assert');
+const { it } = require('node:test');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -152,15 +153,8 @@ const { DEFAULT_MAX_CHAIN_STEPS } = require(
   compileSourceModule(path.join(__dirname, '..', 'packages', 'core', 'src', 'runtime-limits.ts')),
 );
 
-let failures = 0;
 function test(name, fn) {
-  try {
-    fn();
-    console.log(`ok - ${name}`);
-  } catch (err) {
-    failures += 1;
-    console.error(`FAIL - ${name}: ${err.message}`);
-  }
+  it(name, fn);
 }
 
 function tmpProject() {
@@ -1483,8 +1477,3 @@ test('cli args: loopback detection for the bind warning', () => {
     assert.strictEqual(is_loopback_host(host), false, host);
   }
 });
-
-if (failures > 0) {
-  process.exit(1);
-}
-console.log('\nAll web backend tests passed.');

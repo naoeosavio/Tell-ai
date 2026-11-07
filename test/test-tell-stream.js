@@ -10,6 +10,7 @@
 // for log/context/`<RUN>` extraction is byte-identical to the non-stream path.
 
 const assert = require('node:assert');
+const { describe, it } = require('node:test');
 const { EventEmitter } = require('node:events');
 const { Readable } = require('node:stream');
 const fs = require('node:fs');
@@ -575,43 +576,26 @@ async function test_default_hides_tags_from_live_stream() {
 // Runner
 // ---------------------------------------------------------------------
 
-const TESTS = [
-  test_stream_prints_text_to_stdout_once,
-  test_stream_think_prints_reasoning_to_stderr,
-  test_stream_reasoning_cannot_inject_run_tags,
-  test_stream_appends_single_newline,
-  test_stream_keeps_full_response_in_log_and_context,
-  test_stream_chain_streams_each_round,
-  test_stream_commands_still_detected_and_run,
-  test_chain_tty_decline_skips_and_resumes,
-  test_chain_tty_accept_runs_high_with_approval,
-  test_chain_denial_ends_attempt_without_resume,
-  test_tags_flag_shows_raw_markup,
-  test_default_tag_hider_handles_split_deltas,
-  test_output_flag_shows_command_output,
-  test_think_extraction_matches_core,
-  test_think_without_stream_prints_reasoning_on_stderr,
-  test_without_think_reasoning_stays_hidden,
-  test_without_stream_prints_answer_once,
-  test_default_hides_tags_from_live_stream,
-];
+describe('tell stream output', () => {
+  it('prints text to stdout once', test_stream_prints_text_to_stdout_once);
+  it('prints reasoning to stderr with think', test_stream_think_prints_reasoning_to_stderr);
+  it('blocks reasoning from injecting run tags', test_stream_reasoning_cannot_inject_run_tags);
+  it('appends a single newline', test_stream_appends_single_newline);
+  it('keeps the full response in log and context', test_stream_keeps_full_response_in_log_and_context);
+  it('streams each chain round', test_stream_chain_streams_each_round);
+  it('detects and runs commands', test_stream_commands_still_detected_and_run);
+  it('declines on a TTY, skips and resumes', test_chain_tty_decline_skips_and_resumes);
+  it('accepts on a TTY and runs high with approval', test_chain_tty_accept_runs_high_with_approval);
+  it('ends the attempt on denial without resume', test_chain_denial_ends_attempt_without_resume);
+  it('shows raw markup with --tags', test_tags_flag_shows_raw_markup);
+  it('handles split deltas in the tag hider', test_default_tag_hider_handles_split_deltas);
+  it('shows command output with --output', test_output_flag_shows_command_output);
+});
 
-(async () => {
-  let failures = 0;
-  for (const test_fn of TESTS) {
-    try {
-      await test_fn();
-      console.log(`ok - ${test_fn.name}`);
-    } catch (error) {
-      failures += 1;
-      console.error(`not ok - ${test_fn.name}`);
-      console.error(error);
-    }
-  }
-  if (failures > 0) {
-    console.error(`\n${failures} test(s) failed`);
-    process.exitCode = 1;
-  } else {
-    console.log('\ntell stream tests passed');
-  }
-})();
+describe('tell think without streaming', () => {
+  it('matches the core extractor', test_think_extraction_matches_core);
+  it('prints reasoning on stderr with think', test_think_without_stream_prints_reasoning_on_stderr);
+  it('hides reasoning without think', test_without_think_reasoning_stays_hidden);
+  it('prints the answer once without streaming', test_without_stream_prints_answer_once);
+  it('hides tags from the live stream by default', test_default_hides_tags_from_live_stream);
+});

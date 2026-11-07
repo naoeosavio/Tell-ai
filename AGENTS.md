@@ -17,16 +17,11 @@ npm run build          # SDK (ESM+CJS+dts + 2 browser bundles) + core (ESM+CJS+d
 npm run lint           # tsc --noEmit in all four packages (type-check only)
 npm run format         # biome check --write packages/  (auto-fix formatting)
 npm run check          # biome check packages/  (check only)
-npm test               # sdk + core-api + env + security + context + stream + mentions + cli-adapters + core + web suites
-npm run test:core      # contract + config/paths/context/decision/runtime/risk/exec suites (builds SDK + core first)
-npm run test:core-api  # library-contract conformance (builds SDK + core first)
-npm run test:cli-adapters  # CLI core-adapter ports (builds SDK + core first)
-npm run test:security  # build the SDK, then node test/test-tell-security.js
-npm run test:stream    # build the SDK, then node test/test-tell-stream.js (--stream/--think CLI behavior)
-npm run test:mentions  # build the SDK, then node test/test-tell-mentions.js (@path mention expansion + read gate)
-npm run test:env       # build the SDK, then node test/test-tell-env.js (CLI env → SDKConfig wiring)
-npm run test:web       # backend harness + web build, then sandbox suite (live servers boot dist/server.js)
-npm run ci             # build + lint + format check + test (runs in order)
+npm test               # build once, then sdk + core-api + env + security + context + stream + mentions + cli-adapters + core + web suites
+npm run test:all      # all suites, no build (run `npm run build` first)
+npm run test:X         # one suite, no build (run `npm run build` first): test:core, test:core-api, test:cli-adapters, test:security, test:stream, test:mentions, test:env, test:web, ...
+npm run test:web       # backend + chain-runtime harnesses, then sandbox suite (live servers boot dist/server.js)
+npm run ci             # build + lint + format check + test:all (runs in order)
 ```
 
 TypeScript is checked with `tsc` but bundled with `tsup` (ESBuild). Entry points: `packages/sdk/src/index.ts` → `packages/sdk/dist/`, `packages/core/src/index.ts` → `packages/core/dist/` and `packages/cli/src/Tell.ts` → `packages/cli/dist/Tell.mjs`. The SDK build also emits two browser bundles from `src/browser.ts` + `src/browser-global.ts`. After building, sanity-check them with `grep -cE '^import ' packages/sdk/dist/browser*.js` — must be `0` (self-contained; bare imports/dynamic `require` break the browser).

@@ -13,6 +13,7 @@
 // Run with: node test/test-live-model.js (after the sdk + cli build).
 
 const assert = require('node:assert');
+const { describe, it } = require('node:test');
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -28,49 +29,18 @@ const LIVE_MODEL = process.env['TELL_LIVE_MODEL'] ?? 'openrouter:minimax/minimax
 /** API key used by the live checks (OpenRouter). */
 const LIVE_KEY = process.env['OPENROUTER_API_KEY'] ?? '';
 
-/**
- * Runs one check and reports the outcome.
- *
- * @param {string} name - Check name.
- * @param {() => Promise<void>} body - Check body.
- * @returns {Promise<boolean>} True when the check passed.
- */
-async function check(name, body) {
-  try {
-    await body();
-    console.log(`ok - ${name}`);
-    return true;
-  } catch (error) {
-    console.error(`not ok - ${name}`);
-    console.error(error);
-    return false;
-  }
-}
-
-async function main() {
-  if (!LIVE_KEY) {
-    console.log('skipped - no OPENROUTER_API_KEY in the environment (live model checks need one)');
-    return;
-  }
-  const sdk = require(SDK_CJS);
-  const config = { keys: { openrouter: LIVE_KEY }, urls: {} };
-  let failures = 0;
-
-  const record = async (name, body) => {
-    if (await check(name, body)) {
-      failures += 0;
-    } else {
-      failures += 1;
-    }
-  };
-
-  await record('the model answers a one-shot prompt', async () => {
+describe('live model', { skip: LIVE_KEY ? false : 'no OPENROUTER_API_KEY in the environment (live model checks need one)' }, () => {
+  it('the model answers a one-shot prompt', async () => {
+    const sdk = require(SDK_CJS);
+    const config = { keys: { openrouter: LIVE_KEY }, urls: {} };
     const ai = await sdk.create_ask_ai(LIVE_MODEL, config);
     const answer = await ai.ask('Reply with exactly the word: READY');
     assert.match(answer, /READY/i, `unexpected answer: ${answer.slice(0, 200)}`);
   });
 
-  await record('the model emits a command inside a RUN block', async () => {
+  it('the model emits a command inside a RUN block', async () => {
+    const sdk = require(SDK_CJS);
+    const config = { keys: { openrouter: LIVE_KEY }, urls: {} };
     const ai = await sdk.create_ask_ai(LIVE_MODEL, config);
     const answer = await ai.ask(
       'Reply with exactly this text and nothing else: <RUN>echo live-ok</RUN>',
@@ -82,7 +52,9 @@ async function main() {
     assert.ok(!visible.includes('<RUN>'), 'the visible text must not carry the command block');
   });
 
-  await record('the streaming path emits text tokens', async () => {
+  it('the streaming path emits text tokens', async () => {
+    const sdk = require(SDK_CJS);
+    const config = { keys: { openrouter: LIVE_KEY }, urls: {} };
     const ai = await sdk.create_ask_ai(LIVE_MODEL, config);
     let text = '';
     let reasoning = 0;
@@ -94,7 +66,7 @@ async function main() {
     assert.ok(reasoning >= 0);
   });
 
-  await record('the CLI resolves the live model and answers', async () => {
+  it('the CLI resolves the live model and answers', async () => {
     const result = spawnSync(
       process.execPath,
       [CLI_BIN, '-m', LIVE_MODEL, 'Reply with exactly the word: CLI-READY'],
@@ -105,7 +77,7 @@ async function main() {
     assert.match(output, /CLI-READY/i, `unexpected CLI output: ${output.slice(0, 300)}`);
   });
 
-  await record('the CLI never leaks the provider key in its output', async () => {
+  it('the CLI never leaks the provider key in its output', async () => {
     const result = spawnSync(
       process.execPath,
       [CLI_BIN, '-m', LIVE_MODEL, 'Reply with exactly the word: OK'],
@@ -115,7 +87,9 @@ async function main() {
     assert.ok(!combined.includes(LIVE_KEY), 'the provider key must never reach the output');
   });
 
-  await record('the alias table still round-trips with the live provider', async () => {
+  it('the alias table still round-trips with the live provider', async () => {
+    const sdk = require(SDK_CJS);
+    const config = { keys: { openrouter: LIVE_KEY }, urls: {} };
     const spec = sdk.resolve_model_spec(LIVE_MODEL);
     assert.strictEqual(spec.vendor, 'openrouter');
     assert.ok(spec.model.length > 0);
@@ -123,7 +97,7 @@ async function main() {
     assert.ok(handle.model !== undefined, 'the live model handle must be built');
   });
 
-  await record('the CLI executes the command the model asked for', async () => {
+  it('the CLI executes the command the model asked for', async () => {
     const workdir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-live-'));
     const result = spawnSync(
       process.execPath,
@@ -141,16 +115,4 @@ async function main() {
     assert.strictEqual(result.status, 0, `the CLI failed: ${result.stderr ?? ''}`);
     assert.match(combined, /hello-from-model/, `the command output never reached the CLI: ${combined.slice(0, 300)}`);
   });
-
-  if (failures > 0) {
-    console.error(`\n${failures} live check(s) failed`);
-    process.exitCode = 1;
-  } else {
-    console.log('\nlive model checks passed');
-  }
-}
-
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
 });
