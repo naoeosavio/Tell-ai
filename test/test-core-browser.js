@@ -149,6 +149,13 @@ describe('browser sandbox and pure surfaces', () => {
     assert.ok(ns.parse_runtime_limits({ flags: {}, env: {}, tellrcLayers: [] }));
   });
 
+  it('permission always prefix works in the browser (pure, no Node)', () => {
+    assert.strictEqual(ns.derive_always_prefix('npm ls -la'), 'npm ls *');
+    assert.strictEqual(ns.derive_always_prefix('npm'), null);
+    assert.strictEqual(ns.matches_always_pattern('npm ls -la', 'npm ls *'), true);
+    assert.strictEqual(ns.matches_always_pattern('npm ls', 'npm ls *'), false);
+  });
+
 });
 
 describe('browser loop parity', () => {
