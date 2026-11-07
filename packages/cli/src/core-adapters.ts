@@ -10,9 +10,11 @@ import {
   create_node_executor,
   decide_permission,
   DEFAULT_STORAGE_KEY,
+  derive_always_prefix,
   EXEC_DEFAULT_TIMEOUT_MS,
   extract_think_content,
   LOOP_MAX_ROUNDS,
+  matches_always_pattern,
   MemoryStorageAdapter,
   type ModelPort,
   type RiskAssessment,
@@ -42,10 +44,15 @@ export type CliExecInput = {
   auto?: boolean | undefined;
   /** True when `--require-approval` is present (high asks). */
   approve_high?: boolean | undefined;
+  /** Stored `<prefix> *` patterns from the project `.tellrc` (ask only). */
+  always?: readonly string[] | undefined;
 };
 
+/** Answer of the CLI prompt (once runs one command, always stores it). */
+export type CliConfirmAnswer = 'once' | 'always' | 'reject';
+
 /** User confirmation callback (readline prompt in the CLI, stubbed in tests). */
-export type CliConfirmFn = (script: string) => Promise<boolean>;
+export type CliConfirmFn = (script: string) => Promise<boolean | CliConfirmAnswer>;
 
 /** Flag subset resolved once into a `CoreConfig` (keys stay in `env.ts`). */
 export type CliCoreConfigFlags = {
@@ -220,14 +227,17 @@ export function resolve_cli_exec_input(flags: {
  *
  * The core `decide_permission` owns the class and the effect; this port only
  * realizes it. `allow` runs without asking. `deny` and `block` stop without
- * asking. `ask` follows the callback, and a decline is `skipped`. An ask with
- * no TTY is `denied`: a missing channel fails closed, as DSH does with an
- * unavailable answerer. The host never decides the class again.
+ * asking. `ask` checks the stored `always` list first, then follows the
+ * callback. An `always` answer stores `<prefix> *` and runs once. A decline
+ * is `skipped`. An ask with no TTY is `denied`: a missing channel fails
+ * closed, as DSH does with an unavailable answerer. The host never decides
+ * the class again. A stored pattern never grants `deny` or `block`.
  *
- * @param input - Effective gate input (`enabled`, `auto`, `approve_high`).
+ * @param input - Effective gate input (`enabled`, `auto`, `approve_high`, `always`).
  * @param confirm - Interactive confirmation (readline in the CLI).
  * @param cwd - Working directory the scope check resolves against.
  * @param is_tty - TTY override for tests (default reads `process.stdin`).
+ * @param on_always - Called with the stored pattern after an `always` answer.
  * @returns An `ApprovalPort` authorizing one requested script.
  */
 export function create_cli_approval(
@@ -235,6 +245,7 @@ export function create_cli_approval(
   confirm: CliConfirmFn,
   cwd?: string,
   is_tty?: boolean,
+  on_always?: (pattern: string) => void,
 ): ApprovalPort {
   return async (request: { script: string; risk?: RiskAssessment }): Promise<'approved' | 'denied' | 'skipped'> => {
     const verdict = decide_permission({
@@ -249,10 +260,30 @@ export function create_cli_approval(
     } else if (verdict.effect === 'deny' || verdict.effect === 'block') {
       return 'denied';
     } else {
+      const stored = input.always ?? [];
+      for (const pattern of stored) {
+        if (matches_always_pattern(request.script, pattern)) {
+          return 'approved';
+        }
+      }
       const tty = is_tty ?? process.stdin?.isTTY === true;
       if (!tty) {
         return 'denied';
-      } else if (await confirm(request.script)) {
+      }
+      const answer = await confirm(request.script);
+      if (answer === true || answer === 'once') {
+        return 'approved';
+      } else if (answer === 'always') {
+        const pattern = derive_always_prefix(request.script);
+        if (pattern !== null) {
+          try {
+            on_always?.(pattern);
+          } catch {
+            // A failed store still runs once; the next ask prompts again.
+          }
+        } else {
+          // No stored prefix: an unstoreable script still runs once.
+        }
         return 'approved';
       } else {
         return 'skipped';

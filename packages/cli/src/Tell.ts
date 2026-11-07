@@ -105,6 +105,7 @@ import {
 import { expand_mentions } from './mentions';
 import {
   compose_system_prompt,
+  append_always_pattern,
   load_tellrc,
   resolve_model_input,
   resolve_tellrc,
@@ -791,7 +792,7 @@ function save_incremental_context(contextPath: string, previousContext: string, 
 // Risk classification and outside-cwd path checks moved to
 // `./core-adapters` (core-owned ports); the prompt below only renders them.
 
-async function confirm_command(script: string): Promise<boolean> {
+async function confirm_command(script: string): Promise<boolean | 'always'> {
   // Display-only labels: the approval port already decided (allow runs, deny
   // stops); this prompt only renders for ask effects.
   const high_risk = is_high_risk_script(script);
@@ -814,7 +815,7 @@ async function confirm_command(script: string): Promise<boolean> {
   process.stderr.write(`${label}:\n${script}\n`);
   return new Promise((resolve) => {
     let settled = false;
-    const done = (value: boolean) => {
+    const done = (value: boolean | 'always') => {
       if (settled) return;
       settled = true;
       rl.close();
@@ -823,9 +824,14 @@ async function confirm_command(script: string): Promise<boolean> {
 
     const timer = setTimeout(() => done(false), READLINE_CONFIRM_TIMEOUT_MS);
 
-    rl.question('\x1b[31mExecute this command? [y/N] \x1b[0m', (answer) => {
+    rl.question('\x1b[31mExecute this command? [o]nce / [a]lways / [N]o \x1b[0m', (answer) => {
       clearTimeout(timer);
-      done(answer.trim().toUpperCase() === 'YES' || answer.trim().toUpperCase() === 'Y');
+      const normalized = answer.trim().toUpperCase();
+      if (normalized === 'A' || normalized === 'ALWAYS') {
+        done('always');
+      } else {
+        done(normalized === 'O' || normalized === 'ONCE' || normalized === 'YES' || normalized === 'Y');
+      }
     });
   });
 }
@@ -1157,10 +1163,25 @@ async function run_response_loop(
       // No delegation line on screen.
     }
   }
-  const approval = create_cli_approval(state.exec_input, (pending) => {
-    clear_delegation_line();
-    return confirm_command(pending);
-  });
+  const approval = create_cli_approval(
+    state.exec_input,
+    (pending) => {
+      clear_delegation_line();
+      return confirm_command(pending);
+    },
+    undefined,
+    undefined,
+    (pattern) => {
+      if (!append_always_pattern(process.cwd(), pattern)) {
+        process.stderr.write(`\x1b[33mWarning: cannot store ${pattern} in .tellrc\x1b[0m\n`);
+      } else {
+        // Stored: future asks with the same prefix run without a prompt.
+      }
+    },
+  );
+  // A child never inherits an `always` grant: the child port uses the same
+  // flags but an empty stored list, so the parent must approve again.
+  const child_approval = create_cli_approval({ ...state.exec_input, always: [] }, async () => false);
   // Shared ports across runs: storage accumulates the conversation so resumed
   // runs compose follow-ups continuously; everything else is stateless.
   const storage = create_cli_memory_storage(previousContext);
@@ -1179,7 +1200,7 @@ async function run_response_loop(
       ? create_delegation_runner({
           model: child_model,
           executor,
-          approval,
+          approval: child_approval,
           risk: cli_risk_port(),
           ...(state.showDelegation ? { on_child_event: print_child_event } : {}),
           ...(redact !== undefined ? { redact } : {}),
@@ -1743,6 +1764,14 @@ async function run_tell(
     task !== undefined
       ? resolve_cli_exec_input({ exec: true, yes: opts.yes, requireApproval: opts.requireApproval })
       : resolve_cli_exec_input({ exec: opts.exec, yes: opts.yes, requireApproval: opts.requireApproval });
+  const always_patterns = Object.entries(tellrc.permissions ?? {})
+    .filter(([, effect]) => effect === 'allow')
+    .map(([pattern]) => pattern);
+  if (always_patterns.length > 0) {
+    exec_input.always = always_patterns;
+  } else {
+    // No stored grant: every ask prompts.
+  }
   // 'create' always starts empty, even if it reuses an existing name (an explicit reset).
   const active_task = task;
   if (active_task?.reset === true) {

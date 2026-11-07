@@ -4,6 +4,7 @@ import * as path from 'path';
 
 import {
   compose_custom_system,
+  is_valid_always_pattern as core_is_valid_always_pattern,
   SYSTEM_FILE_MAX_BYTES,
   TELLRC_LIMIT_KEYS,
   validate_tellrc_limit_value,
@@ -66,6 +67,7 @@ export type ParsedTellrc = {
   profile?: string | undefined;
   aliases: Record<string, string>;
   deny_commands: string[];
+  permissions: Record<string, string>;
   limits: TellrcLimits;
   profiles: Record<string, TellrcProfile>;
   warnings: string[];
@@ -87,6 +89,7 @@ export type ResolvedTellrc = {
   profile_data?: TellrcProfile | undefined;
   aliases: Record<string, string>;
   deny_commands: string[];
+  permissions: Record<string, string>;
   limits: TellrcLimits;
   provenance: Record<string, string>;
   warnings: string[];
@@ -199,6 +202,19 @@ function split_deny_value(value: string): string[] {
 }
 
 /**
+ * Tests one stored `<prefix> *` pattern for shape only.
+ *
+ * Reuses the core owner: one shape rule for both hosts. A bare tool name
+ * never passes.
+ *
+ * @param pattern - Raw pattern text.
+ * @returns True when the shape is valid.
+ */
+export function is_valid_always_pattern(pattern: string): boolean {
+  return core_is_valid_always_pattern(pattern);
+}
+
+/**
  * Re-exports the core temperature validator.
  *
  * The CLI and the Web flag parser share one interval rule owned by
@@ -213,7 +229,7 @@ export { validate_temperature };
  * @returns An empty `ParsedTellrc`.
  */
 export function empty_parsed_tellrc(source: string): ParsedTellrc {
-  return { source, aliases: {}, deny_commands: [], limits: {}, profiles: {}, warnings: [] };
+  return { source, aliases: {}, deny_commands: [], permissions: {}, limits: {}, profiles: {}, warnings: [] };
 }
 
 /**
@@ -221,7 +237,8 @@ export function empty_parsed_tellrc(source: string): ParsedTellrc {
  *
  * Rules: `key = value` lines, whole-line `#`/`;` comments, sections
  * `[aliases]`, `[profiles.<name>]` (any valid name, plus an aliases
- * subsection `profiles.<name>.aliases`), `[policy]` and `[limits]`. Inline `#`/`;` stays in values. Repeated scalars keep the
+ * subsection `profiles.<name>.aliases`), `[policy]`, `[permissions]` and
+ * `[limits]`. Inline `#`/`;` stays in values. Repeated scalars keep the
  * last assignment; deny entries accumulate.
  *
  * @param text - Raw INI file content.
@@ -247,7 +264,7 @@ export function parse_tellrc(text: string, source: string): ParsedTellrc {
       continue;
     } else if (line.startsWith('[') && line.endsWith(']')) {
       const name = line.slice(1, -1).trim().toLowerCase();
-      if (name === 'aliases' || name === 'policy' || name === 'limits') {
+      if (name === 'aliases' || name === 'policy' || name === 'permissions' || name === 'limits') {
         section = name;
       } else if (name === 'profiles' || name.startsWith('profiles.')) {
         if (parse_profile_section(name) === null) {
@@ -312,6 +329,15 @@ export function parse_tellrc(text: string, source: string): ParsedTellrc {
         parsed.deny_commands.push(...split_deny_value(raw_value));
       } else {
         parsed.warnings.push(`${source}:${index + 1}: unknown policy key ${raw_key}`);
+      }
+    } else if (section === 'permissions') {
+      const pattern = raw_key.trim();
+      if (!is_valid_always_pattern(pattern)) {
+        parsed.warnings.push(`${source}:${index + 1}: invalid permission pattern`);
+      } else if (raw_value.trim().toLowerCase() !== 'allow') {
+        parsed.warnings.push(`${source}:${index + 1}: invalid permission value`);
+      } else {
+        parsed.permissions[pattern] = 'allow';
       }
     } else if (section === 'limits') {
       if (!KNOWN_LIMIT_KEYS.has(key)) {
@@ -458,6 +484,57 @@ export function load_tellrc(cwd: string, home: string): TellrcLayer[] {
 }
 
 /**
+ * Stores one `<prefix> *` pattern in the project `.tellrc`.
+ *
+ * The file keeps INI shape: a `[permissions]` section with one
+ * `<pattern> = allow` line. A stored pattern is never removed here.
+ * An invalid pattern returns false and writes nothing.
+ *
+ * @param cwd - Working directory owning the project `.tellrc`.
+ * @param pattern - Stored `<prefix> *` pattern.
+ * @returns True when the pattern is stored (or already present).
+ */
+export function append_always_pattern(cwd: string, pattern: string): boolean {
+  if (!is_valid_always_pattern(pattern)) {
+    return false;
+  }
+  const file = path.join(path.resolve(cwd || process.cwd()), '.tellrc');
+  let text = '';
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch {
+    text = '';
+  }
+  if (text.includes('\0') || text.length > TELLRC_MAX_BYTES) {
+    return false;
+  }
+  const parsed = text === '' ? empty_parsed_tellrc(file) : parse_tellrc(text, file);
+  if (parsed.permissions[pattern] === 'allow') {
+    return true;
+  }
+  const line = `${pattern} = allow\n`;
+  let next: string;
+  if (text === '') {
+    next = `[permissions]\n${line}`;
+  } else if (/^\s*\[permissions\]/im.test(text)) {
+    next = text.endsWith('\n') ? `${text}${line}` : `${text}\n${line}`;
+  } else {
+    next = text.endsWith('\n') ? `${text}\n[permissions]\n${line}` : `${text}\n\n[permissions]\n${line}`;
+  }
+  try {
+    fs.writeFileSync(file, next, { mode: 0o600 });
+    try {
+      fs.chmodSync(file, 0o600);
+    } catch {
+      // Best effort: the write already holds the data.
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Builds the built-in profile record for one name.
  *
  * Known names carry default prompt/style data; any other valid name starts
@@ -517,6 +594,7 @@ export function resolve_tellrc(layers: TellrcLayer[], flags: TellrcFlags = {}, e
   const warnings: string[] = [];
   const aliases: Record<string, string> = {};
   const deny_commands: string[] = [];
+  const permissions: Record<string, string> = {};
   const limits: TellrcLimits = {};
   const profiles: Record<string, TellrcProfile> = {};
   let model: string | undefined;
@@ -538,6 +616,14 @@ export function resolve_tellrc(layers: TellrcLayer[], flags: TellrcFlags = {}, e
       if (!deny_commands.includes(entry)) deny_commands.push(entry);
     }
     if (layer.deny_commands.length > 0) provenance['deny_commands'] = 'union';
+    for (const [pattern, effect] of Object.entries(layer.permissions ?? {})) {
+      if (permissions[pattern] === undefined) {
+        permissions[pattern] = effect;
+        provenance['permissions'] = 'union';
+      } else {
+        // Union only: a stored allow is never removed by a lower layer.
+      }
+    }
     for (const [key, value] of Object.entries(layer.limits)) {
       (limits as Record<string, number>)[key] = value as number;
       provenance[`limits.${key}`] = layer.source;
@@ -785,6 +871,7 @@ export function resolve_tellrc(layers: TellrcLayer[], flags: TellrcFlags = {}, e
   const resolved: ResolvedTellrc = {
     aliases,
     deny_commands,
+    permissions,
     limits,
     provenance,
     warnings,
