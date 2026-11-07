@@ -70,6 +70,7 @@ import {
   decide_chain_gate,
   extract_run_scripts,
   format_extras_instruction,
+  is_web_blocked_script,
 } from './chain-runtime';
 import {
   CHAIN_MAX_ROUNDS,
@@ -86,7 +87,6 @@ import {
   createRateLimiter,
   isAllowedHost,
   isAllowedOrigin,
-  isHighRiskScript,
   isSensitiveRelPath,
   isValidTokenInput,
   normalizeApiPath,
@@ -1024,7 +1024,7 @@ app.post('/api/risk-check', (req, res) => {
   if (!command || typeof command !== 'string') {
     return res.status(400).json({ error: 'Command is required' });
   }
-  return res.json({ highRisk: isHighRiskScript(command) });
+  return res.json({ highRisk: is_web_blocked_script(command, CWD) });
 });
 
 // API: Execute bash command safely
@@ -1041,7 +1041,7 @@ app.post('/api/execute', async (req, res) => {
     return res.status(429).json({ error: 'Rate limit exceeded (10/min). Slow down.' });
   }
 
-  if (isHighRiskScript(command)) {
+  if (is_web_blocked_script(command, CWD)) {
     return res.status(400).json({
       output: `Blocked Command: "${command}"\n\nSecurity Guard: This command contains high-risk patterns (e.g. root deletion, modification of system directories, interpreter eval, curl pipe execution, or sudo privileges) and has been blocked for safety.`,
     });
@@ -1187,7 +1187,7 @@ app.post('/api/delegate', async (req, res) => {
       approval: async (request) => {
         if (token.cancelled) {
           return 'denied';
-        } else if (isHighRiskScript(request.script)) {
+        } else if (is_web_blocked_script(request.script, CWD)) {
           return 'denied';
         } else {
           return approvals.approval(request);
@@ -1290,7 +1290,7 @@ app.post('/api/delegate/:decisionId/confirm', async (req, res) => {
     task.approvals.confirm(decisionId, 'denied');
     delegate_task_notify(task);
     return res.status(403).json({ error: 'disabled' });
-  } else if (isHighRiskScript(waiter.script)) {
+  } else if (is_web_blocked_script(waiter.script, CWD)) {
     task.decided.set(decisionId, { verdict: decision, inFlight: false, result: null });
     task.approvals.confirm(decisionId, 'denied');
     delegate_task_notify(task);
@@ -1676,8 +1676,8 @@ function chainConfirmHttpStatus(error: ChainConfirmError): number {
 
 /**
  * Server-kept risk reason for a pending approval, shown on the confirm card.
- * Reuses the core base classifier (strict profile, same predicate as
- * `isHighRiskScript`); safe scripts carry no reason (the card omits the line).
+ * Reuses the core base classifier (strict profile, one table with the chain
+ * gate); safe scripts carry no reason (the card omits the line).
  *
  * @param script - Command script to describe.
  * @returns `reason (category)` for risky scripts, else undefined.
@@ -2278,7 +2278,7 @@ app.post('/api/chain/:runId/confirm', async (req, res) => {
       }
       dropContinuationIfTerminal(runId, snapshot);
       return res.status(403).json({ error: 'disabled', run: snapshot });
-    } else if (isHighRiskScript(script.replace(/^\[sub-tarefa\] /, '')) && !REQUIRE_APPROVAL) {
+    } else if (is_web_blocked_script(script.replace(/^\[sub-tarefa\] /, ''), CWD) && !REQUIRE_APPROVAL) {
       const snapshot = chainStore.finishConfirm(runId, decisionId, {
         type: 'denied',
         script,
@@ -2330,7 +2330,7 @@ app.post('/api/chain/:runId/confirm', async (req, res) => {
     const snapshot = denyChainScript(runId, decisionId, script, 'disabled', '--no-exec');
     dropContinuationIfTerminal(runId, snapshot);
     return res.status(403).json({ error: 'disabled', run: snapshot });
-  } else if (isHighRiskScript(script) && !REQUIRE_APPROVAL) {
+  } else if (is_web_blocked_script(script, CWD) && !REQUIRE_APPROVAL) {
     const snapshot = denyChainScript(runId, decisionId, script, 'high-risk', 'risk-check');
     dropContinuationIfTerminal(runId, snapshot);
     return res.status(403).json({ error: 'high-risk script blocked without execution', run: snapshot });

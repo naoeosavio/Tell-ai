@@ -103,7 +103,7 @@ export type ChainGateInput = {
   no_exec: boolean;
   /** Server runs with `--require-approval` (`-y` still auto-runs low scripts). */
   require_approval: boolean;
-  /** Server auto-runs low scripts (`-y`, task mode forces it). */
+  /** Server auto-runs low scripts (`-y` only, like the CLI host). */
   auto_execute: boolean;
   /** Graded class of the script (one table, same as the CLI). */
   permission_class: PermissionClass;
@@ -164,6 +164,28 @@ export function decide_chain_gate(input: ChainGateInput): ChainGateDecision {
  */
 export function classify_web_script(script: string, cwd: string): PermissionClass {
   return classify_script(script, { cwd, strict: true }).class;
+}
+
+/**
+ * Tests one script for the stateless Web block checks.
+ *
+ * Single owner for every route that cannot park (`/api/execute`,
+ * `/api/risk-check`, delegate and chain confirms): high and forbidden block,
+ * low and medium pass. The scope check runs against the server working
+ * directory, so an outside write blocks here exactly like it parks in the
+ * chain gate. The chain gate stays the only path that parks.
+ *
+ * @param script - Command script to test.
+ * @param cwd - Server working directory.
+ * @returns True for high and forbidden scripts.
+ */
+export function is_web_blocked_script(script: string, cwd: string): boolean {
+  const found = classify_web_script(script, cwd);
+  if (found === 'high' || found === 'forbidden') {
+    return true;
+  } else {
+    return false;
+  }
 }
 
 /**

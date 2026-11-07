@@ -108,10 +108,11 @@ export function parseCliArgs(argv: string[], defaultCwd: string): CliArgs {
   const taskRaw = hasTask ? (argValue(argv, '-t', '--task') ?? '') : undefined;
   const taskReset = has(argv, '--task-reset');
   const noExec = has(argv, '--no-exec');
-  // Task mode forces the chain and the execution contract; the conflict is a
+  // Task mode forces the chain and the execution contract (never `-y`:
+  // auto comes only from the flag, like the CLI host); the conflict is a
   // boot error, never a silent deny.
   const chain = hasTask || has(argv, '--chain');
-  const yes = hasTask || has(argv, '-y', '--yes');
+  const yes = has(argv, '-y', '--yes');
   const requireApproval = hasTask || has(argv, '--require-approval');
   const stream = hasTask || has(argv, '--stream');
   const think = has(argv, '--think');
@@ -267,7 +268,7 @@ Options:
   --exec-timeout <ms>
                     Per-command timeout in ms (default: 120000, max: 600000)
   -t, --task [ref]  Run one task (%id resume/create, or the initial prompt):
-                    forces --chain, -y, --require-approval and --stream
+                    forces --chain, --require-approval and --stream (add -y to auto-run safe commands)
   --task-reset      Start the task context empty (the CLI forwards -n here)
   --chain           Continue after command output until the AI gives a final answer
   --stream          Seed the client's Stream toggle on the first visit, and keep
