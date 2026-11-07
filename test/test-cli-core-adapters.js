@@ -606,3 +606,93 @@ describe('Tell.ts migration boundaries', () => {
     assert.ok(!env.includes('TELL_KEY'), 'env.ts implements no TELL_KEY before the handoff');
   });
 });
+
+describe('Phase 3 always memory in the approval port', () => {
+  function throwing_confirm() {
+    return async () => {
+      throw new Error('must not prompt for a stored grant');
+    };
+  }
+
+  it('runs a stored prefix without a prompt (once/always/reject set)', async () => {
+    const approval = adapters.create_cli_approval(
+      { enabled: true, always: ['npm ls *'] },
+      throwing_confirm(),
+      undefined,
+      true,
+    );
+    assert.strictEqual(await approval({ script: 'npm ls -la' }), 'approved');
+    const supervised = adapters.create_cli_approval(
+      { enabled: true, auto: true, approve_high: true, always: ['git push *'] },
+      throwing_confirm(),
+      undefined,
+      true,
+    );
+    assert.strictEqual(await supervised({ script: 'git push --force origin main' }), 'approved');
+  });
+
+  it('asks again when the prefix differs (no cross-grant)', async () => {
+    let asked = 0;
+    const approval = adapters.create_cli_approval({ enabled: true, always: ['npm ls *'] }, async () => {
+      asked += 1;
+      return false;
+    }, undefined, true);
+    assert.strictEqual(await approval({ script: 'npm install evil' }), 'skipped');
+    assert.strictEqual(asked, 1);
+  });
+
+  it('never grants deny or block through always (invariant)', async () => {
+    const high_denied = adapters.create_cli_approval(
+      { enabled: true, auto: true, always: ['git push *'] },
+      throwing_confirm(),
+      undefined,
+      true,
+    );
+    assert.strictEqual(await high_denied({ script: 'git push --force origin main' }), 'denied');
+    const forbidden_denied = adapters.create_cli_approval(
+      { enabled: true, auto: true, approve_high: true, always: ['cat .env *'] },
+      throwing_confirm(),
+      undefined,
+      true,
+    );
+    assert.strictEqual(await forbidden_denied({ script: 'cat .env' }), 'denied');
+    const blocked = adapters.create_cli_approval(
+      { enabled: false, always: ['npm ls *'] },
+      throwing_confirm(),
+      undefined,
+      true,
+    );
+    assert.strictEqual(await blocked({ script: 'npm ls -la' }), 'denied');
+  });
+
+  it('stores once on always and runs once on unstoreable scripts', async () => {
+    const stored = [];
+    const approval = adapters.create_cli_approval({ enabled: true }, async () => 'always', undefined, true, (p) =>
+      stored.push(p),
+    );
+    assert.strictEqual(await approval({ script: 'npm ls -la' }), 'approved');
+    assert.deepStrictEqual(stored, ['npm ls *']);
+    const bare_stored = [];
+    const bare = adapters.create_cli_approval({ enabled: true }, async () => 'always', undefined, true, (p) =>
+      bare_stored.push(p),
+    );
+    assert.strictEqual(await bare({ script: 'npm' }), 'approved');
+    assert.deepStrictEqual(bare_stored, []);
+  });
+
+  it('maps once to approved and reject to skipped (boolean compat)', async () => {
+    const once = adapters.create_cli_approval({ enabled: true }, async () => 'once', undefined, true);
+    assert.strictEqual(await once({ script: 'echo hi' }), 'approved');
+    const yes = adapters.create_cli_approval({ enabled: true }, async () => true, undefined, true);
+    assert.strictEqual(await yes({ script: 'echo hi' }), 'approved');
+    const no = adapters.create_cli_approval({ enabled: true }, async () => false, undefined, true);
+    assert.strictEqual(await no({ script: 'echo hi' }), 'skipped');
+  });
+
+  it('asks the prompt text for once/always/reject (Tell.ts)', () => {
+    const tell = fs.readFileSync('packages/cli/src/Tell.ts', 'utf8');
+    assert.ok(tell.includes('[o]nce / [a]lways / [N]o'), 'prompt names the three answers');
+    assert.ok(tell.includes("append_always_pattern"), 'always stores in the project .tellrc');
+    assert.ok(tell.includes('child_approval'), 'a child never inherits an always grant');
+  });
+});

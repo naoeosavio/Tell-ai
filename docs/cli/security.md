@@ -69,6 +69,20 @@ Consequences, all covered by tests:
 * Flag-less invocations delete the default context file, so a poisoned default cannot linger silently.
 * Context names reject path traversal (`sanitize_context_name`); `-n` misuse and bad refs are hard errors before any model call.
 
+## Approval memory (`always`)
+
+The prompt shows three answers. The answers are `once`, `always`, and `reject`.
+
+* `once` runs the current command. It stores nothing.
+* `always` runs the current command. It stores `<prefix> *` in the project `.tellrc` under `[permissions]`.
+* `reject` stops the command. It stores nothing.
+
+The prefix is the command plus its subcommand. `npm ls` stores `npm ls *`. An unknown command stores its first two tokens. A bare name stores nothing. A compound script stores nothing. A substitution stores nothing. A redirect stores nothing.
+
+A stored pattern matches only with more args. `npm ls *` matches `npm ls -la`. It does not match `npm ls`. It does not match `npm install evil`.
+
+A stored pattern never grants `deny` or `block`. A forbidden script never stores. A child never inherits a stored grant. The output redactor still masks secret values.
+
 ## Test mapping
 
 | Concern | Test |
@@ -85,6 +99,8 @@ Consequences, all covered by tests:
 | Context label echo (ANSI/OSC/C1/newline in file names) | `test_ctx_echo_strips_control_chars_from_file_names` |
 | `@path` expansion, outside-cwd denial, poisoned-file inertness | `test-tell-mentions.js: TESTS` (22 cases) |
 | Incremental-save no-duplication | `test_incremental_context_saves_do_not_duplicate_turns_on_chain` |
+| `always` stores prefix, matches with args, never bare | `test-core-permission.js` (Phase 3), `test-tell-tellrc.js` (permissions) |
+| Stored grant runs, deny never grants, child isolated | `test-cli-core-adapters.js` (Phase 3) |
 
 Run: `npm run test:security`, `npm run test:mentions`, `npm run test` (all suites, builds SDK first). See [development.md](development.md).
 

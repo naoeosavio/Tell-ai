@@ -406,13 +406,54 @@ function test_profile_limits_use_the_same_table() {
   assert.ok(unknown.warnings.some((w) => w.includes('unknown limit nope')));
 }
 
+function test_permissions_parse_and_union() {
+  const parsed = tellrc.parse_tellrc('[permissions]\nnpm ls * = allow\ngit status * = ALLOW\n', 'test');
+  assert.deepStrictEqual(parsed.warnings, []);
+  assert.strictEqual(parsed.permissions['npm ls *'], 'allow');
+  assert.strictEqual(parsed.permissions['git status *'], 'allow');
+  const bad = tellrc.parse_tellrc('[permissions]\nnpm = allow\nnpm ls = deny\nnpm ls * = yes\n', 'test');
+  assert.deepStrictEqual(Object.keys(bad.permissions), []);
+  assert.ok(bad.warnings.some((w) => w.includes('invalid permission')));
+  const user = { ...tellrc.empty_parsed_tellrc('user'), rank: 1, permissions: { 'npm ls *': 'allow' } };
+  const project = { ...tellrc.empty_parsed_tellrc('project'), rank: 2, permissions: { 'git status *': 'allow' } };
+  const resolved = tellrc.resolve_tellrc([user, project], {}, {});
+  assert.strictEqual(resolved.permissions['npm ls *'], 'allow');
+  assert.strictEqual(resolved.permissions['git status *'], 'allow');
+  assert.strictEqual(resolved.provenance['permissions'], 'union');
+}
+
+function test_permissions_append_roundtrip() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tellrc-perm-'));
+  try {
+    assert.strictEqual(tellrc.append_always_pattern(dir, 'npm ls *'), true);
+    const first = fs.readFileSync(path.join(dir, '.tellrc'), 'utf8');
+    assert.ok(first.includes('[permissions]'));
+    assert.ok(first.includes('npm ls * = allow'));
+    assert.strictEqual(tellrc.append_always_pattern(dir, 'npm ls *'), true);
+    const second = fs.readFileSync(path.join(dir, '.tellrc'), 'utf8');
+    assert.strictEqual(second.split('npm ls *').length - 1, 1);
+    assert.strictEqual(tellrc.append_always_pattern(dir, 'npm'), false);
+    assert.strictEqual(tellrc.append_always_pattern(dir, 'npm ls'), false);
+    assert.strictEqual(tellrc.is_valid_always_pattern('npm ls *'), true);
+    assert.strictEqual(tellrc.is_valid_always_pattern('npm'), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
 function test_compose_system_safety_last() {
   const safety = 'safety <RUN> approval injection deny';
   const composed = tellrc.compose_system_prompt(safety, 'Be concise.');
   assert.ok(composed.startsWith('Custom instructions:'));
   assert.ok(composed.endsWith(safety));
   assert.strictEqual(tellrc.compose_system_prompt(safety, ''), safety);
-  const custom = tellrc.tellrc_custom_text({ aliases: {}, deny_commands: [], limits: {}, provenance: {}, warnings: [] });
+  const custom = tellrc.tellrc_custom_text({
+    aliases: {},
+    deny_commands: [],
+    permissions: {},
+    limits: {},
+    provenance: {},
+    warnings: [],
+  });
   assert.strictEqual(custom, '');
 }
 
@@ -597,6 +638,8 @@ describe('tell tellrc temperature model limits', () => {
   it('sdk temperature propagates', test_sdk_temperature_propagates);
 });
 describe('tell tellrc web forwarding', () => {
+  it('permissions parse and union', test_permissions_parse_and_union);
+  it('permissions append roundtrip', test_permissions_append_roundtrip);
   it('web cli args forwarding', test_web_cli_args_forwarding);
   it('web forwarding uses resolved tellrc', test_web_forwarding_uses_resolved_tellrc);
   it('resolve tellrc system text helper', test_resolve_tellrc_system_text_helper);
