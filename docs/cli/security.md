@@ -1,34 +1,33 @@
 # Security
 
-Threat model: the model output, piped stdin, and stored context are all untrusted. Only model-emitted `<RUN>` blocks that survive think-tag stripping and the high-risk guard may execute, and only after confirmation (or `-y` for safe scripts on a TTY).
+Threat model: the model output, piped stdin, and stored context are all untrusted. Only model-emitted `<RUN>` blocks that survive think-tag stripping and the permission guard may execute, and only after confirmation (or `-y` for low and medium scripts).
 
-## High-risk guard (`is_high_risk_script` → core `assess_base_risk`)
+## Permission guard (graded classes → core `decide_permission`)
 
-The guard is a thin CLI boolean (`is_high_risk_script` in `src/core-adapters.ts`) over the core base classifier (`assess_base_risk`, permissive profile — see [../core/risk.md](../core/risk.md)). Input is normalized (`\\\n` → space, runs of whitespace → single space) into `compact`; every pattern below is tested against it. Match → high-risk: `-y` denies, `--require-approval` asks on a TTY, non-TTY denies. Credential-file reads (row 16) are forbidden in both profiles: the CLI denies them in every automatic path; the Web blocks outright.
+The guard is the core permission table (`classify_script` in `packages/core/src/permission.ts` — see [../core/risk.md](../core/risk.md)). `Tell.ts` calls it directly. No host wrapper decides the class. The class is the maximum over the script parts.
 
-| # | Pattern (summary) | Example blocked |
-|---|-------------------|-----------------|
-| 1 | `\b(sudo\|doas\|pkexec)\b` | `sudo ls /`, `doas ls /root`, `pkexec sh -c "id"` |
-| 2 | `\brm\s+(-…[rf]…)\b` | `rm -rf ./dir`, `rm -fr /` |
-| 3 | `\b(git clean -[xfd]\|mkfs\|shutdown\|reboot)\b` | `git clean -xfd`, `mkfs /dev/sda` |
-| 4 | `\bdd\b.*\bof=` | `dd if=/dev/zero of=/dev/sda bs=1M` |
-| 5 | `(chmod\|chown) -R … /` | `chmod -R 777 /` |
-| 5b | `(chmod\|chown) … privileged_path` (non-recursive included) | `chmod 777 /etc/passwd`, `chown root:root /etc/shadow` |
-| 6 | `(curl\|wget\|base64)…\|\s*(sh\|bash\|zsh\|dash\|ksh\|python\|perl\|ruby\|php\|node)` | `curl …/install.sh \| sh`, `curl …/x.py \| python3`, `echo … \| base64 -d \| sh` |
-| 7 | `<\(\s*(curl\|wget\|base64)` | `bash <(curl -s …/install.sh)` |
-| 8 | `(^¦[\s;&¦])sh…<\( ` | `sh … <(…)` (shell fed by process substitution) |
-| 9 | interpreter `-e/-c/-r/--eval/--exec/--command` + network/decode token (`http`, `require('http`, `import('http`, `urllib`, `requests.`, `ftplib`, `socket`, `base64`, `eval(`, `exec(`, `system(`, `popen(`) | `python3 -c "import urllib.request; exec(…)"`, `node -e "require('https')…eval(s)"` |
-| 10 | `(curl\|wget\|base64)…[;&¦]…(node\|python\|perl\|ruby\|php)` | `curl … ; python3 evil.py` |
-| 11 | `(^¦[\s;&¦])(crontab\|systemctl --user enable)` | `echo "…" \| crontab -`, `systemctl --user enable pwned.service` |
-| 12 | `(cp¦mv¦ln) … privileged_path` | `cp payload /etc/profile.d/…`, `ln -s payload /etc/rc.local` |
-| 13 | `sed -i… privileged_path` | `sed -i 's/root/pwned/' /etc/passwd` |
-| 14 | `tee … privileged_path` | `echo pwned ¦ tee /etc/hosts` |
-| 15 | `\d*(>>?¦>\|¦&>) privileged_path` | `echo pwned > /etc/profile`, `bad-command 2> /etc/hosts` |
-| 16 | credential-file name (both profiles, `data-exfiltration`) | `cat .env`, `cat ~/.config/openrouter.token`, `cat id_rsa`, `git show HEAD:.env`; quoted/braced/globbed/ANSI-C spellings (`cat '.en'v`, `cat {a.txt,.env}`, `cat .en?`, `cat *.key`, `cat $'\x2eenv'`) (`.env.example` stays allowed) |
+Four classes exist.
 
-`privileged_path` (`PRIVILEGED_PATH` in `packages/core/src/risk.ts`): `/(etc|boot|dev|proc|sys|usr|bin|sbin|lib|lib64)(/¦\b)`, `/var/spool/cron`, `/var/cron`, `/etc/cron[.d|daily|…]`, `~/.config/autostart`, `~/.config/systemd/user`, `~/.local/share/systemd/user` (with `$HOME` variants).
+| Class | Meaning | Examples |
+|---|---|---|
+| low | read-only, no side effect | `ls`, `echo hi`, `git status`, `cat` inside the cwd |
+| medium | local write, reversible | `mkdir`, `touch`, `npm install`, `curl` GET, `env`, clean `node -e` |
+| high | irreversible, external, or privileged | `rm -rf` outside build dirs, `git push --force`, `docker run`, `sudo`, `curl -d` |
+| forbidden | no automatic path | credential reads (`.env`, keys), `curl … \| sh`, `rm -rf /`, system-path writes |
 
-Since Phase 5 every interpreter one-liner needs confirmation, even local-only ones like `node -e "require('fs').writeFileSync('pwned','1')"` — the `-e` rule fires with or without a network/decode token. This is asserted, not accidental (`test-tell-security.js:333-337` expects the run skipped under `--yes` without a TTY).
+Five flag rows decide the effect.
+
+| Flags | low | medium | high | forbidden |
+|---|---|---|---|---|
+| base | ask | ask | deny | deny |
+| `-y` | allow | allow | deny | deny |
+| `-y --require-approval` | allow | allow | ask | deny |
+| `--require-approval` | ask | ask | ask | deny |
+| `--no-exec` | block | block | block | block |
+
+Ask shows `[o]nce / [a]lways / [N]o`. Once runs one command. Always runs it and stores `<prefix> *`. Reject stops it. Ask with no TTY denies. Deny and block never prompt. A denial ends the attempt. The model must report it. It must never work around it.
+
+A clean eval is medium. It runs with `-y` (`test-tell-security.js` runs a clean one-liner under `--yes`). A dirty eval is forbidden. It names network, decode, exec, or secret text. It never runs automatically.
 
 ## Outside-cwd scope (permission class, lexical)
 
@@ -43,7 +42,16 @@ cwd that points outside reads as inside. `/tmp` counts as inside. The old
 `script_touches_outside_cwd` realpath check now only labels the prompt; it
 no longer decides. Output redaction still masks secret values.
 
-Guard limits: regex heuristics, not a sandbox. Do not rely on it in production/trusted hosts without a container/VM. `--no-exec` always wins over `-y`.
+Guard limits: text heuristics, not a sandbox. Do not rely on it in production/trusted hosts without a container/VM. `--no-exec` always wins over `-y`.
+
+## Web differences (same table, strict flag)
+
+The Web uses the same table with the strict flag and the server cwd.
+
+* A system-path read (`cat /etc/hosts`) is forbidden on the Web. It is medium on the CLI.
+* With `-y` alone the Web parks a medium script on the approval card. The CLI runs it. Only `-y --require-approval` runs it on the Web.
+* An outside write blocks on every stateless route (`/api/execute`, `/api/risk-check`, delegate and chain confirms). It parks in the chain gate. One helper owns the block (`is_web_blocked_script`).
+* Task mode forces `--require-approval`, `--chain` and `--stream` on both hosts. It never forces `-y` on either host. Add `-y` to auto-run safe commands.
 
 Credential reads that the classifier cannot resolve (`cat sec*`, `cat *`, recursive `grep -r`) still execute, but command output crosses the redaction boundary: the CLI and Web scan credential-named workspace files (`.env*`, keys, `id_*`, bounded) and mask their values (`[redacted]`) before feedback, log, context and the model turn. The same scan masks provider keys. In the CLI an approval authorizes **execution**, not exfiltration: even an approved high-risk read stays redacted (the Web chain's explicit approval is the documented exception — the confirm card shows the server-kept script and its risk, so its output is shown as executed). Encoding/transforming the value (e.g. `base64` without `-d`, which is itself high-risk) is the remaining documented gap — the deny-list is a speed bump, not a sandbox.
 
@@ -88,7 +96,7 @@ A stored pattern never grants `deny` or `block`. A forbidden script never stores
 | Concern | Test |
 |---------|------|
 | 30+ risky scripts skipped under `--yes` | `test-tell-security.js:143-190` |
-| Interpreter one-liner now asks (no local-only pass) | `test-tell-security.js:333-337` |
+| Clean one-liner runs under `--yes`, dirty eval never runs | `test-tell-security.js` (clean one-liner), calibration table |
 | Injection policy in system prompt | `assertPromptInjectionPolicy` |
 | Literal user `<RUN>` not executed | `USER_PROMPT_PWN` case |
 | `--no-exec` wins | `test_no_exec_overrides_yes_flag` (both suites) |
@@ -101,7 +109,11 @@ A stored pattern never grants `deny` or `block`. A forbidden script never stores
 | Incremental-save no-duplication | `test_incremental_context_saves_do_not_duplicate_turns_on_chain` |
 | `always` stores prefix, matches with args, never bare | `test-core-permission.js` (Phase 3), `test-tell-tellrc.js` (permissions) |
 | Stored grant runs, deny never grants, child isolated | `test-cli-core-adapters.js` (Phase 3) |
+| No host wrapper, task forces approval, labels from classes | `test-cli-core-adapters.js` (Phase 4) |
+| Helper blocks, gate parks high and denies forbidden, CLI/Web parity | `test-web-chain-runtime.js` (Phase 4) |
+| Server blocks through the helper | `test-web-backend.js` (Phase 4) |
+| Block never loosens the guard | `test-fuzz-coverage.js` (Phase 4) |
 
 Run: `npm run test:security`, `npm run test:mentions`, `npm run test` (all suites, builds SDK first). See [development.md](development.md).
 
-Sources: `Tell.ts:368-427` (confirmation UX), `packages/cli/src/core-adapters.ts` (risk seam), `packages/core/src/risk.ts` (rule owner), `src/mentions.ts`, `test/test-tell-security.js`, `test/test-tell-context.js`, `test/test-tell-mentions.js`, `test/test-core-risk.js`. Core reference: [../core/risk.md](../core/risk.md).
+Sources: `Tell.ts` (confirmation UX, direct core calls), `packages/cli/src/core-adapters.ts` (exec/env/config seam, no classifier), `packages/core/src/permission.ts` (class and verdict owner), `packages/web/src/server/chain-runtime.ts` (gate and block owner), `src/mentions.ts`, `test/test-tell-security.js`, `test/test-tell-context.js`, `test/test-tell-mentions.js`, `test/test-core-permission.js`. Core reference: [../core/risk.md](../core/risk.md).

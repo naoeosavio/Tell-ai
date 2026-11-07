@@ -79,29 +79,27 @@ const RISKY_SCRIPTS = [
 
 const SENSITIVE_SAFE_SCRIPTS = ['cat .env.example', 'ls .env.example'];
 
-describe('cli risk classification delegates to core', () => {
+describe('cli risk classification lives in the core (no host wrapper)', () => {
+  it('exposes no classifier: Tell.ts calls the core table directly', () => {
+    assert.strictEqual(adapters.assess_cli_risk, undefined);
+    assert.strictEqual(adapters.is_high_risk_script, undefined);
+    assert.strictEqual(adapters.cli_risk_port, undefined);
+    const tell = fs.readFileSync('packages/cli/src/Tell.ts', 'utf8');
+    assert.ok(tell.includes('create_base_risk_port'), 'Tell.ts wires the core risk port directly');
+    assert.ok(tell.includes('assess_base_risk'), 'Tell.ts reads the core assessment directly');
+    assert.ok(tell.includes('classify_script'), 'Tell.ts labels prompts from the core classes');
+  });
+
   it('matches the core permissive verdict on safe scripts', () => {
     for (const script of SAFE_SCRIPTS) {
-      assert.strictEqual(adapters.is_high_risk_script(script), false, script);
-      assert.strictEqual(adapters.is_high_risk_script(script), core.assess_base_risk(script, 'permissive').risky, script);
+      assert.strictEqual(core.assess_base_risk(script, 'permissive').risky, false, script);
     }
   });
 
   it('matches the core permissive verdict on risky scripts', () => {
     for (const script of RISKY_SCRIPTS) {
-      assert.strictEqual(adapters.is_high_risk_script(script), true, script);
-      assert.strictEqual(adapters.is_high_risk_script(script), core.assess_base_risk(script, 'permissive').risky, script);
+      assert.strictEqual(core.assess_base_risk(script, 'permissive').risky, true, script);
     }
-  });
-
-  it('exposes the full assessment and a compatible risk port', async () => {
-    const assessment = adapters.assess_cli_risk('sudo ls /');
-    assert.deepStrictEqual(assessment, core.assess_base_risk('sudo ls /', 'permissive'));
-    assert.strictEqual(assessment.risky, true);
-    assert.ok(assessment.severity);
-    assert.ok(assessment.category);
-    const port = adapters.cli_risk_port();
-    assert.deepStrictEqual(await port.assess('echo hi'), core.assess_base_risk('echo hi', 'permissive'));
   });
 
   it('keeps outside-cwd detection identical for reads and writes', () => {
@@ -381,7 +379,7 @@ describe('cli approval port realizes the permission verdict', () => {
 
   it('never runs credential-file reads automatically', async () => {
     for (const script of ['cat .env', 'cat ~/.config/openrouter.token', 'cat id_rsa', 'git show HEAD:.env']) {
-      assert.strictEqual(adapters.is_high_risk_script(script), true, script);
+      assert.strictEqual(core.assess_base_risk(script, 'permissive').risky, true, script);
       const approval = adapters.create_cli_approval(
         { enabled: true, auto: true, approve_high: true },
         throwing_confirm(),
@@ -391,7 +389,7 @@ describe('cli approval port realizes the permission verdict', () => {
       assert.strictEqual(await approval({ script }), 'denied', script);
     }
     for (const script of SENSITIVE_SAFE_SCRIPTS) {
-      assert.strictEqual(adapters.is_high_risk_script(script), false, script);
+      assert.strictEqual(core.assess_base_risk(script, 'permissive').risky, false, script);
     }
   });
 
@@ -425,7 +423,7 @@ describe('cli approval port realizes the permission verdict', () => {
       'env ls',
       'echo abc | base64 -d',
     ]) {
-      assert.strictEqual(adapters.is_high_risk_script(script), false, script);
+      assert.strictEqual(core.assess_base_risk(script, 'permissive').risky, false, script);
       const approval = adapters.create_cli_approval({ enabled: true, auto: true }, throwing_confirm(), undefined, true);
       assert.strictEqual(await approval({ script }), 'approved', script);
     }
@@ -595,6 +593,10 @@ describe('Tell.ts migration boundaries', () => {
     assert.ok(tell.includes("from './history'"), 'Tell.ts keeps history');
     assert.ok(!tell.includes('SENSITIVE_ENV_NAMES ='), 'Tell.ts owns no env denylist');
     assert.ok(!tell.includes('function is_high_risk_script'), 'Tell.ts owns no risk regex');
+    assert.ok(!tell.includes('assess_cli_risk'), 'Tell.ts calls assess_base_risk, never the removed wrapper');
+    assert.ok(!tell.includes('is_high_risk_script('), 'Tell.ts labels prompts from classify_script, never the removed wrapper');
+    assert.ok(!tell.includes('cli_risk_port'), 'Tell.ts wires create_base_risk_port, never the removed wrapper');
+    assert.ok(tell.includes('requireApproval: true'), 'task mode forces --require-approval like the Web host');
     assert.ok(!tell.includes('function execute_command'), 'Tell.ts owns no exec transport');
     assert.ok(!tell.includes('function script_touches_outside_cwd'), 'Tell.ts owns no path scanner');
     assert.ok(!tell.includes('function tell_streaming'), 'Tell.ts owns no streaming loop');

@@ -5,11 +5,14 @@ import * as os from 'os';
 import * as path from 'path';
 import * as readline from 'readline';
 import {
+  assess_base_risk,
   build_execution_options,
   chain_limit_notice,
+  classify_script,
   discard_unused_task,
   collect_exec_secrets,
   collect_sensitive_file_secrets,
+  create_base_risk_port,
   create_delegation_runner,
   type DelegationChildEvent,
   create_secret_redactor,
@@ -74,14 +77,11 @@ import { Command } from 'commander';
 import {
   type CliExecInput,
   type CoreConfig,
-  assess_cli_risk,
-  cli_risk_port,
   create_cli_approval,
   create_cli_executor,
   create_cli_memory_storage,
   create_cli_model,
   create_core_runtime,
-  is_high_risk_script,
   lock_process_environment,
   READLINE_CONFIRM_TIMEOUT_MS,
   resolve_cli_exec_input,
@@ -794,8 +794,11 @@ function save_incremental_context(contextPath: string, previousContext: string, 
 
 async function confirm_command(script: string): Promise<boolean | 'always'> {
   // Display-only labels: the approval port already decided (allow runs, deny
-  // stops); this prompt only renders for ask effects.
-  const high_risk = is_high_risk_script(script);
+  // stops); this prompt only renders for ask effects. The class comes from
+  // the one permission table with the host cwd, so an outside write labels
+  // high-risk like its verdict does.
+  const graded = classify_script(script, { cwd: process.cwd() });
+  const high_risk = graded.class === 'high' || graded.class === 'forbidden';
   const touches_outside = !high_risk && script_touches_outside_cwd(script, process.cwd());
   if (!high_risk && !touches_outside) {
     // Plain command — still asks (the port decided it must).
@@ -1201,7 +1204,7 @@ async function run_response_loop(
           model: child_model,
           executor,
           approval: child_approval,
-          risk: cli_risk_port(),
+          risk: create_base_risk_port('permissive'),
           ...(state.showDelegation ? { on_child_event: print_child_event } : {}),
           ...(redact !== undefined ? { redact } : {}),
           cwd: process.cwd(),
@@ -1313,7 +1316,7 @@ async function run_response_loop(
       if (disabled) {
         process.stderr.write('\x1b[33mCommand execution disabled (--no-exec).\x1b[0m\n');
       } else {
-        const risk = assess_cli_risk(event.script);
+        const risk = assess_base_risk(event.script, 'permissive');
         const detail = event.reason !== undefined ? event.reason : risk.risky ? risk.reason : undefined;
         const reason = detail === undefined ? '' : ` Reason: ${detail}.`;
         process.stderr.write(`\x1b[33mCommand skipped by user.${reason}\x1b[0m\n`);
@@ -1339,7 +1342,7 @@ async function run_response_loop(
       storage,
       executor,
       approval,
-      risk: cli_risk_port(),
+      risk: create_base_risk_port('permissive'),
       system,
       callbacks: runtime_callbacks,
       max_rounds: rounds,
@@ -1754,15 +1757,16 @@ async function run_tell(
   // keys and URLs stay in `./env` until the explicit tellkey handoff).
   // `--no-exec` wins over everything; `-y` sets auto (low and medium run);
   // `--require-approval` sets approve_high (high asks instead of denying).
-  // Task mode forces exec (never `--no-exec`) but never forces `-y`: without
-  // it every command asks, with it safe commands auto-run.
+  // Task mode forces exec (never `--no-exec`) and `--require-approval` (high
+  // asks, like the Web host) but never forces `-y`: without it every command
+  // asks, with it safe commands auto-run.
   const core_config =
     task !== undefined
       ? resolve_cli_core_config({ exec: true, chain: true, exec_timeout_ms: limits.exec_timeout_ms })
       : resolve_cli_core_config({ exec: opts.exec, chain: opts.chain, exec_timeout_ms: limits.exec_timeout_ms });
   const exec_input: CliExecInput =
     task !== undefined
-      ? resolve_cli_exec_input({ exec: true, yes: opts.yes, requireApproval: opts.requireApproval })
+      ? resolve_cli_exec_input({ exec: true, yes: opts.yes, requireApproval: true })
       : resolve_cli_exec_input({ exec: opts.exec, yes: opts.yes, requireApproval: opts.requireApproval });
   const always_patterns = Object.entries(tellrc.permissions ?? {})
     .filter(([, effect]) => effect === 'allow')

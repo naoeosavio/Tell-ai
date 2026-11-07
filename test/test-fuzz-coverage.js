@@ -392,6 +392,9 @@ const web_chain_store = load_typescript_module(
   path.join(REPO, 'packages', 'web', 'src', 'server', 'chain-store.ts'),
 );
 const web_guards = load_typescript_module(path.join(REPO, 'packages', 'web', 'src', 'server', 'guards.ts'));
+const web_chain_runtime = load_typescript_module(
+  path.join(REPO, 'packages', 'web', 'src', 'server', 'chain-runtime.ts'),
+);
 const cli_tellrc = load_typescript_module(path.join(REPO, 'packages', 'cli', 'src', 'tellrc.ts'));
 const cli_adapters = load_typescript_module(path.join(REPO, 'packages', 'cli', 'src', 'core-adapters.ts'));
 
@@ -1044,22 +1047,23 @@ describe('fuzz/web: the sandbox risk guard delegates to the core owner', () => {
   });
 });
 
-describe('fuzz/cli: the risk port delegates to the core owner', () => {
-  it('agrees with the core permissive profile on every generated script', () => {
+describe('fuzz/web: the scope-aware block never loosens the guard', () => {
+  it('blocks every script the guard blocks, plus outside writes', () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-fuzz-web-'));
     run_property_over_seeds({
-      name: 'cli is_high_risk_script must equal the core permissive profile',
+      name: 'is_web_blocked_script must imply isHighRiskScript agreement',
       iterations: 600,
       generate: (rng) => random_script(rng),
       check: (input) => {
         const script = String(input);
-        const cli = cli_adapters.is_high_risk_script(script);
-        const core_permissive = core.assess_base_risk(script, 'permissive').risky;
-        if (cli !== core_permissive) {
-          return `cli=${cli} core=${core_permissive} for "${script}"`;
+        if (web_guards.isHighRiskScript(script) && !web_chain_runtime.is_web_blocked_script(script, cwd)) {
+          return `blocked=false for guarded "${script}"`;
         }
         return null;
       },
     });
+    assert.strictEqual(web_chain_runtime.is_web_blocked_script('touch /outside/f', cwd), true);
+    assert.strictEqual(web_chain_runtime.is_web_blocked_script('echo hi', cwd), false);
   });
 });
 

@@ -2,10 +2,8 @@ import * as os from 'os';
 import * as path from 'path';
 import {
   type ApprovalPort,
-  assess_base_risk,
   type CommandExecutor,
   type CoreConfig,
-  create_base_risk_port,
   create_core_runtime,
   create_node_executor,
   decide_permission,
@@ -18,7 +16,6 @@ import {
   MemoryStorageAdapter,
   type ModelPort,
   type RiskAssessment,
-  type RiskPort,
   type RuntimeCallbacks,
   resolve_core_config,
   SENSITIVE_ENV_NAMES,
@@ -63,44 +60,6 @@ export type CliCoreConfigFlags = {
   /** Per-command timeout override in milliseconds. */
   exec_timeout_ms?: number | undefined;
 };
-
-/**
- * Classifies one script through the core base rules (CLI permissive profile).
- *
- * Every interpreter one-liner is risky since core Phase 5 — a local
- * `node -e "console.log(1)"` asks for confirmation too (the prompt, then the
- * skip record). Credential-file reads are high-risk in both profiles, so
- * `cat .env` needs explicit confirmation even with `-y`. The Web strict
- * profile denies the same shapes outright.
- *
- * @param script - Command script to classify.
- * @returns The base `RiskAssessment` (never an action verdict).
- */
-export function assess_cli_risk(script: string): RiskAssessment {
-  return assess_base_risk(script, 'permissive');
-}
-
-/**
- * Returns true when a script matches the CLI high-risk matrix.
- *
- * Thin boolean over `assess_cli_risk`, preserving the historical
- * `is_high_risk_script` contract (prompts, auto-risk gating).
- *
- * @param script - Command script to classify.
- * @returns True when the script needs explicit confirmation.
- */
-export function is_high_risk_script(script: string): boolean {
-  return assess_cli_risk(script).risky;
-}
-
-/**
- * Creates the CLI risk port (permissive profile) for runtime wiring.
- *
- * @returns A `RiskPort` observing through the core base classifier.
- */
-export function cli_risk_port(): RiskPort {
-  return create_base_risk_port('permissive');
-}
 
 /**
  * Deletes sensitive variables from the current process environment.
