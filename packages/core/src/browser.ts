@@ -23,6 +23,8 @@ export type { ConfigLayer, CoreConfig, CoreHost, ResolvedConfigInput } from './c
 export { HOST_DEFAULT_MODEL, load_env_layer, resolve_core_config } from './config';
 export { CUSTOM_SYSTEM_PREFIX, compose_custom_system } from './custom-system';
 export type {
+  ChildDecision,
+  ChildFamily,
   DelegationChildEnv,
   DelegationChildEvent,
   DelegationOutcome,
@@ -32,6 +34,14 @@ export type {
   DelegationRunner,
   DelegationRunnerOptions,
   DelegationStats,
+} from './delegation';
+export {
+  build_child_message,
+  child_system_prompt,
+  create_child_approval,
+  decide_child_command,
+  format_child_project_context,
+  is_broad_destructive_script,
 } from './delegation';
 export type { DelegationPromptMode } from './delegation-prompt';
 export { delegation_prompt_section } from './delegation-prompt';
@@ -98,6 +108,7 @@ export {
   decide_permission,
   derive_always_prefix,
   is_valid_always_pattern,
+  launcher_tail,
   matches_always_pattern,
   split_statements,
 } from './permission';

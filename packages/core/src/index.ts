@@ -13,6 +13,8 @@ export {
 } from './config';
 export { CUSTOM_SYSTEM_PREFIX, compose_custom_system } from './custom-system';
 export type {
+  ChildDecision,
+  ChildFamily,
   DelegationChildEnv,
   DelegationChildEvent,
   DelegationOutcome,
@@ -26,7 +28,11 @@ export type {
 export {
   build_child_message,
   child_system_prompt,
+  create_child_approval,
   create_delegation_runner,
+  decide_child_command,
+  format_child_project_context,
+  is_broad_destructive_script,
   sanitize_briefing_context,
   sanitize_objective,
 } from './delegation';
@@ -127,6 +133,7 @@ export {
   decide_permission,
   derive_always_prefix,
   is_valid_always_pattern,
+  launcher_tail,
   matches_always_pattern,
   split_statements,
 } from './permission';

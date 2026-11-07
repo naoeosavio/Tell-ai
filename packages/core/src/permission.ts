@@ -1300,7 +1300,7 @@ const PERMISSION_RULES: readonly PermissionRule[] = [
  * @param outer - Statement text without substitutions.
  * @returns The launched command text, or null when there is none.
  */
-function launcher_tail(outer: string): string | null {
+export function launcher_tail(outer: string): string | null {
   let rest = outer;
   const env_match = /^\s*env\b/.exec(rest);
   if (env_match === null) {
