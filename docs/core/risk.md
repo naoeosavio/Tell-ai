@@ -31,7 +31,7 @@ Highest severity wins (`high` beats `medium`); the winning rule's category is re
 
 ## Consumers
 
-* CLI (`packages/cli/src/core-adapters.ts`): `assess_cli_risk` (permissive) + `is_high_risk_script` (thin boolean preserving the historical contract). High-risk or outside-cwd scripts need explicit confirmation even with `-y`. Full UX: `../cli/security.md`.
-* Web (`packages/web/src/server/guards.ts`): stricter gate drives Require Approval; classification failure is fail-closed (manual approval).
+* CLI (`Tell.ts` calls the core directly): `create_base_risk_port` (permissive) for the runtime ports, `assess_base_risk` for the skip reason, `classify_script` for the prompt labels. No host wrapper decides the class. Full UX: `../cli/security.md`.
+* Web (`packages/web/src/server/chain-runtime.ts`): `classify_web_script` (strict, host cwd) for the gate class, `is_web_blocked_script` for the stateless block checks. No `guards.ts` classifier remains.
 
 Sources: `packages/core/src/risk.ts`, `src/runtime-api.ts:147-183` (`RiskAssessment`/`RiskPort`), `packages/cli/src/core-adapters.ts:59-74`, `test/test-core-risk.js`.

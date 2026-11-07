@@ -29,6 +29,8 @@ Ask shows `[o]nce / [a]lways / [N]o`. Once runs one command. Always runs it and 
 
 A clean eval is medium. It runs with `-y` (`test-tell-security.js` runs a clean one-liner under `--yes`). A dirty eval is forbidden. It names network, decode, exec, or secret text. It never runs automatically.
 
+Example: `tell -t '%docs' 'list the source files'` asks every script on the prompt. Add `-y` to run low and medium scripts at once. High scripts still ask in task mode (it forces `--require-approval`); outside task mode they deny without it. Forbidden scripts never run automatically.
+
 ## Outside-cwd scope (permission class, lexical)
 
 The working directory changes the class of a write, not of a read. A write
@@ -49,9 +51,11 @@ Guard limits: text heuristics, not a sandbox. Do not rely on it in production/tr
 The Web uses the same table with the strict flag and the server cwd.
 
 * A system-path read (`cat /etc/hosts`) is forbidden on the Web. It is medium on the CLI.
-* With `-y` alone the Web parks a medium script on the approval card. The CLI runs it. Only `-y --require-approval` runs it on the Web.
+* With `-y` alone the Web runs low and medium scripts like the CLI. `--require-approval` turns high from deny into park.
 * An outside write blocks on every stateless route (`/api/execute`, `/api/risk-check`, delegate and chain confirms). It parks in the chain gate. One helper owns the block (`is_web_blocked_script`).
 * Task mode forces `--require-approval`, `--chain` and `--stream` on both hosts. It never forces `-y` on either host. Add `-y` to auto-run safe commands.
+
+Example: `tell-web -t '%docs' 'list the source files'` parks every script on the approval card. Add `-y` to run low and medium scripts at once (high denies). Add `--require-approval` to park high scripts instead of denying them. Forbidden scripts never run automatically.
 
 Credential reads that the classifier cannot resolve (`cat sec*`, `cat *`, recursive `grep -r`) still execute, but command output crosses the redaction boundary: the CLI and Web scan credential-named workspace files (`.env*`, keys, `id_*`, bounded) and mask their values (`[redacted]`) before feedback, log, context and the model turn. The same scan masks provider keys. In the CLI an approval authorizes **execution**, not exfiltration: even an approved high-risk read stays redacted (the Web chain's explicit approval is the documented exception — the confirm card shows the server-kept script and its risk, so its output is shown as executed). Encoding/transforming the value (e.g. `base64` without `-d`, which is itself high-risk) is the remaining documented gap — the deny-list is a speed bump, not a sandbox.
 

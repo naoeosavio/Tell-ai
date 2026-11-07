@@ -38,9 +38,9 @@ npm run ci             # build + lint + format check + test
 > single source of truth. The `auth`/`routes` suites spawn a real server via
 > `tsx` and need its `node_modules` installed.
 >
-> Intentional divergences (test-pinned, do not "dedupe"): `isHighRiskScript`
-> blocks all interpreter `-c`/`-e`, `env`, `base64 -d` and shell expansions
-> (the CLI allows local one-liners by design); the frontend executes only the
+> Intentional divergences (test-pinned, do not "dedupe"): the CLI grades a
+> system-path read as medium (outside read) while the Web forbids it
+> (strict flag); the frontend executes only the
 > first `<RUN>` script by design (with an explicit warning about extras) while
 > extraction itself delegates to the SDK `extract_runs` via
 > `@tell-ai/sdk/browser` (the SDK resolves a block only when it owns a closing
