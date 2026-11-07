@@ -6,12 +6,14 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import {
   assess_base_risk,
+  build_project_context,
   build_sdk_config_from_env,
   canonical_path,
   canonical_write_path,
   chain_limit_notice,
   collect_exec_secrets,
   FINAL_ANSWER_INSTRUCTION,
+  format_child_project_context,
   needs_final_answer,
   RESEARCH_HEADER,
   SUBTASK_HEADER,
@@ -1775,6 +1777,7 @@ function new_web_runner(modelSpec: string, cancellation?: CancellationToken, run
       }
     }
   };
+  const child_project = build_project_context(CWD);
   return create_delegation_runner({
     model: build_delegation_model(modelSpec),
     executor: async (exec_options) => {
@@ -1795,6 +1798,7 @@ function new_web_runner(modelSpec: string, cancellation?: CancellationToken, run
     cwd: CWD,
     platform: `${os.platform()} ${os.release()}`,
     ...(TASK !== undefined ? { taskId: TASK.id } : {}),
+    project_context: format_child_project_context(child_project.tree, child_project.readme, child_project.agents),
     exec_enabled: !NO_EXEC,
     timeout_ms: EXEC_TIMEOUT_MS,
     ...(cancellation !== undefined ? { cancellation } : {}),
