@@ -1017,25 +1017,26 @@ describe('fuzz/web: the chain store stays bounded and idempotent', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Web vs core: differential risk comparison
+// Web vs core: the scope-aware block never loosens the strict profile
 // ---------------------------------------------------------------------------
 
-describe('fuzz/web: the sandbox risk guard delegates to the core owner', () => {
-  it('agrees with the core strict profile on every generated script', () => {
+describe('fuzz/web: the sandbox block delegates to the core owner', () => {
+  it('blocks every strict-risky script, plus outside writes', () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-fuzz-web-'));
     run_property_over_seeds({
-      name: 'web isHighRiskScript must equal the core strict profile',
+      name: 'is_web_blocked_script must cover the core strict profile',
       iterations: 600,
       generate: (rng) => random_script(rng),
       check: (input) => {
         const script = String(input);
-        const web = web_guards.isHighRiskScript(script);
-        const core_strict = core.assess_base_risk(script, 'strict').risky;
-        if (web !== core_strict) {
-          return `web=${web} core=${core_strict} for "${script}"`;
+        if (core.assess_base_risk(script, 'strict').risky && !web_chain_runtime.is_web_blocked_script(script, cwd)) {
+          return `blocked=false for strict-risky "${script}"`;
         }
         return null;
       },
     });
+    assert.strictEqual(web_chain_runtime.is_web_blocked_script('touch /outside/f', cwd), true);
+    assert.strictEqual(web_chain_runtime.is_web_blocked_script('echo hi', cwd), false);
   });
 
   it('keeps the rate limiter bounded under a key flood', () => {
@@ -1044,26 +1045,6 @@ describe('fuzz/web: the sandbox risk guard delegates to the core owner', () => {
       limiter.check(`ip-${index}`);
     }
     assert.ok(limiter.size() <= 10_000, `the rate limiter must stay bounded (size=${limiter.size()})`);
-  });
-});
-
-describe('fuzz/web: the scope-aware block never loosens the guard', () => {
-  it('blocks every script the guard blocks, plus outside writes', () => {
-    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-fuzz-web-'));
-    run_property_over_seeds({
-      name: 'is_web_blocked_script must imply isHighRiskScript agreement',
-      iterations: 600,
-      generate: (rng) => random_script(rng),
-      check: (input) => {
-        const script = String(input);
-        if (web_guards.isHighRiskScript(script) && !web_chain_runtime.is_web_blocked_script(script, cwd)) {
-          return `blocked=false for guarded "${script}"`;
-        }
-        return null;
-      },
-    });
-    assert.strictEqual(web_chain_runtime.is_web_blocked_script('touch /outside/f', cwd), true);
-    assert.strictEqual(web_chain_runtime.is_web_blocked_script('echo hi', cwd), false);
   });
 });
 

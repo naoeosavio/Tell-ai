@@ -223,9 +223,7 @@ describe('web chain runtime', () => {
         }),
         permission_class === 'forbidden' || permission_class === 'high'
           ? { action: 'deny', reason: 'high-risk' }
-          : permission_class === 'medium'
-            ? { action: 'park' }
-            : { action: 'execute' },
+          : { action: 'execute' },
         permission_class,
       );
     }
@@ -235,7 +233,7 @@ describe('web chain runtime', () => {
     const cells = [
       // [flags, low, medium, high, forbidden]
       [{ auto_execute: false, require_approval: false }, 'park', 'park', 'deny', 'deny'],
-      [{ auto_execute: true, require_approval: false }, 'execute', 'park', 'deny', 'deny'],
+      [{ auto_execute: true, require_approval: false }, 'execute', 'execute', 'deny', 'deny'],
       [{ auto_execute: true, require_approval: true }, 'execute', 'execute', 'park', 'deny'],
       [{ auto_execute: false, require_approval: true }, 'park', 'park', 'park', 'deny'],
     ];
@@ -333,15 +331,9 @@ describe('web chain runtime', () => {
         assert.strictEqual(verdict.class, cls, `${name}: ${script} class`);
         assert.strictEqual(chain.classify_web_script(script, '/work'), cls, `${name}: ${script} web class`);
         const gate = chain.decide_chain_gate({ no_exec: false, ...web_flags, permission_class: verdict.class });
-        if (name === '-y' && cls === 'medium') {
-          // Discovery 45: the Web run has no TTY prompt to fall back on, so
-          // `-y` alone parks a medium script while the CLI runs it. Only the
-          // supervised run (`-y --require-approval`) executes it.
-          assert.strictEqual(verdict.effect, 'allow', `${name}: ${cls} cli`);
-          assert.deepStrictEqual(gate, { action: 'park' }, `${name}: ${cls} web`);
-        } else {
-          assert.strictEqual(gate.action, to_web_action[verdict.effect], `${name}: ${cls}`);
-        }
+        // Discovery 49: `-y` matches the CLI now (low and medium run), so
+        // every cell maps through one outcome table with no exception.
+        assert.strictEqual(gate.action, to_web_action[verdict.effect], `${name}: ${cls}`);
       }
     }
     // Discovery 46: strict reads diverge by design. The Web forbids a
