@@ -259,6 +259,97 @@ describe('web chain runtime', () => {
     assert.strictEqual(chain.classify_web_script('cat /etc/hosts', '/work'), 'forbidden');
   });
 
+  it('is_web_blocked_script blocks high and forbidden with the host cwd', () => {
+    assert.strictEqual(chain.is_web_blocked_script('echo hi', '/work'), false);
+    assert.strictEqual(chain.is_web_blocked_script('touch a', '/work'), false);
+    assert.strictEqual(chain.is_web_blocked_script('git push --force origin main', '/work'), true);
+    assert.strictEqual(chain.is_web_blocked_script('cat .env', '/work'), true);
+    // Discovery 44: the no-cwd guard passed outside writes, so the
+    // stateless routes ran them. The helper blocks them like the gate parks them.
+    assert.strictEqual(chain.is_web_blocked_script('touch /outside/f', '/work'), true);
+    assert.strictEqual(chain.is_web_blocked_script('echo hi > /outside/f', '/work'), true);
+    assert.strictEqual(chain.is_web_blocked_script('mkdir /tmp/x', '/work'), false);
+  });
+
+  it('gate parks a high script and denies a forbidden script end to end', () => {
+    const high = 'truncate -s 0 probe.db';
+    assert.strictEqual(chain.classify_web_script(high, '/work'), 'high');
+    assert.deepStrictEqual(
+      chain.decide_chain_gate({
+        no_exec: false,
+        require_approval: true,
+        auto_execute: false,
+        permission_class: 'high',
+      }),
+      { action: 'park' },
+    );
+    assert.deepStrictEqual(
+      chain.decide_chain_gate({
+        no_exec: false,
+        require_approval: false,
+        auto_execute: true,
+        permission_class: 'high',
+      }),
+      { action: 'deny', reason: 'high-risk' },
+    );
+    const forbidden = 'cat .env';
+    assert.strictEqual(chain.classify_web_script(forbidden, '/work'), 'forbidden');
+    for (const flags of [
+      { auto_execute: false, require_approval: false },
+      { auto_execute: true, require_approval: false },
+      { auto_execute: true, require_approval: true },
+      { auto_execute: false, require_approval: true },
+    ]) {
+      assert.deepStrictEqual(
+        chain.decide_chain_gate({ no_exec: false, ...flags, permission_class: 'forbidden' }),
+        { action: 'deny', reason: 'high-risk' },
+        JSON.stringify(flags),
+      );
+    }
+  });
+
+  it('parity: CLI verdict and Web gate agree on class and outcome', () => {
+    const scripts = {
+      low: 'echo hi',
+      medium: 'touch a',
+      high: 'git push --force origin main',
+      forbidden: 'cat .env',
+    };
+    const rows = [
+      ['base', { enabled: true, auto: false, approve_high: false }, { auto_execute: false, require_approval: false }],
+      ['-y', { enabled: true, auto: true, approve_high: false }, { auto_execute: true, require_approval: false }],
+      [
+        '-y+approve',
+        { enabled: true, auto: true, approve_high: true },
+        { auto_execute: true, require_approval: true },
+      ],
+      ['approve', { enabled: true, auto: false, approve_high: true }, { auto_execute: false, require_approval: true }],
+      ['noexec', { enabled: false }, { auto_execute: false, require_approval: false, no_exec: true }],
+    ];
+    const to_web_action = { allow: 'execute', ask: 'park', deny: 'deny', block: 'deny' };
+    for (const [name, cli_flags, web_flags] of rows) {
+      for (const [cls, script] of Object.entries(scripts)) {
+        const verdict = core.decide_permission({ script, cwd: '/work', ...cli_flags });
+        assert.strictEqual(verdict.class, cls, `${name}: ${script} class`);
+        assert.strictEqual(chain.classify_web_script(script, '/work'), cls, `${name}: ${script} web class`);
+        const gate = chain.decide_chain_gate({ no_exec: false, ...web_flags, permission_class: verdict.class });
+        if (name === '-y' && cls === 'medium') {
+          // Discovery 45: the Web run has no TTY prompt to fall back on, so
+          // `-y` alone parks a medium script while the CLI runs it. Only the
+          // supervised run (`-y --require-approval`) executes it.
+          assert.strictEqual(verdict.effect, 'allow', `${name}: ${cls} cli`);
+          assert.deepStrictEqual(gate, { action: 'park' }, `${name}: ${cls} web`);
+        } else {
+          assert.strictEqual(gate.action, to_web_action[verdict.effect], `${name}: ${cls}`);
+        }
+      }
+    }
+    // Discovery 46: strict reads diverge by design. The Web forbids a
+    // system-path read that the CLI grades as an outside medium read.
+    assert.strictEqual(core.decide_permission({ script: 'cat /etc/hosts', cwd: '/work' }).class, 'medium');
+    assert.strictEqual(chain.classify_web_script('cat /etc/hosts', '/work'), 'forbidden');
+  });
+
   it('concurrency guard starts one more only under the cap', () => {
     assert.strictEqual(chain.can_start_chain_execution(0, 2), true);
     assert.strictEqual(chain.can_start_chain_execution(1, 2), true);

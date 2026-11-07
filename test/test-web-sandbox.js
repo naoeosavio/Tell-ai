@@ -3187,7 +3187,7 @@ describe('web sandbox: delegation (sub-tell)', () => {
         if (content.includes('list the txt files')) return '<RUN>ls</RUN>';
         return 'Final answer.';
       });
-      handle = bootDelegate(['-m', 'q', '-t', '%research', '--prompt', 'research session'], { LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stub.port}/v1` });
+      handle = bootDelegate(['-m', 'q', '-t', '%research', '--prompt', 'research session', '-y'], { LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stub.port}/v1` });
       base = await handle.basePromise;
     });
 
@@ -3274,7 +3274,7 @@ describe('web sandbox: delegation (sub-tell)', () => {
     });
   });
 
-  describe('task mode forces auto-run for a build child (stub model)', () => {
+  describe('task mode with -y auto-runs a build child (stub model)', () => {
     let stub;
     let handle;
     let base;
@@ -3286,7 +3286,7 @@ describe('web sandbox: delegation (sub-tell)', () => {
         if (content.includes('Task result (')) return 'Build done, no more commands.';
         return 'Final answer.';
       });
-      handle = bootDelegate(['-m', 'q', '-t', '%build-auto', '--prompt', 'auto build'], {
+      handle = bootDelegate(['-m', 'q', '-t', '%build-auto', '--prompt', 'auto build', '-y'], {
         LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stub.port}/v1`,
       });
       base = await handle.basePromise;
@@ -3303,7 +3303,7 @@ describe('web sandbox: delegation (sub-tell)', () => {
       assert.strictEqual(res.status, 200);
       const run = await res.json();
       assert.strictEqual(run.status, 'completed');
-      assert.strictEqual(run.childPending, null, 'task mode forces -y: no child approval card');
+      assert.strictEqual(run.childPending, null, 'explicit -y auto-runs: no child approval card');
       assert.ok(fs.existsSync(path.join(handle.dir, 'out.txt')), 'build child executed');
       const records = run.events.filter((e) => typeof e.text === 'string' && e.text.startsWith('Task result ('));
       assert.strictEqual(records.length, 1);
@@ -3312,7 +3312,7 @@ describe('web sandbox: delegation (sub-tell)', () => {
     });
   });
 
-  describe('delegate build under the forced auto-run (stub model)', () => {
+  describe('delegate build with -y auto-run (stub model)', () => {
     let stub;
     let handle;
     let base;
@@ -3322,7 +3322,7 @@ describe('web sandbox: delegation (sub-tell)', () => {
         if (content.includes('please build')) return '<RUN>echo hi > out.txt</RUN>';
         return 'Built it.';
       });
-      handle = bootDelegate(['-m', 'q', '-t', '%delegate-auto', '--prompt', 'auto delegate'], {
+      handle = bootDelegate(['-m', 'q', '-t', '%delegate-auto', '--prompt', 'auto delegate', '-y'], {
         LOCAL_OPENAI_BASE_URL: `http://127.0.0.1:${stub.port}/v1`,
       });
       base = await handle.basePromise;
@@ -3335,8 +3335,8 @@ describe('web sandbox: delegation (sub-tell)', () => {
     });
 
     it('executes the child and returns only the summary (no awaiting card)', async () => {
-      // Task mode forces -y, so `/api/delegate` takes the auto-run branch:
-      // the v2 nested approval bridge is only reachable without -y.
+      // Explicit -y takes the auto-run branch: the v2 nested approval bridge
+      // is only reachable without -y.
       const res = await postJson(base, '/api/delegate', { kind: 'build', objective: 'please build' });
       assert.strictEqual(res.status, 200);
       const done = await res.json();
@@ -3639,8 +3639,10 @@ describe('web sandbox: task mode', () => {
       const config = await (await fetch(`${base}/api/config`)).json();
       assert.strictEqual(config.taskId, 'task-001-my-task');
       assert.strictEqual(config.chain, true);
-      assert.strictEqual(config.yes, true);
-      assert.strictEqual(config.autoExecute, true);
+      // Task mode never forces `-y` (like the CLI host): only chain,
+      // approval and stream are seeded on.
+      assert.strictEqual(config.yes, false);
+      assert.strictEqual(config.autoExecute, false);
       assert.strictEqual(config.requireApproval, true);
       assert.strictEqual(config.stream, true);
       const anchor = path.join(handle.home, '.ai', 'tell_context', 'task-001-my-task', 'main.txt');

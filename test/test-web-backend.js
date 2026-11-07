@@ -238,11 +238,16 @@ test('cli: --task forces the chain contract and rejects --no-exec', () => {
   assert.strictEqual(task.task, '%Feature');
   assert.strictEqual(task.taskReset, false);
   assert.strictEqual(task.chain, true);
-  assert.strictEqual(task.yes, true);
+  // Like the CLI host, task mode never forces `-y`: auto comes only from the
+  // flag, so a bare task parks scripts on the approval card.
+  assert.strictEqual(task.yes, false);
   assert.strictEqual(task.requireApproval, true);
   assert.strictEqual(task.stream, true);
-  assert.strictEqual(task.autoExecute, true);
+  assert.strictEqual(task.autoExecute, false);
   assert.strictEqual(task.error, undefined);
+  const supervised = parseCliArgs(['--task', '%Feature', '-y'], '/tmp');
+  assert.strictEqual(supervised.yes, true);
+  assert.strictEqual(supervised.autoExecute, true);
   const bare = parseCliArgs(['-t', '--prompt', 'goal'], '/tmp');
   assert.strictEqual(bare.task, '');
   assert.strictEqual(bare.initialPrompt, 'goal');
@@ -1244,6 +1249,11 @@ test('chain: a fresh store knows nothing (restart drops every run)', () => {
   assert.strictEqual(second.getRun(created.runId), null);
 });
 
+test('chain: stateless routes block through the scope-aware helper', () => {
+  const source = fs.readFileSync(path.join(WEB_SRC, 'src', 'server', 'server.ts'), 'utf8');
+  assert.ok(source.includes('is_web_blocked_script'), 'server blocks through the chain-runtime helper');
+  assert.ok(!source.includes('isHighRiskScript'), 'no decision gates on the no-cwd guard anymore');
+});
 test('chain: script hash is stable and distinguishes scripts', () => {
   assert.strictEqual(hashChainScript('echo hi'), hashChainScript('echo hi'));
   assert.notStrictEqual(hashChainScript('echo hi'), hashChainScript('echo bye'));
