@@ -1478,6 +1478,114 @@ export function classify_script(
   return classify_script_depth(script, options, 0);
 }
 
+/** Token charset for an `always` prefix (no shell syntax). */
+const ALWAYS_TOKEN_PATTERN = /^[A-Za-z0-9_./:@+=-]+$/;
+
+/**
+ * Tests one stored `<prefix> *` pattern for shape only.
+ *
+ * The shape is two safe tokens plus ` *`. A bare tool name never passes.
+ * The match check lives in `matches_always_pattern`.
+ *
+ * @param pattern - Raw pattern text.
+ * @returns True when the shape is valid.
+ */
+export function is_valid_always_pattern(pattern: string): boolean {
+  const parts = pattern.trim().split(/\s+/);
+  if (parts.length !== 3 || parts[2] !== '*') {
+    return false;
+  } else {
+    return ALWAYS_TOKEN_PATTERN.test(parts[0] ?? '') && ALWAYS_TOKEN_PATTERN.test(parts[1] ?? '');
+  }
+}
+
+/**
+ * Derives the stored `always` prefix for one script.
+ *
+ * The prefix is the command plus its subcommand (`npm ls`), or the first
+ * two tokens for an unknown command. The stored form adds ` *`
+ * (`npm ls *`). A bare tool name never yields a prefix. A compound script,
+ * a substitution, a redirect, or a prefix with shell syntax yields null.
+ * The class does not matter here: the approval port never grants `deny`.
+ *
+ * @param script - Command script to derive from.
+ * @returns The `<prefix> *` pattern, or null when it cannot be stored.
+ */
+export function derive_always_prefix(script: string): string | null {
+  const split = split_statements(script);
+  if (split.opaque || split.parts.length !== 1) {
+    return null;
+  }
+  const part = (split.parts[0] ?? '').trim();
+  if (part === '') {
+    return null;
+  }
+  const sub = extract_substitutions(part);
+  if (sub.opaque || sub.inners.length > 0) {
+    return null;
+  }
+  if (has_file_redirect(part)) {
+    return null;
+  }
+  const tail = launcher_tail(sub.outer) ?? sub.outer;
+  const words = statement_words(tail);
+  if (words.length < 2) {
+    return null;
+  }
+  const first = words[0] ?? '';
+  const second = words[1] ?? '';
+  if (!ALWAYS_TOKEN_PATTERN.test(first) || !ALWAYS_TOKEN_PATTERN.test(second)) {
+    return null;
+  } else {
+    return `${first} ${second} *`;
+  }
+}
+
+/**
+ * Tests one stored `<prefix> *` pattern against one script.
+ *
+ * A stored pattern matches only when the script starts with the same two
+ * tokens and carries at least one more token. The bare prefix never
+ * matches. A compound script, a substitution, or a redirect never matches.
+ *
+ * @param script - Command script to test.
+ * @param pattern - Stored `<prefix> *` pattern.
+ * @returns True when the script matches the pattern.
+ */
+export function matches_always_pattern(script: string, pattern: string): boolean {
+  const split_pattern = pattern.trim().split(/\s+/);
+  if (split_pattern.length !== 3 || split_pattern[2] !== '*') {
+    return false;
+  }
+  const prefix_first = split_pattern[0] ?? '';
+  const prefix_second = split_pattern[1] ?? '';
+  if (!ALWAYS_TOKEN_PATTERN.test(prefix_first) || !ALWAYS_TOKEN_PATTERN.test(prefix_second)) {
+    return false;
+  }
+  const split = split_statements(script);
+  if (split.opaque || split.parts.length !== 1) {
+    return false;
+  }
+  const part = (split.parts[0] ?? '').trim();
+  if (part === '') {
+    return false;
+  }
+  const sub = extract_substitutions(part);
+  if (sub.opaque || sub.inners.length > 0) {
+    return false;
+  }
+  if (has_file_redirect(part)) {
+    return false;
+  }
+  const tail = launcher_tail(sub.outer) ?? sub.outer;
+  const words = statement_words(tail);
+  if (words.length < 3) {
+    return false;
+  } else {
+    return words[0] === prefix_first && words[1] === prefix_second;
+  }
+}
+
 /**
  * Decides the host effect for one script.
  *

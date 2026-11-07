@@ -122,7 +122,14 @@ export type {
 } from './pending-approvals';
 export { create_pending_approvals } from './pending-approvals';
 export type { PermissionClass, PermissionEffect, PermissionVerdict } from './permission';
-export { classify_script, decide_permission, split_statements } from './permission';
+export {
+  classify_script,
+  decide_permission,
+  derive_always_prefix,
+  is_valid_always_pattern,
+  matches_always_pattern,
+  split_statements,
+} from './permission';
 export type { ProjectContext } from './project-context';
 export {
   build_project_context,
