@@ -6,7 +6,6 @@
  */
 
 import {
-  assess_base_risk,
   is_sensitive_rel_path,
   PAYLOAD_MAX_CONTENT_CHARS,
   PAYLOAD_MAX_MESSAGES,
@@ -254,24 +253,4 @@ export function validateTellPayload(body: unknown): string | null {
  */
 export function resolveStreamMode(requestValue: unknown, serverDefault: boolean): boolean {
   return typeof requestValue === 'boolean' ? requestValue : serverDefault;
-}
-
-// ---------------------------------------------------------------------------
-// Command risk assessment (owned by @tell-ai/core)
-// ---------------------------------------------------------------------------
-
-/**
- * True when the script matches the core's strict risk profile.
- *
- * The sandbox uses the core owner (`assess_base_risk(script, 'strict')`) —
- * the Web profile is the strict one (any interpreter eval, bare `env`,
- * `base64 -d`, shell expansions, credential-file reads — the last one now
- * shared with the CLI, which prompts instead of blocking), so the rules
- * live in a single place and can never drift from the CLI's matrix.
- *
- * @param script - Command script to classify.
- * @returns Whether the script must be blocked.
- */
-export function isHighRiskScript(script: string): boolean {
-  return assess_base_risk(script, 'strict').risky;
 }

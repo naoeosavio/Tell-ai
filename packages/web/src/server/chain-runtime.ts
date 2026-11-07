@@ -101,7 +101,7 @@ export function build_chain_command_record(input: ChainCommandRecordInput): Chai
 export type ChainGateInput = {
   /** Server runs with `--no-exec`. */
   no_exec: boolean;
-  /** Server runs with `--require-approval` (`-y` still auto-runs low scripts). */
+  /** Server runs with `--require-approval` (high parks instead of denying). */
   require_approval: boolean;
   /** Server auto-runs low scripts (`-y` only, like the CLI host). */
   auto_execute: boolean;
@@ -119,10 +119,8 @@ export type ChainGateDecision =
  * Decides one chain command without running it.
  *
  * Mirrors the core fail-closed order: `--no-exec` denies first, `forbidden`
- * denies second, `high` denies unless `--require-approval` parks it. Web
- * supervised mode (`-y --require-approval`) is the only run that executes a
- * medium script; every other medium parks on the pending machinery, and only
- * an auto-executed low script runs outright.
+ * denies second, `high` denies unless `--require-approval` parks it. Low
+ * and medium run with `-y` (like the CLI host) and park without it.
  *
  * @param input - Host policy flags and the permission class.
  * @returns The gate verdict (call sites keep their exact texts).
@@ -139,7 +137,7 @@ export function decide_chain_gate(input: ChainGateInput): ChainGateDecision {
       return { action: 'deny', reason: 'high-risk' };
     }
   } else if (input.permission_class === 'medium') {
-    if (input.auto_execute && input.require_approval) {
+    if (input.auto_execute) {
       return { action: 'execute' };
     } else {
       return { action: 'park' };
