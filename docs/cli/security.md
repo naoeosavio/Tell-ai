@@ -95,6 +95,37 @@ A stored pattern matches only with more args. `npm ls *` matches `npm ls -la`. I
 
 A stored pattern never grants `deny` or `block`. A forbidden script never stores. A child never inherits a stored grant. The output redactor still masks secret values.
 
+## Child profile (family table, not class cap)
+
+A delegated child runs headless. It cannot ask. The policy is a family table in `decide_child_command` (`packages/core/src/delegation.ts`), not a class cap. The class cap cannot express the mix: `npm install` is `medium` and must deny, while `rm -rf src` is `high` and must pass inside the workspace.
+
+Research allows `read` only. Build allows `read`, `write`, `destructive` (named path, inside the workspace) and `vcs-index` (`git add`, `git switch -c`). Every other family denies in both profiles.
+
+| Family | Research | Build, inside | Examples |
+|---|---|---|---|
+| read | allow | allow | `cat`, `ls`, `git log`, `git status`, `docker ps`, `npm ls` |
+| write | deny | allow | `mkdir`, `touch`, `rm -rf dist`, `chmod -R src` |
+| destructive, named path | deny | allow | `rm -rf src`, `find src -delete` |
+| destructive, broad | deny | deny | `rm -rf .`, `..`, `*`, `~`, `/`, `dist/*`, `find . -delete` |
+| vcs-index | deny | allow | `git add`, `git switch -c` |
+| vcs-history | deny | deny | `git commit`, `git switch` without `-c`, `merge`, `stash` |
+| vcs-remote | deny | deny | `push`, `fetch`, `pull`, `clone` (even read-form `git fetch`) |
+| install | deny | deny | `npm install`, `pip install`, `cargo add`, `npm publish` |
+| network-read | deny | deny | `curl` GET, `wget` GET |
+| network-write | deny | deny | `curl -d`, `scp`, `rsync` to a remote host |
+| privilege | deny | deny | `sudo`, `systemctl`, `chown` (with or without `-R`), `kill`, `ssh` |
+| exfil | deny | deny | `.env`, keys, credentials, `curl … | sh`, `/dev/tcp` |
+| outside | deny | deny | a path outside the workspace (`touch /outside/f`, `cat /etc/hosts`) |
+| opaque, unknown | deny | deny | unterminated quote, `./scripts/deploy.sh`, clean `node -e` |
+
+Three rules shape the table. `chmod -R` inside the workspace counts as `write`, so `chmod -R src` passes in build. `chown` counts as `privilege` with or without `-R`, so `chown root f` denies in build. A launcher prefix never hides the real command: `env FOO=bar rm -rf .` denies as `destructive-broad`, and `env FOO=bar chown root f` denies as `privilege`.
+
+The scope check reuses the permission table (`medium-outside-read`, `high-outside-write`). `/tmp` counts as inside. No `cwd` means no scope check.
+
+The child prompt carries project context (tree plus README/AGENTS text, already capped by `build_project_context`) and a fixed scope sentence: the scope is fixed, an outside command is rejected, a command that needs approval is rejected, the child states the limit so the parent can handle it. Research ends with `FINDINGS:`, `VERIFIED:`, `DENIED:`. Build ends with `CHANGED:`, `VERIFIED:`, `DENIED:`. Each denial names the command and its family.
+
+A denied family never consults the host. An allowed family still needs the host approval (`--no-exec` wins, Web parks high-risk, parent flags hold). The CLI child port carries an empty `always` list (`Tell.ts:1189`), so a parent grant never reaches the child. A denial stops the child (`retry_denied: false`, status `BLOCKED`).
+
 ## Test mapping
 
 | Concern | Test |
@@ -113,6 +144,7 @@ A stored pattern never grants `deny` or `block`. A forbidden script never stores
 | Incremental-save no-duplication | `test_incremental_context_saves_do_not_duplicate_turns_on_chain` |
 | `always` stores prefix, matches with args, never bare | `test-core-permission.js` (Phase 3), `test-tell-tellrc.js` (permissions) |
 | Stored grant runs, deny never grants, child isolated | `test-cli-core-adapters.js` (Phase 3) |
+| Child family table, scope, broad, prompt, port, runner | `test-core-delegation-profile.js` (Phase 5: 28 tests) |
 | No host wrapper, task forces approval, labels from classes | `test-cli-core-adapters.js` (Phase 4) |
 | Helper blocks, gate parks high and denies forbidden, CLI/Web parity | `test-web-chain-runtime.js` (Phase 4) |
 | Server blocks through the helper | `test-web-backend.js` (Phase 4) |
