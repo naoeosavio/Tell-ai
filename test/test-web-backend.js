@@ -1265,6 +1265,12 @@ test('chain: stateless routes block through the scope-aware helper', () => {
   assert.ok(source.includes('is_web_blocked_script'), 'server blocks through the chain-runtime helper');
   assert.ok(!source.includes('isHighRiskScript'), 'no decision gates on the no-cwd guard anymore');
 });
+test('chain: escalation parks high once with an audit event, never forbidden', () => {
+  const source = fs.readFileSync(path.join(WEB_SRC, 'src', 'server', 'server.ts'), 'utf8');
+  assert.ok(source.includes('extract_escalation_justification'), 'server extracts the model justification');
+  assert.ok(source.includes('format_escalation_request'), 'server audits the escalation request');
+  assert.ok(source.includes('escalated'), 'server tracks one escalation per command');
+});
 test('chain: script hash is stable and distinguishes scripts', () => {
   assert.strictEqual(hashChainScript('echo hi'), hashChainScript('echo hi'));
   assert.notStrictEqual(hashChainScript('echo hi'), hashChainScript('echo bye'));

@@ -107,6 +107,8 @@ export type ChainGateInput = {
   auto_execute: boolean;
   /** Graded class of the script (one table, same as the CLI). */
   permission_class: PermissionClass;
+  /** Model justification for a one-shot escalation (`<ESCALATE>` body). */
+  escalation?: string | undefined;
 };
 
 /** Verdict of the chain approval gate (texts stay at the call sites). */
@@ -119,7 +121,9 @@ export type ChainGateDecision =
  * Decides one chain command without running it.
  *
  * Mirrors the core fail-closed order: `--no-exec` denies first, `forbidden`
- * denies second, `high` denies unless `--require-approval` parks it. Low
+ * denies second, `high` denies unless `--require-approval` parks it. A
+ * `high` denial with a model justification parks once instead of denying
+ * (the run tracks the one-shot); forbidden never parks, even with one. Low
  * and medium run with `-y` (like the CLI host) and park without it.
  *
  * @param input - Host policy flags and the permission class.
@@ -132,6 +136,8 @@ export function decide_chain_gate(input: ChainGateInput): ChainGateDecision {
     return { action: 'deny', reason: 'high-risk' };
   } else if (input.permission_class === 'high') {
     if (input.require_approval) {
+      return { action: 'park' };
+    } else if ((input.escalation?.trim() ?? '') !== '') {
       return { action: 'park' };
     } else {
       return { action: 'deny', reason: 'high-risk' };

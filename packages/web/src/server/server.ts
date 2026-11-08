@@ -14,6 +14,8 @@ import {
   collect_exec_secrets,
   FINAL_ANSWER_INSTRUCTION,
   format_child_project_context,
+  format_escalation_request,
+  extract_escalation_justification,
   needs_final_answer,
   RESEARCH_HEADER,
   SUBTASK_HEADER,
@@ -420,7 +422,7 @@ const chainStore = createChainStore(); // Model + system per run (kept beside th
 // every delegation.
 const chainContinuations = new Map<
   string,
-  { modelSpec: string; system: string; delegationRunner?: DelegationRunner }
+  { modelSpec: string; system: string; delegationRunner?: DelegationRunner; escalated?: Set<string> }
 >();
 
 /**
@@ -2089,11 +2091,23 @@ async function advanceChainRun(runId: string, modelSpec: string, system: string)
         // One script — no extra instruction.
       }
     }
+    const escalation = extract_escalation_justification(scan);
+    const continuation = chainContinuations.get(runId);
+    if (continuation !== undefined && continuation.escalated === undefined) {
+      continuation.escalated = new Set<string>();
+    }
+    const escalated = continuation?.escalated;
+    const key = script.trim();
+    // One escalation per command: a repeat of the same script runs with no
+    // justification, so the gate denies it like a plain high-risk script.
+    const fresh_escalation =
+      escalation !== null && (escalated === undefined || !escalated.has(key)) ? escalation : null;
     const gate = decide_chain_gate({
       no_exec: NO_EXEC,
       require_approval: REQUIRE_APPROVAL,
       auto_execute: AUTO_EXECUTE,
       permission_class: classify_web_script(script, CWD),
+      ...(fresh_escalation !== null ? { escalation: fresh_escalation } : {}),
     });
     if (gate.action === 'deny' && gate.reason === 'no-exec') {
       // Contract wording: denied/disabled with --no-exec source, never
@@ -2101,6 +2115,11 @@ async function advanceChainRun(runId: string, modelSpec: string, system: string)
       chainStore.appendEvent(runId, { type: 'denied', script, text: 'disabled (--no-exec)' });
       return chainStore.completeRun(runId, generated.text);
     } else if (gate.action === 'deny') {
+      if (escalation !== null) {
+        chainStore.appendEvent(runId, { type: 'message', text: format_escalation_request(script, escalation) });
+      } else {
+        // No escalation asked — the denial is the only decision event.
+      }
       chainStore.appendEvent(runId, { type: 'denied', script, text: 'high-risk: blocked without execution' });
       return chainStore.completeRun(runId, generated.text);
     } else if (gate.action === 'execute') {
@@ -2112,8 +2131,23 @@ async function advanceChainRun(runId: string, modelSpec: string, system: string)
     } else {
       // No auto-run for this script: park on the pending machinery. With
       // `--require-approval` a high-risk script parks here too (ask with the
-      // server-kept risk reason) instead of the denied branch above.
-      const pending = chainStore.requestApproval(runId, script, 'parent', highRiskReason(script));
+      // server-kept risk reason) instead of the denied branch above. An
+      // escalation parks once without `--require-approval` and carries its
+      // justification on the card.
+      if (fresh_escalation !== null) {
+        escalated?.add(key);
+        chainStore.appendEvent(runId, { type: 'message', text: format_escalation_request(script, fresh_escalation) });
+      } else {
+        // Ordinary park — no escalation to audit.
+      }
+      const risk = highRiskReason(script);
+      const card_risk =
+        fresh_escalation !== null && risk !== undefined
+          ? `${risk} — Escalation: ${fresh_escalation}`
+          : fresh_escalation !== null
+            ? `Escalation: ${fresh_escalation}`
+            : risk;
+      const pending = chainStore.requestApproval(runId, script, 'parent', card_risk);
       if (pending === null) {
         return chainStore.failRun(runId, 'Chain approval could not be recorded');
       } else {
