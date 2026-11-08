@@ -7,6 +7,8 @@
  * entry, so the Web fallback loop can never drift from the server wording.
  */
 
+import { find_blocks } from './delegation-tags';
+
 /** Follow-up instruction for rounds that may still request a command. */
 export const COMMAND_FEEDBACK_INSTRUCTION =
   'Request another command with <RUN> tags if needed; otherwise answer without <RUN> tags.';
@@ -18,6 +20,13 @@ export const COMMAND_FEEDBACK_FAILED_PREAMBLE =
 /** Preamble of the denied-command feedback (child retry protocol). */
 export const COMMAND_DENIED_PREAMBLE =
   'The policy denied the command above. Approval prompts are disabled in this run, so the command was rejected automatically. Do not retry it. Do not work around it.';
+
+/** Hint appended to an escalatable denial (high only, never forbidden). */
+export const ESCALATION_HINT =
+  'You may request approval once with <ESCALATE>justification</ESCALATE> and the same <RUN> block.';
+
+/** Header of the escalation decision event (one per escalated command). */
+export const ESCALATION_HEADER = 'Escalation requested:';
 
 /** Preamble of the skipped-command feedback (child retry protocol). */
 export const COMMAND_SKIPPED_PREAMBLE =
@@ -198,13 +207,72 @@ export function format_command_status(status: string, script: string, reason?: s
  *
  * The child reads the denial and the rule reminder. The round is retried
  * inside a delegated child only; every other host stops on the denial.
+ * An escalatable denial (high only) carries the one-shot request hint.
  *
  * @param script - Script the policy denied.
  * @param reason - Optional denial reason (stable rule id).
+ * @param escalatable - True appends the escalation hint (high only).
  * @returns The feedback text.
  */
-export function format_denied_feedback(script: string, reason?: string): string {
-  return `${format_command_status('denied', script, reason)}\n\n${COMMAND_DENIED_PREAMBLE}\n${COMMAND_DENIED_INSTRUCTION}`;
+export function format_denied_feedback(script: string, reason?: string, escalatable?: boolean): string {
+  const base = `${format_command_status('denied', script, reason)}\n\n${COMMAND_DENIED_PREAMBLE}\n${COMMAND_DENIED_INSTRUCTION}`;
+  if (escalatable === true) {
+    return `${base}\n${ESCALATION_HINT}`;
+  } else {
+    return base;
+  }
+}
+
+/**
+ * Formats one escalation decision event for the timeline.
+ *
+ * One event per escalated command (audit pair with the later command
+ * status). The host records it before it asks the human.
+ *
+ * @param script - Script the model escalates.
+ * @param justification - Model justification (trimmed, non-empty).
+ * @returns The escalation record text.
+ */
+export function format_escalation_request(script: string, justification: string): string {
+  return `${ESCALATION_HEADER}\n${script}\nJustification:\n${justification.trim()}`;
+}
+
+/**
+ * Extracts one escalation justification from a model answer.
+ *
+ * Reuses the delegation tag scanner (`find_blocks`): tolerant spaces,
+ * case-insensitive, fenced blocks ignored like `<RUN>`. At most one tag
+ * counts (the first non-empty body). An unterminated tag yields null.
+ *
+ * @param text - Model answer.
+ * @returns The trimmed justification, or null when absent.
+ */
+export function extract_escalation_justification(text: string): string | null {
+  const sanitized = text.replace(/```[\s\S]*?```/g, '');
+  const blocks = find_blocks(sanitized, '<ESCALATE>', '</ESCALATE>', true);
+  for (const block of blocks) {
+    const justification = block.body.trim();
+    if (justification !== '') {
+      return justification;
+    }
+  }
+  return null;
+}
+
+/**
+ * Removes every `<ESCALATE>` block from a text.
+ *
+ * @param text - Text to clean.
+ * @returns The text without escalation blocks.
+ */
+export function strip_escalation_tags(text: string): string {
+  let out = '';
+  let cursor = 0;
+  for (const block of find_blocks(text, '<ESCALATE>', '</ESCALATE>', true)) {
+    out += text.slice(cursor, block.start);
+    cursor = block.end;
+  }
+  return `${out}${text.slice(cursor)}`.trim();
 }
 
 /**

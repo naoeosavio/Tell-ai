@@ -5,11 +5,14 @@ import type { DelegationKind } from './delegation-tags';
 import { extract_delegation, strip_delegation_tags } from './delegation-tags';
 
 import {
+  extract_escalation_justification,
   format_cancelled_command,
   format_command_skipped,
   format_command_status,
+  format_escalation_request,
   format_executed_command,
   format_failed_command,
+  strip_escalation_tags,
 } from './loop-feedback';
 import { DEFAULT_EXEC_TIMEOUT_MS, DEFAULT_MAX_BUFFER_BYTES } from './runtime-limits';
 
@@ -165,7 +168,12 @@ export type CommandExecutor = (options: ExecutorOptions) => Promise<ExecutorResu
 export type ApprovalDecision = 'approved' | 'denied' | 'skipped';
 
 /** Authorizes one requested script. Absent approval means never execute. */
-export type ApprovalPort = (request: { script: string; risk?: RiskAssessment }) => Promise<ApprovalDecision>;
+export type ApprovalPort = (request: {
+  script: string;
+  risk?: RiskAssessment;
+  /** Model justification for a one-shot escalation (`<ESCALATE>` body). */
+  escalation?: string | undefined;
+}) => Promise<ApprovalDecision>;
 
 /** Advisory severity for one classified script (observed only, never a verdict). */
 export type RiskSeverity = 'low' | 'medium' | 'high';
@@ -526,7 +534,7 @@ export function createTellRuntime(options: TellRuntimeOptions): TellRuntime {
     } else {
       // No reasoning to report, or nobody observes it.
     }
-    const text = strip_delegation_tags(strip_run_tags(strip_think_tags(raw))).trim();
+    const text = strip_escalation_tags(strip_delegation_tags(strip_run_tags(strip_think_tags(raw)))).trim();
     timeline.push(`Assistant:\n${text}`);
     if (callbacks.onText !== undefined) {
       await callbacks.onText(text);
@@ -710,7 +718,20 @@ export function createTellRuntime(options: TellRuntimeOptions): TellRuntime {
       // Approval decides — the request callback above cannot widen authority.
     }
 
-    const verdict = await options.approval({ script, ...(risk !== undefined ? { risk } : {}) });
+    // One escalation request per answer at most (the first non-empty body).
+    // The tag is protocol, not prose: it never reaches the visible text.
+    const escalation = extract_escalation_justification(scan);
+    if (escalation !== null) {
+      timeline.push(format_escalation_request(script, escalation));
+    } else {
+      // No escalation — the approval decides on the script alone.
+    }
+
+    const verdict = await options.approval({
+      script,
+      ...(risk !== undefined ? { risk } : {}),
+      ...(escalation !== null ? { escalation } : {}),
+    });
     if (verdict === 'approved') {
       // Falls through to execution below.
     } else if (verdict === 'denied') {

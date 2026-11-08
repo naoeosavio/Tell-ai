@@ -112,6 +112,26 @@ function normalize_max_delegations(value: number | undefined): number {
 }
 
 /**
+ * Tests one denial reason for escalation.
+ *
+ * The loop never classifies (no cwd here): it reuses the host rule id the
+ * single turn already recorded. `high-*` and `opaque-parse` can ask once
+ * with a justification; forbidden, strict, medium and low never escalate.
+ *
+ * @param reason - Denial reason (stable rule id), or undefined.
+ * @returns True when the denial can escalate.
+ */
+function is_escalatable_reason(reason: string | undefined): boolean {
+  if (reason === undefined) {
+    return false;
+  } else if (reason === 'opaque-parse') {
+    return true;
+  } else {
+    return reason.startsWith('high-');
+  }
+}
+
+/**
  * Builds the self-healing follow-up prompt from a round command result.
  *
  * Delegates the wording to `format_command_feedback` (`./loop-feedback`, the
@@ -217,6 +237,9 @@ export async function run_primitive_loop(message: string, options: CoreLoopOptio
   let rounds_used = 0;
   let delegations_used = 0;
   let asked_final_answer = false;
+  // One escalation per denied script (normalized): a high denial feeds the
+  // hint once, the next denial of the same script ends the attempt.
+  const escalated = new Set<string>();
 
   while (rounds_used < max_rounds) {
     if (token?.cancelled) {
@@ -308,6 +331,20 @@ export async function run_primitive_loop(message: string, options: CoreLoopOptio
         current_message = format_skipped_feedback(last.script, last.reason);
       } else {
         current_message = format_denied_feedback(last.script, last.reason);
+      }
+    } else if (last.status === 'denied' && last.reason !== 'disabled' && is_escalatable_reason(last.reason)) {
+      // One-shot escalation (high only, never forbidden): the denial ends
+      // the attempt unless the model asks once with a justification. The
+      // single turn records the request; the approval port asks the human.
+      const key = last.script.trim();
+      if (escalated.has(key)) {
+        return { status: 'completed', text, timeline, commands };
+      } else if (rounds_used >= max_rounds) {
+        timeline.push(chain_limit_notice(max_rounds));
+        return { status: 'completed', text, timeline, commands };
+      } else {
+        escalated.add(key);
+        current_message = format_denied_feedback(last.script, last.reason, true);
       }
     } else {
       // Confirm pauses, deny ends: non-executed commands stop the loop and

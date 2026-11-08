@@ -1610,3 +1610,30 @@ export function decide_permission(input: DecidePermissionInput): PermissionVerdi
     return { class: found.class, effect: input.approve_high === true ? 'ask' : 'deny', rule: found.rule };
   }
 }
+
+/**
+ * Tests one class for escalation.
+ *
+ * Only `high` denies can escalate. Forbidden never escalates, even with a
+ * justification. Low and medium never deny, so they never escalate.
+ *
+ * @param cls - Graded class.
+ * @returns True for `high` only.
+ */
+export function is_escalatable_class(cls: PermissionClass): boolean {
+  return cls === 'high';
+}
+
+/**
+ * Tests one script for escalation.
+ *
+ * Reuses `classify_script`: a `high` script can ask once with a
+ * justification, any other class cannot.
+ *
+ * @param script - Command script to test.
+ * @param options - Scope check and strict flag.
+ * @returns True when the script is `high`.
+ */
+export function is_escalatable_script(script: string, options?: ClassifyPermissionOptions): boolean {
+  return is_escalatable_class(classify_script(script, options).class);
+}
