@@ -49,7 +49,7 @@ export type CliExecInput = {
 export type CliConfirmAnswer = 'once' | 'always' | 'reject';
 
 /** User confirmation callback (readline prompt in the CLI, stubbed in tests). */
-export type CliConfirmFn = (script: string) => Promise<boolean | CliConfirmAnswer>;
+export type CliConfirmFn = (script: string, justification?: string) => Promise<boolean | CliConfirmAnswer>;
 
 /** Flag subset resolved once into a `CoreConfig` (keys stay in `env.ts`). */
 export type CliCoreConfigFlags = {
@@ -191,6 +191,9 @@ export function resolve_cli_exec_input(flags: {
  * is `skipped`. An ask with no TTY is `denied`: a missing channel fails
  * closed, as DSH does with an unavailable answerer. The host never decides
  * the class again. A stored pattern never grants `deny` or `block`.
+ * A `high` denial with a model justification escalates once per script:
+ * the port prompts the human a single time; a second request for the same
+ * script denies. Forbidden and block never escalate.
  *
  * @param input - Effective gate input (`enabled`, `auto`, `approve_high`, `always`).
  * @param confirm - Interactive confirmation (readline in the CLI).
@@ -206,7 +209,12 @@ export function create_cli_approval(
   is_tty?: boolean,
   on_always?: (pattern: string) => void,
 ): ApprovalPort {
-  return async (request: { script: string; risk?: RiskAssessment }): Promise<'approved' | 'denied' | 'skipped'> => {
+  const escalated = new Set<string>();
+  return async (request: {
+    script: string;
+    risk?: RiskAssessment;
+    escalation?: string | undefined;
+  }): Promise<'approved' | 'denied' | 'skipped'> => {
     const verdict = decide_permission({
       script: request.script,
       auto: input.auto,
@@ -217,7 +225,25 @@ export function create_cli_approval(
     if (verdict.effect === 'allow') {
       return 'approved';
     } else if (verdict.effect === 'deny' || verdict.effect === 'block') {
-      return 'denied';
+      const justification = request.escalation?.trim() ?? '';
+      if (verdict.effect !== 'deny' || verdict.class !== 'high' || justification === '') {
+        return 'denied';
+      }
+      const key = request.script.trim();
+      if (escalated.has(key)) {
+        return 'denied';
+      }
+      escalated.add(key);
+      const tty = is_tty ?? process.stdin?.isTTY === true;
+      if (!tty) {
+        return 'denied';
+      }
+      const answer = await confirm(request.script, justification);
+      if (answer === true || answer === 'once' || answer === 'always') {
+        return 'approved';
+      } else {
+        return 'skipped';
+      }
     } else {
       const stored = input.always ?? [];
       for (const pattern of stored) {

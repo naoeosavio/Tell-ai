@@ -794,7 +794,7 @@ function save_incremental_context(contextPath: string, previousContext: string, 
 // Risk classification and outside-cwd path checks moved to
 // `./core-adapters` (core-owned ports); the prompt below only renders them.
 
-async function confirm_command(script: string): Promise<boolean | 'always'> {
+async function confirm_command(script: string, justification?: string): Promise<boolean | 'always'> {
   // Display-only labels: the approval port already decided (allow runs, deny
   // stops); this prompt only renders for ask effects. The class comes from
   // the one permission table with the host cwd, so an outside write labels
@@ -818,6 +818,11 @@ async function confirm_command(script: string): Promise<boolean | 'always'> {
       ? 'Command touches paths outside the working directory'
       : 'Command requested';
   process.stderr.write(`${label}:\n${script}\n`);
+  if (justification !== undefined && justification.trim() !== '') {
+    process.stderr.write(`Justification:\n${justification.trim()}\n`);
+  } else {
+    // No escalation justification to show.
+  }
   return new Promise((resolve) => {
     let settled = false;
     const done = (value: boolean | 'always') => {
@@ -1170,9 +1175,9 @@ async function run_response_loop(
   }
   const approval = create_cli_approval(
     state.exec_input,
-    (pending) => {
+    (pending, justification) => {
       clear_delegation_line();
-      return confirm_command(pending);
+      return confirm_command(pending, justification);
     },
     undefined,
     undefined,

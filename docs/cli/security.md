@@ -95,6 +95,27 @@ A stored pattern matches only with more args. `npm ls *` matches `npm ls -la`. I
 
 A stored pattern never grants `deny` or `block`. A forbidden script never stores. A child never inherits a stored grant. The output redactor still masks secret values.
 
+## Escalation channel (one shot)
+
+A denied `high` command can ask once more. A `forbidden` command cannot ask. A `block` command cannot ask.
+
+The model sends the same `<RUN>` block with one `<ESCALATE>` body. The body holds the justification. An empty body never escalates. A fenced block never escalates.
+
+The denial of a `high` command carries the hint. The denial of a `forbidden` command carries no hint.
+
+One escalation runs per command. The first request with a justification prompts the human. A second request for the same command denies at once. A request with no TTY denies at once.
+
+An escalation answer of `always` runs once. It stores nothing. A decline stops the command. It stores nothing.
+
+The timeline records two lines. The first line is `Escalation requested:` with the justification. The second line is the decision (`Executed command:`, `Command denied:`, `Skipped by user:`).
+
+The Web server follows the same rule end to end. A `high` command with a
+justification parks once per command. The card shows the justification. A
+`forbidden` command with a justification denies. `--no-exec` denies every
+escalation.
+
+Example: `git push --force origin main` denies with `-y`. The model sends `<ESCALATE>hotfix window</ESCALATE>` with the same `<RUN>` block. The CLI prompts once with the justification. The Web parks the command once.
+
 ## Child profile (family table, not class cap)
 
 A delegated child runs headless. It cannot ask. The policy is a family table in `decide_child_command` (`packages/core/src/delegation.ts`), not a class cap. The class cap cannot express the mix: `npm install` is `medium` and must deny, while `rm -rf src` is `high` and must pass inside the workspace.
@@ -144,6 +165,7 @@ A denied family never consults the host. An allowed family still needs the host 
 | Incremental-save no-duplication | `test_incremental_context_saves_do_not_duplicate_turns_on_chain` |
 | `always` stores prefix, matches with args, never bare | `test-core-permission.js` (Phase 3), `test-tell-tellrc.js` (permissions) |
 | Stored grant runs, deny never grants, child isolated | `test-cli-core-adapters.js` (Phase 3) |
+| Escalation once for high, never for forbidden, audit pair | `test-core-escalation.js` (Phase 6: 24 tests) |
 | Child family table, scope, broad, prompt, port, runner | `test-core-delegation-profile.js` (Phase 5: 28 tests) |
 | No host wrapper, task forces approval, labels from classes | `test-cli-core-adapters.js` (Phase 4) |
 | Helper blocks, gate parks high and denies forbidden, CLI/Web parity | `test-web-chain-runtime.js` (Phase 4) |
