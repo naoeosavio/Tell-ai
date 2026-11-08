@@ -55,6 +55,12 @@ tell --web                       # open http://localhost:3000
 > builds the binary. With scripts disabled the install still "succeeds" and every
 > PTY terminal fails to load.
 
+> `tell --web` sets `NODE_ENV=production` for the child. Running the published
+> `tell-web --cwd <project>` directly also serves the built client: the server
+> uses Vite only when `dist/index.html` is absent (source/dev runs), so
+> `NODE_ENV` is not required. `tell-web --help` lists the flags; the access
+> token comes from `TELL_TOKEN`, not a `--token` flag.
+
 > `-w` / `--web` enables the auto-generated project context. You can run the sandbox
 > in another directory with `--cwd <path>` (created with a warning if it does not
 > exist) and fill the chat inbox by passing a prompt, e.g.
@@ -298,9 +304,22 @@ The chat header controls how AI-requested commands run:
 - **Require Approval** — risky commands show a confirmation card first; safe ones
   follow Auto-Run (run directly when on, confirmation card when off). Combine
   both toggles for "auto the safe, approve the risky". With `--chain`, each
-  held command pauses for your approval.
+  held command pauses for your approval. Booted with `--require-approval`,
+  asking is server-enforced: high-risk commands park on a pending approval
+  showing the risk reason instead of being blocked (approve runs the
+  server-kept script, skip continues without it). `/api/execute` still blocks
+  high-risk outright — asking lives in the chain/chat flow only.
 - **No-Exec** (seeded by `--no-exec`) — nothing executes; confirming a command
   just records what would have run and the chain continues with that feedback.
+
+Command output crosses the redaction boundary before it reaches the client or
+the next model turn: provider keys and the values in credential-named workspace
+files (`.env*`, `*.key`, `*.pem`, `id_*`; bounded scan) appear as `[redacted]`.
+This covers glob/loop reads the lexical classifier cannot resolve (`cat sec*`,
+`grep -r`). An **explicitly approved** high-risk script is user consent and its
+output is shown as executed (the confirm card already carried the risk reason).
+Encoding or transforming the value remains the documented limit of the
+name-based guard.
 
 Reasoning headers (🧠) are collapsed by default; `--think` starts them expanded
 and any manual expand/collapse persists for future messages.
@@ -323,15 +342,19 @@ position restores the same log.
 Precedence: `No-Exec` > per-command risk gate. These are client-side toggles
 whose last choice is remembered in `localStorage` (survives page reloads;
 `localStorage` → first-visit only, server flags like `-y`/`--no-exec` seed the
-default); high-risk commands (`sudo`, `rm -rf`, `curl|sh`, …) are always
-blocked server-side — see [Security notes](#security-notes).
+default); high-risk commands (`sudo`, `rm -rf`, `curl|sh`, …) are blocked
+server-side unless the server booted with `--require-approval`, which parks
+them on a pending approval instead — see [Security notes](#security-notes).
 
 ---
 
 ## Server-side chain (`/api/chain`)
 
 In Chain Mode the App submits to `/api/chain` instead of looping in the
-browser: the model loop (up to 8 rounds), the pending script and the approval
+browser: the model loop (up to 8 model turns — every turn spends one round,
+command, delegation and final answer alike; the sandbox cap stays 8 by
+design even when the CLI forwarded a bigger `--max-chain-steps`, which
+clamps down instead of failing the boot), the pending script and the approval
 state all stay on the server. The client renders the sequenced events and
 answers approvals by decision id; the local loop remains as the offline
 fallback, and `/api/tell`, `/api/execute` and `/api/risk-check` stay stable
@@ -349,7 +372,9 @@ model directly.
   `modelAlias?`, `systemPrompt?`, same limits). Answers with the run snapshot:
   `{runId, status, version, rounds, text, events, pending}`. `pending` carries
   only `{decisionId, script, expectedVersion}` for display — the script is
-  server-kept.
+  server-kept — plus an optional `risk` reason when the script is high-risk
+  and the server booted with `--require-approval` (the confirm card shows it;
+  safe pendings omit the line).
 - `GET /api/chain/:runId` — replays the event sequence (`seq` is monotonic,
   so clients render incrementally). Unknown ids and TTL-expired runs (15 min
   idle) read as 404; a restart drops every run.
@@ -358,7 +383,9 @@ model directly.
   field is rejected with 400 before any state transition. Retrying the same
   decision id with the same verdict replays the stored result without
   re-executing; a different verdict, a stale `expectedVersion` or an unknown
-  id is 409; high-risk scripts and `--no-exec` answer 403 without executing;
+  id is 409; high-risk scripts and `--no-exec` answer 403 without executing
+  (without `--require-approval`: with the flag, high-risk parks on a pending
+  approval instead and approve runs the server-kept script);
   a cancel that lands mid-flight wins and the run stays cancelled.
 - `POST /api/chain/:runId/cancel` — invalidates the run and its pending
   approval (idempotent).
@@ -439,11 +466,21 @@ With `TELL_TOKEN` set:
   `--stdin-timeout-ms`, `--exec-timeout`; explicit CLI flags/env win over
   tellrc, absent layers keep server defaults): the exec buffer and the
   server-side chain round cap (clamped to the core `1..8` contract, notice
-  reports the effective cap) follow the override, `/api/config` exposes them
+  reports the effective cap; the sandbox cap stays 8 even when a bigger
+  `--max-chain-steps` arrives — accepted divergence, the CLI owns higher
+  caps) follow the override, `/api/config` exposes them
   under `limits`, and `/api/chain` + approval state stay server-side — the
   browser never runs a second loop. `--stdin-max-bytes`/`--output-max-bytes`
   are CLI-only (the web has no stdin; delivered output uses the local
-  200 KB cap).
+  200 KB cap). Custom system text crosses fully resolved (`tell --web`
+  composes top-level system, `--system-file` and profile data into one
+  text); the sandbox never receives a path, and
+  `tell -w --cwd /other --system-file ./SYS.md` reads `./SYS.md` from the
+  CLI working directory — `--cwd` only sets the sandbox directory; pass
+  `--system-file /other/SYS.md` for the other file. In task mode the sandbox
+  reads the saved `main.txt` and never writes task context into it (the CLI
+  owns the task context); `--task-reset` wipes `main.txt` plus every
+  `delegate-NNN.txt`/`subtask-NNN.txt` record through the core task store.
 
 **Logging in from the browser:** open the page and a dedicated login screen
 asks for the token (animated Tell logo included). The main environment —
@@ -479,11 +516,15 @@ the upgrade query string, so avoid exposing query strings in proxy logs.
   (`curl`, `wget`, `ssh`), `printenv`, shell `-c`, crontab manipulation, `mkfs`,
   `dd of=`, interpreter eval (`python/node/deno/bun/perl/ruby/php/lua
   -c/-e/-r/--eval`), `env`-launched
-  commands, `base64 -d` payloads, and shell expansion (`${…}`, `$(…)`, backticks
-  with pipes). This is a heuristic, not a security boundary — treat it as
+  commands, `base64 -d` payloads, shell expansion (`${…}`, `$(…)`, backticks
+  with pipes), and credential-file reads (`cat .env`, tokens, keys,
+  `.git/**`, `.tell/**` — the same rule the CLI enforces via confirmation).
+  This is a heuristic, not a security boundary — treat it as
   best-effort.
 - **Sensitive files are never served** through the file API (`.env*`, `.tell/`,
   `.git/`, `*.key`, `*.pem`) and cannot be overwritten via the editor API.
+  The deny applies to the lexical name before existence is checked, so a
+  missing `absent.key` answers `403` exactly like a present one (no oracle).
 - **API keys come from the environment** (`OPENAI_API_KEY`, etc.). The sandbox never
   stores key values — only the provider names you used. The server captures
   provider configuration in memory and purges credential/loader variables from

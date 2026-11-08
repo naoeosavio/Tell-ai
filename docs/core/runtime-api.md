@@ -80,7 +80,11 @@ commands; it never invents a new status.
 | token cancelled | `cancelled` / no commands | `cancelled` |
 
 `no-exec` is always `denied`/`disabled` (never `reason: 'no-exec'`). Deny,
-skip and pending-approval events are always recorded — never hidden.
+skip and pending-approval events are always recorded — never hidden. A policy
+denial carries the risk rule that matched (`RiskAssessment.rules[0]`, e.g.
+`shell-process-substitution`) in `RuntimeCommand.reason` and in the timeline
+record (`Command denied:\n<script>\nReason: <rule>`); `skipped` stays
+`Skipped by user:` with no reason.
 
 ## Redaction boundary
 

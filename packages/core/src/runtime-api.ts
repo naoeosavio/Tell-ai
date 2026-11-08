@@ -1,16 +1,23 @@
 import { extract_runs, get_system_prompt, strip_run_tags, strip_think_tags } from '@tell-ai/sdk/pure';
+import type { DelegationResult, DelegationRunner } from './delegation';
+import { type DelegationStatus, delegation_budget_notice } from './delegation-status';
+import type { DelegationKind } from './delegation-tags';
+import { extract_delegation, strip_delegation_tags } from './delegation-tags';
 
 import {
+  extract_escalation_justification,
   format_cancelled_command,
   format_command_skipped,
   format_command_status,
+  format_escalation_request,
   format_executed_command,
   format_failed_command,
+  strip_escalation_tags,
 } from './loop-feedback';
 import { DEFAULT_EXEC_TIMEOUT_MS, DEFAULT_MAX_BUFFER_BYTES } from './runtime-limits';
 
 // Default key for the single conversation slot kept through StoragePort.
-const DEFAULT_STORAGE_KEY = 'tell-runtime';
+export const DEFAULT_STORAGE_KEY = 'tell-runtime';
 
 // The SDK only forwards timeout/buffer inside ExecutorOptions — enforcement
 // belongs to the injected executor (core owns exec). Both values come from the
@@ -46,6 +53,18 @@ export type RuntimeCommand = {
   finished_at?: string;
 };
 
+/** One delegation record produced by a child run (parent timeline only). */
+export type DelegationRecord = {
+  /** Whether the child researched or built. */
+  kind: DelegationKind;
+  /** Host-assembled record (`Research result (STATUS):` / `Task result (STATUS):` + stats). */
+  record: string;
+  /** Redacted, capped summary. */
+  summary: string;
+  /** Host-assigned status (never model text). */
+  status?: DelegationStatus | undefined;
+};
+
 /**
  * Final value of a runtime turn: the answer, the preserved turns and every
  * command event (deny, skip and pending approval are never hidden).
@@ -55,6 +74,12 @@ export type TellResult = {
   text: string;
   timeline: string[];
   commands: RuntimeCommand[];
+  delegation?: DelegationRecord;
+  /**
+   * True when the runtime stripped a delegation tag because the budget is
+   * spent. The loop answers it with one final-answer round instead of ending.
+   */
+  delegation_refused?: boolean;
 };
 
 /**
@@ -143,7 +168,12 @@ export type CommandExecutor = (options: ExecutorOptions) => Promise<ExecutorResu
 export type ApprovalDecision = 'approved' | 'denied' | 'skipped';
 
 /** Authorizes one requested script. Absent approval means never execute. */
-export type ApprovalPort = (request: { script: string; risk?: RiskAssessment }) => Promise<ApprovalDecision>;
+export type ApprovalPort = (request: {
+  script: string;
+  risk?: RiskAssessment;
+  /** Model justification for a one-shot escalation (`<ESCALATE>` body). */
+  escalation?: string | undefined;
+}) => Promise<ApprovalDecision>;
 
 /** Advisory severity for one classified script (observed only, never a verdict). */
 export type RiskSeverity = 'low' | 'medium' | 'high';
@@ -160,14 +190,15 @@ export type RiskCategory =
   | 'shell-expansion'
   | 'environment-escape'
   | 'process-info'
+  | 'data-exfiltration'
   | 'general';
 
 /**
  * Advisory risk classification, composed later by the policy engine.
  *
  * Only observable facts: whether any base rule matched, the highest
- * severity, the category of that match, human-readable reasons and stable
- * machine flags. It never carries an action verdict.
+ * severity, the category of that match, human-readable reasons, stable
+ * machine flags and the matched rule ids. It never carries an action verdict.
  */
 export type RiskAssessment = {
   risky: boolean;
@@ -176,6 +207,8 @@ export type RiskAssessment = {
   category?: RiskCategory;
   reasons?: string[];
   flags?: string[];
+  /** Ids of the base rules that matched (stable, e.g. `shell-process-substitution`). */
+  rules?: string[];
 };
 
 /** Classifies one script. The runtime observes it; policy decides. */
@@ -198,6 +231,12 @@ export type RuntimeCallbacks = {
   onCommandStart?: (event: { script: string }) => void | Promise<void>;
   onCommandOutput?: (event: { script: string; output: string; exit_code: number }) => void | Promise<void>;
   onCommandSkip?: (event: { script: string; status: CommandStatus; reason?: string }) => void | Promise<void>;
+  onDelegation?: (event: {
+    kind: DelegationKind;
+    record: string;
+    extras: number;
+    status?: DelegationStatus | undefined;
+  }) => void | Promise<void>;
   onStorageLoad?: (event: { key: string }) => void | Promise<void>;
   onStorageSave?: (event: { key: string }) => void | Promise<void>;
   onExecutorError?: (event: { script: string; error: string }) => void | Promise<void>;
@@ -226,6 +265,9 @@ export type TellRuntimeOptions = {
   env?: Record<string, string>;
   timeout_ms?: number;
   max_output_bytes?: number;
+  delegation?: DelegationRunner;
+  /** Fixed delegation budget for this runtime (undefined means the runner decides). */
+  max_delegations?: number | undefined;
 };
 
 /** Single-turn runtime handle produced by `createTellRuntime`. */
@@ -235,10 +277,45 @@ export type TellRuntime = {
 
 /**
  * In-memory `StoragePort`. Safe default when no storage is injected: no disk,
- * no localStorage, no globals. Each instance is independent.
+ * no localStorage, no globals. Each instance is independent. Uncapped unless
+ * the host opts in with `max_chars` (the delegation child does — the parent
+ * relies on the caller-side `truncate_context` instead, so the default stays
+ * unbounded by design).
  */
 export class MemoryStorageAdapter implements StoragePort {
   private store = new Map<string, string>();
+  private max_chars: number | undefined;
+
+  /**
+   * Creates an in-memory store, optionally tail-capped and pre-seeded.
+   *
+   * @param max_chars - When set, every stored value keeps only its tail.
+   * @param initial - Seed entries (capped like any other write).
+   */
+  constructor(max_chars?: number, initial?: Record<string, string>) {
+    this.max_chars = max_chars;
+    if (initial !== undefined) {
+      for (const [key, value] of Object.entries(initial)) {
+        this.store.set(key, this.cap(value));
+      }
+    } else {
+      // No seed — starts empty.
+    }
+  }
+
+  /**
+   * Keeps only the tail of a value when this store is capped.
+   *
+   * @param value - Value to cap.
+   * @returns The tail (the value itself when uncapped or short enough).
+   */
+  private cap(value: string): string {
+    if (this.max_chars === undefined || value.length <= this.max_chars) {
+      return value;
+    } else {
+      return value.slice(-this.max_chars);
+    }
+  }
 
   /**
    * Loads the value stored under a key.
@@ -262,7 +339,7 @@ export class MemoryStorageAdapter implements StoragePort {
    * @param value - Value to store.
    */
   async save(key: string, value: string): Promise<void> {
-    this.store.set(key, value);
+    this.store.set(key, this.cap(value));
   }
 
   /**
@@ -347,7 +424,7 @@ export function create_cancellation_token(): CancellationToken & { cancel(): voi
  * @param raw - Raw model answer.
  * @returns Trimmed think content, or empty string when absent.
  */
-function extract_think_content(raw: string): string {
+export function extract_think_content(raw: string): string {
   const content = /<think>([\s\S]*?)<\/think>/i.exec(raw)?.[1]?.trim();
   if (content) {
     return content;
@@ -359,11 +436,15 @@ function extract_think_content(raw: string): string {
 /**
  * Combines executor stdout/stderr into the single command output record.
  *
+ * stdout and stderr stay separate until here so the executor can cap them
+ * independently; every host must join them this way before truncating the
+ * delivered output.
+ *
  * @param stdout - Redacted standard output.
  * @param stderr - Redacted standard error.
  * @returns Combined output, trimmed.
  */
-function combine_output(stdout: string, stderr: string): string {
+export function combine_output(stdout: string, stderr: string): string {
   if (stderr) {
     return `${stdout}\n${stderr}`.trim();
   } else {
@@ -392,6 +473,7 @@ export function createTellRuntime(options: TellRuntimeOptions): TellRuntime {
   const redact = options.redact ?? ((value: string): string => value);
   const exec_enabled = options.exec ?? false;
   const callbacks = options.callbacks ?? {};
+  let delegation_used = 0;
 
   async function load_context(): Promise<string> {
     if (callbacks.onStorageLoad !== undefined) {
@@ -452,7 +534,7 @@ export function createTellRuntime(options: TellRuntimeOptions): TellRuntime {
     } else {
       // No reasoning to report, or nobody observes it.
     }
-    const text = strip_run_tags(strip_think_tags(raw)).trim();
+    const text = strip_escalation_tags(strip_delegation_tags(strip_run_tags(strip_think_tags(raw)))).trim();
     timeline.push(`Assistant:\n${text}`);
     if (callbacks.onText !== undefined) {
       await callbacks.onText(text);
@@ -460,7 +542,103 @@ export function createTellRuntime(options: TellRuntimeOptions): TellRuntime {
       // No text observer.
     }
 
-    const scripts = extract_runs(raw).scripts;
+    // Tag scanning never looks inside a literal `<think>` block: reasoning is
+    // not an instruction. The CLI port already neutralizes its reasoning
+    // channel; this also covers a provider that emits the block in the text.
+    const scan = strip_think_tags(raw);
+
+    // Delegation: with no runner the tag is inert (plain text). The check
+    // runs after `onText` so the CLI timeline keeps `Assistant:` before the
+    // delegation record. A delegation wins over `<RUN>` — any scripts in the
+    // same answer are recorded as skipped, never executed.
+    if (options.delegation !== undefined) {
+      const delegation_request = extract_delegation(scan);
+      if (delegation_request.kind !== null) {
+        const scripts_in_delegation = extract_runs(scan)
+          .scripts.map((entry) => entry.trim())
+          .filter((entry) => entry.length > 0);
+        for (const skipped_script of scripts_in_delegation) {
+          timeline.push(format_command_skipped(skipped_script));
+          if (callbacks.onCommandSkip !== undefined) {
+            await callbacks.onCommandSkip({ script: skipped_script, status: 'skipped' });
+          } else {
+            // No skip observer — the skipped script stays in the timeline.
+          }
+        }
+        if (token.cancelled) {
+          timeline.push(format_cancelled_command('(delegation)'));
+          await save_turn(message, text);
+          return { status: 'cancelled', text, timeline, commands: [] };
+        }
+        const runtime_budget = options.max_delegations;
+        if (runtime_budget !== undefined && delegation_used >= runtime_budget) {
+          timeline.push(delegation_budget_notice(runtime_budget));
+          await save_turn(message, text);
+          return { status: 'completed', text, timeline, commands: [], delegation_refused: true };
+        }
+        const delegation_result: DelegationResult | null = await options.delegation({
+          kind: delegation_request.kind,
+          objective: delegation_request.objective,
+          ...(text.trim() !== '' ? { context: text } : {}),
+        });
+        if (delegation_result === null) {
+          // Legacy runner without a reason — the tag stays stripped, no record.
+          await save_turn(message, text);
+          return { status: 'completed', text, timeline, commands: [] };
+        } else if ('refused' in delegation_result) {
+          const refused_for_budget = delegation_result.refused === 'budget';
+          if (refused_for_budget) {
+            timeline.push(
+              runtime_budget !== undefined
+                ? delegation_budget_notice(runtime_budget)
+                : 'Delegation budget exceeded; ignoring delegation tag.',
+            );
+          } else {
+            // Empty objective — silent, the tag stays stripped.
+          }
+          await save_turn(message, text);
+          if (refused_for_budget) {
+            return { status: 'completed', text, timeline, commands: [], delegation_refused: true };
+          } else {
+            return { status: 'completed', text, timeline, commands: [] };
+          }
+        }
+        const outcome = delegation_result.outcome;
+        if (outcome.status === 'SUPERSEDED') {
+          // Dedup hit replays the cached record without spending the budget.
+        } else {
+          delegation_used += 1;
+        }
+        timeline.push(outcome.record);
+        if (callbacks.onDelegation !== undefined) {
+          await callbacks.onDelegation({
+            kind: outcome.kind,
+            record: outcome.record,
+            extras: delegation_request.extras,
+            ...(outcome.status !== undefined ? { status: outcome.status } : {}),
+          });
+        } else {
+          // No delegation observer — the record is still in the timeline.
+        }
+        await save_turn(message, text);
+        return {
+          status: 'completed',
+          text,
+          timeline,
+          commands: [],
+          delegation: {
+            kind: outcome.kind,
+            record: outcome.record,
+            summary: outcome.summary,
+            ...(outcome.status !== undefined ? { status: outcome.status } : {}),
+          },
+        };
+      }
+    } else {
+      // No delegation runner (child or single-turn) — tags stay inert text.
+    }
+
+    const scripts = extract_runs(scan).scripts;
     const first_script = scripts[0];
     if (first_script === undefined) {
       await save_turn(message, text);
@@ -477,6 +655,11 @@ export function createTellRuntime(options: TellRuntimeOptions): TellRuntime {
       .filter((entry) => entry.length > 0);
     for (const extra of extra_scripts) {
       timeline.push(format_command_skipped(extra));
+      if (callbacks.onCommandSkip !== undefined) {
+        await callbacks.onCommandSkip({ script: extra, status: 'skipped' });
+      } else {
+        // No skip observer — the skipped script stays in the timeline.
+      }
     }
 
     let risk: RiskAssessment | undefined;
@@ -506,7 +689,7 @@ export function createTellRuntime(options: TellRuntimeOptions): TellRuntime {
       } else {
         // No skip observer — the status is still recorded below.
       }
-      timeline.push(format_command_status(status, script));
+      timeline.push(format_command_status(status, script, reason));
       await save_turn(message, text);
       return { status: 'completed', text, timeline, commands: [command] };
     }
@@ -535,11 +718,26 @@ export function createTellRuntime(options: TellRuntimeOptions): TellRuntime {
       // Approval decides — the request callback above cannot widen authority.
     }
 
-    const verdict = await options.approval({ script, ...(risk !== undefined ? { risk } : {}) });
+    // One escalation request per answer at most (the first non-empty body).
+    // The tag is protocol, not prose: it never reaches the visible text.
+    const escalation = extract_escalation_justification(scan);
+    if (escalation !== null) {
+      timeline.push(format_escalation_request(script, escalation));
+    } else {
+      // No escalation — the approval decides on the script alone.
+    }
+
+    const verdict = await options.approval({
+      script,
+      ...(risk !== undefined ? { risk } : {}),
+      ...(escalation !== null ? { escalation } : {}),
+    });
     if (verdict === 'approved') {
       // Falls through to execution below.
     } else if (verdict === 'denied') {
-      return skip_command('denied');
+      // Name the classifier rule that matched, so the denial record says why.
+      const rule = risk?.rules?.[0] ?? risk?.flags?.[0];
+      return skip_command('denied', rule);
     } else {
       return skip_command('skipped');
     }

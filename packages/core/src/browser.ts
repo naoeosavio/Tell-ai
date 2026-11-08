@@ -22,11 +22,47 @@ export { validate_chain_decision_payload } from './chain-decision';
 export type { ConfigLayer, CoreConfig, CoreHost, ResolvedConfigInput } from './config';
 export { HOST_DEFAULT_MODEL, load_env_layer, resolve_core_config } from './config';
 export { CUSTOM_SYSTEM_PREFIX, compose_custom_system } from './custom-system';
+export type {
+  ChildDecision,
+  ChildFamily,
+  DelegationChildEnv,
+  DelegationChildEvent,
+  DelegationOutcome,
+  DelegationRefusalReason,
+  DelegationRequest,
+  DelegationResult,
+  DelegationRunner,
+  DelegationRunnerOptions,
+  DelegationStats,
+} from './delegation';
+export {
+  build_child_message,
+  child_system_prompt,
+  create_child_approval,
+  decide_child_command,
+  format_child_project_context,
+  is_broad_destructive_script,
+} from './delegation';
+export type { DelegationPromptMode } from './delegation-prompt';
+export { delegation_prompt_section } from './delegation-prompt';
+export type { DelegationFacts, DelegationStatus } from './delegation-status';
+export { delegation_budget_notice, derive_delegation_status } from './delegation-status';
+export type {
+  DelegationBlock,
+  DelegationKind,
+} from './delegation-tags';
+export {
+  delegation_kind,
+  extract_delegation,
+  find_blocks,
+  strip_delegation_tags,
+} from './delegation-tags';
 export type { CoreLoopOptions } from './loop';
 export {
   CHAIN_LIMIT_NOTICE,
   CONTINUE_INSTRUCTION,
   chain_limit_notice,
+  DELEGATION_REFUSED_FOLLOW_UP,
   LOOP_MAX_ROUNDS,
   run_primitive_loop,
 } from './loop';
@@ -37,19 +73,61 @@ export type {
 } from './loop-feedback';
 export {
   CANCELLED_HEADER,
+  COMMAND_DENIED_INSTRUCTION,
+  COMMAND_DENIED_PREAMBLE,
   COMMAND_FEEDBACK_FAILED_PREAMBLE,
   COMMAND_FEEDBACK_INSTRUCTION,
+  COMMAND_SKIPPED_PREAMBLE,
+  ESCALATION_HEADER,
+  ESCALATION_HINT,
   EXECUTED_HEADER,
+  extract_escalation_justification,
   format_cancelled_command,
   format_command_feedback,
   format_command_result,
   format_command_skipped,
+  format_denied_feedback,
+  format_escalation_request,
   format_executed_command,
   format_failed_command,
+  format_research_result,
+  format_skipped_feedback,
+  format_subtask_result,
   OUTPUT_SEPARATOR,
   parse_command_feedback,
+  RESEARCH_HEADER,
   SKIPPED_HEADER,
+  SUBTASK_HEADER,
+  strip_escalation_tags,
 } from './loop-feedback';
+export type {
+  PendingApproval,
+  PendingApprovals,
+  PendingApprovalsOptions,
+  PendingConfirmResult,
+} from './pending-approvals';
+export { create_pending_approvals } from './pending-approvals';
+export type { PermissionClass, PermissionEffect, PermissionVerdict } from './permission';
+export {
+  classify_script,
+  decide_permission,
+  derive_always_prefix,
+  is_escalatable_class,
+  is_escalatable_script,
+  is_valid_always_pattern,
+  launcher_tail,
+  matches_always_pattern,
+  split_statements,
+} from './permission';
+export {
+  create_read_only_approval,
+  has_file_redirect,
+  is_read_only_script,
+  is_sensitive_rel_path,
+  is_token_inside_cwd,
+  script_path_tokens,
+  script_touches_sensitive_path,
+} from './read-only';
 export type { RiskProfile, RiskRule } from './risk';
 export { assess_base_risk, create_base_risk_port, DEFAULT_RISK_PROFILE } from './risk';
 export type { CoreRuntime, CoreRuntimeInput } from './runtime';
@@ -58,6 +136,7 @@ export type {
   ApprovalPort,
   CancellationToken,
   CommandExecutor,
+  DelegationRecord,
   ModelPort,
   Redactor,
   RiskAssessment,
@@ -74,8 +153,10 @@ export type {
 export {
   type ApprovalDecision,
   cancelled_token,
+  combine_output,
   create_cancellation_token,
   createTellRuntime,
+  DEFAULT_STORAGE_KEY,
   MemoryStorageAdapter,
   never_cancelled,
   type RuntimeCommand,
@@ -100,6 +181,14 @@ export {
   DEFAULT_OUTPUT_MAX_BYTES,
   DEFAULT_STDIN_MAX_BYTES,
   DEFAULT_STDIN_TIMEOUT_MS,
+  DELEGATION_BRIEFING_MAX_CHARS,
+  DELEGATION_CONTEXT_MAX_CHARS,
+  DELEGATION_MAX_DELEGATIONS,
+  DELEGATION_MAX_ROUNDS,
+  DELEGATION_OBJECTIVE_MAX_CHARS,
+  DELEGATION_OUTPUT_MAX_BYTES,
+  DELEGATION_RECORD_CONTEXT_MAX_CHARS,
+  DELEGATION_SUMMARY_MAX_CHARS,
   EXIT_CONFIG_ERROR,
   EXIT_LIMIT,
   EXIT_MODEL_ERROR,
@@ -109,12 +198,14 @@ export {
   MAX_CHAIN_STEPS,
   MAX_EXEC_TIMEOUT_MS,
   MIN_EXEC_TIMEOUT_MS,
+  max_delegations_for_chain,
   OUTPUT_TRUNCATE_MARKER_PREFIX,
   PAYLOAD_MAX_CONTENT_CHARS,
   PAYLOAD_MAX_MESSAGES,
   PAYLOAD_MAX_SYSTEM_CHARS,
   parse_runtime_limits,
   RuntimeLimitError,
+  resolve_max_delegations,
   runtime_env_from_process,
   StdinLimitError,
   split_context_turns,
@@ -124,3 +215,16 @@ export {
   truncate_output,
   validate_tellrc_limit_value,
 } from './runtime-limits';
+export type { SummarizeResult, SummarizeUsed } from './summarize-result';
+export { build_summarize_message, SUMMARIZE_SYSTEM, summarize_result } from './summarize-result';
+export type { TaskResolution } from './task-naming';
+export {
+  find_task_id,
+  format_task_id,
+  is_task_id,
+  next_task_number,
+  resolve_task_id,
+  split_task_value,
+  task_name_from_ref,
+  to_task_name,
+} from './task-naming';

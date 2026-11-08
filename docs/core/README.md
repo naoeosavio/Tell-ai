@@ -15,6 +15,7 @@ bun add @tell-ai/core
 | [overview.md](overview.md) | What the core is, boundary vs SDK/CLI/Web, layers, adapters |
 | [runtime-api.md](runtime-api.md) | Injectable contract: `createTellRuntime`, `TellResult`, ports, callbacks, command lifecycle, redaction boundary |
 | [loop.md](loop.md) | Primitive exec/loop (`run_primitive_loop`) + executable runtime (`create_core_runtime`) |
+| [delegation.md](delegation.md) | Delegation flow: briefing (system + context), objective, status, repost and limits |
 | [exec.md](exec.md) | Node executor (`create_node_executor`), env allowlist, secret redaction, timeout/cancel/buffer |
 | [risk.md](risk.md) | Base risk classification (`assess_base_risk`), permissive/strict profiles, rule catalog |
 | [config.md](config.md) | Host defaults, `CoreConfig` precedence, env layer, custom-system composition |

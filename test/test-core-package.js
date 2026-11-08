@@ -5,6 +5,7 @@
 // must still not anticipate `TELL_KEY`/`TELL_BASE_URL` before the tellkey
 // handoff. No network, no provider calls.
 const assert = require('node:assert');
+const { describe, it } = require('node:test');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -24,6 +25,9 @@ const BUN_LOCK = path.join(ROOT, 'bun.lock');
 const MIN_NODE_MAJOR = 22;
 // Expected AI SDK line pinned by `packages/sdk/package.json`.
 const EXPECTED_AI_VERSION = '7.0.99';
+
+// Scaffold existence captured at load, before any test runs.
+const SRC_EXISTED_BEFORE = fs.existsSync(CORE_SRC);
 
 // Collected gate failures; empty means the gate passes.
 function check_node_version(failures) {
@@ -261,6 +265,9 @@ async function check_browser_functional(failures) {
       failures.push(`BLOCKED: dist/browser.js missing export "${name}"`);
     }
   }
+  if (mod.DEFAULT_STORAGE_KEY !== 'tell-runtime') {
+    failures.push('BLOCKED: dist/browser.js missing export "DEFAULT_STORAGE_KEY"');
+  }
   for (const name of ['create_node_executor', 'canonical_path', 'build_project_context', 'build_sdk_config_from_env']) {
     if (name in mod) {
       failures.push(`BLOCKED: dist/browser.js leaks Node-only export "${name}"`);
@@ -298,36 +305,71 @@ function check_no_loop_feedback_subpath(failures) {
   }
 }
 
-(async () => {
-  const src_existed_before = fs.existsSync(CORE_SRC);
+describe('core package gate', () => {
+  it('requires node >= 22', () => {
   const failures = [];
   check_node_version(failures);
-  const signoff_failures = [];
-  check_legal_signoff(signoff_failures);
-  failures.push(...signoff_failures);
+  assert.deepStrictEqual(failures, []);
+  });
+
+  it('holds the human GPL->MIT signoff', () => {
+  const failures = [];
+  check_legal_signoff(failures);
+  assert.deepStrictEqual(failures, []);
+  });
+
+  it('keeps the runtime contract in the core', () => {
+  const failures = [];
   check_library_contract(failures);
+  assert.deepStrictEqual(failures, []);
+  });
+
+  it('pins ai@7.0.99 across manifest, install and lockfile', () => {
+  const failures = [];
   check_ai_pin(failures);
-  check_scaffold_timing(failures, signoff_failures.length === 0);
+  assert.deepStrictEqual(failures, []);
+  });
+
+  it('times the scaffold after the signoff', () => {
+  const signoff = [];
+  check_legal_signoff(signoff);
+  const failures = [];
+  check_scaffold_timing(failures, signoff.length === 0);
+  assert.deepStrictEqual(failures, []);
+  });
+
+  it('points the browser condition at built files first', () => {
+  const failures = [];
   check_browser_export(failures);
+  assert.deepStrictEqual(failures, []);
+  });
+
+  it('references no builtin in the browser entry or bundle', () => {
+  const failures = [];
   check_browser_no_builtins(failures);
+  assert.deepStrictEqual(failures, []);
+  });
+
+  it('keeps the browser bundle self-contained', () => {
+  const failures = [];
   check_browser_no_bare_imports(failures);
+  assert.deepStrictEqual(failures, []);
+  });
+
+  it('exposes only the pure surface from the browser bundle', async () => {
+  const failures = [];
   await check_browser_functional(failures);
+  assert.deepStrictEqual(failures, []);
+  });
+
+  it('keeps the loop-feedback subpath gone', () => {
+  const failures = [];
   check_no_loop_feedback_subpath(failures);
+  assert.deepStrictEqual(failures, []);
+  });
 
-  // The gate is a pure reader: it must never scaffold code as a side effect.
-  assert.strictEqual(fs.existsSync(CORE_SRC), src_existed_before, 'gate must not change packages/core/src');
-
-  if (failures.length > 0) {
-    for (const failure of failures) {
-      console.error(failure);
-    }
-    console.error(`core package gate BLOCKED (${failures.length} reason(s))`);
-    process.exitCode = 1;
-    return;
-  }
-
-  console.log('core package gate passed');
-})().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
+  it('never scaffolds code as a side effect', () => {
+  // The gate is a pure reader: the scaffold check above must not change it.
+  assert.strictEqual(fs.existsSync(CORE_SRC), SRC_EXISTED_BEFORE, 'gate must not change packages/core/src');
+  });
 });

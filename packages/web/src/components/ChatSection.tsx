@@ -96,6 +96,8 @@ interface ChatSectionProps {
   onForkFromMessage?: (id: string) => void;
   /** Script awaiting authorization (rendered as a card in the chat flow). */
   pendingCommand?: string | null;
+  /** Server-kept risk reason for the pending script (card shows it when present). */
+  pendingRisk?: string | null;
   onConfirmPending?: (command: string) => void;
   onSkipPending?: () => void;
 }
@@ -171,6 +173,7 @@ export default function ChatSection({
   onRetryMessage,
   onForkFromMessage,
   pendingCommand,
+  pendingRisk,
   onConfirmPending,
   onSkipPending,
 }: ChatSectionProps) {
@@ -900,6 +903,11 @@ export default function ChatSection({
               <pre className="p-3 bg-(--color-bg-tertiary) border border-(--color-border-subtle) text-(--color-accent-text) font-mono text-[10px] overflow-x-auto whitespace-pre-wrap select-text">
                 {pendingCommand}
               </pre>
+              {pendingRisk && (
+                <p className="text-[11px] text-(--color-error) font-sans select-none">
+                  Risk: {pendingRisk} — approving executes this script in the workspace.
+                </p>
+              )}
               <div className="flex items-center justify-end gap-2 select-none">
                 <button
                   type="button"

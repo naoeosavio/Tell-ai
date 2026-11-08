@@ -9,16 +9,18 @@ type RunBlock = {
 };
 
 /** Opening tag matcher (case-insensitive, keeps the original indices). */
-const RUN_OPENER = /<RUN>/gi;
+const RUN_OPENER = /<[\s]*RUN[\s]*>/gi;
 /** Closing tag matcher (case-insensitive, keeps the original indices). */
-const RUN_CLOSER = /<\/RUN>/gi;
+const RUN_CLOSER = /<\/[\s]*RUN[\s]*>/gi;
 
 /**
  * Finds every `<RUN>` block in a text.
  *
- * A block ends at the **last** closing tag before the next opening tag, so a
- * command whose body contains the literal `</RUN>` (e.g. `echo "</RUN>"`) is
- * not truncated mid-script. An unterminated block is ignored.
+ * The matcher accepts spaces inside the tag (`< RUN >`, `</ RUN >`): real
+ * models emit them, and the command must not become invisible text. A block
+ * ends at the **last** closing tag before the next opening tag, so a command
+ * whose body contains the literal `</RUN>` (e.g. `echo "</RUN>"`) is not
+ * truncated mid-script. An unterminated block is ignored.
  *
  * @param text - Text to scan.
  * @returns The blocks in order.

@@ -1,39 +1,65 @@
 # Security
 
-Threat model: the model output, piped stdin, and stored context are all untrusted. Only model-emitted `<RUN>` blocks that survive think-tag stripping and the high-risk guard may execute, and only after confirmation (or `-y` for safe scripts on a TTY).
+Threat model: the model output, piped stdin, and stored context are all untrusted. Only model-emitted `<RUN>` blocks that survive think-tag stripping and the permission guard may execute, and only after confirmation (or `-y` for low and medium scripts).
 
-## High-risk guard (`is_high_risk_script` → core `assess_base_risk`)
+## Permission guard (graded classes → core `decide_permission`)
 
-The guard is a thin CLI boolean (`is_high_risk_script` in `src/core-adapters.ts`) over the core base classifier (`assess_base_risk`, permissive profile — see [../core/risk.md](../core/risk.md)). Input is normalized (`\\\n` → space, runs of whitespace → single space) into `compact`; every pattern below is tested against it. Match → high-risk: `-y` does not approve, TTY confirmation is still required, non-TTY auto-rejects.
+The guard is the core permission table (`classify_script` in `packages/core/src/permission.ts` — see [../core/risk.md](../core/risk.md)). `Tell.ts` calls it directly. No host wrapper decides the class. The class is the maximum over the script parts.
 
-| # | Pattern (summary) | Example blocked |
-|---|-------------------|-----------------|
-| 1 | `\b(sudo\|doas\|pkexec)\b` | `sudo ls /`, `doas ls /root`, `pkexec sh -c "id"` |
-| 2 | `\brm\s+(-…[rf]…)\b` | `rm -rf ./dir`, `rm -fr /` |
-| 3 | `\b(git clean -[xfd]\|mkfs\|shutdown\|reboot)\b` | `git clean -xfd`, `mkfs /dev/sda` |
-| 4 | `\bdd\b.*\bof=` | `dd if=/dev/zero of=/dev/sda bs=1M` |
-| 5 | `(chmod\|chown) -R … /` | `chmod -R 777 /` |
-| 5b | `(chmod\|chown) … privileged_path` (non-recursive included) | `chmod 777 /etc/passwd`, `chown root:root /etc/shadow` |
-| 6 | `(curl\|wget\|base64)…\|\s*(sh\|bash\|zsh\|dash\|ksh\|python\|perl\|ruby\|php\|node)` | `curl …/install.sh \| sh`, `curl …/x.py \| python3`, `echo … \| base64 -d \| sh` |
-| 7 | `<\(\s*(curl\|wget\|base64)` | `bash <(curl -s …/install.sh)` |
-| 8 | `(^¦[\s;&¦])sh…<\( ` | `sh … <(…)` (shell fed by process substitution) |
-| 9 | interpreter `-e/-c/-r/--eval/--exec/--command` + network/decode token (`http`, `require('http`, `import('http`, `urllib`, `requests.`, `ftplib`, `socket`, `base64`, `eval(`, `exec(`, `system(`, `popen(`) | `python3 -c "import urllib.request; exec(…)"`, `node -e "require('https')…eval(s)"` |
-| 10 | `(curl\|wget\|base64)…[;&¦]…(node\|python\|perl\|ruby\|php)` | `curl … ; python3 evil.py` |
-| 11 | `(^¦[\s;&¦])(crontab\|systemctl --user enable)` | `echo "…" \| crontab -`, `systemctl --user enable pwned.service` |
-| 12 | `(cp¦mv¦ln) … privileged_path` | `cp payload /etc/profile.d/…`, `ln -s payload /etc/rc.local` |
-| 13 | `sed -i… privileged_path` | `sed -i 's/root/pwned/' /etc/passwd` |
-| 14 | `tee … privileged_path` | `echo pwned ¦ tee /etc/hosts` |
-| 15 | `\d*(>>?¦>\|¦&>) privileged_path` | `echo pwned > /etc/profile`, `bad-command 2> /etc/hosts` |
+Four classes exist.
 
-`privileged_path` (`PRIVILEGED_PATH` in `packages/core/src/risk.ts`): `/(etc|boot|dev|proc|sys|usr|bin|sbin|lib|lib64)(/¦\b)`, `/var/spool/cron`, `/var/cron`, `/etc/cron[.d|daily|…]`, `~/.config/autostart`, `~/.config/systemd/user`, `~/.local/share/systemd/user` (with `$HOME` variants).
+| Class | Meaning | Examples |
+|---|---|---|
+| low | read-only, no side effect | `ls`, `echo hi`, `git status`, `cat` inside the cwd |
+| medium | local write, reversible | `mkdir`, `touch`, `npm install`, `curl` GET, `env`, clean `node -e` |
+| high | irreversible, external, or privileged | `rm -rf` outside build dirs, `git push --force`, `docker run`, `sudo`, `curl -d` |
+| forbidden | no automatic path | credential reads (`.env`, keys), `curl … \| sh`, `rm -rf /`, system-path writes |
 
-Deliberately allowed: local-only one-liners like `node -e "require('fs').writeFileSync('pwned','1')"` — the `-e` rule fires only with a network/decode token. This is asserted, not accidental (`test-tell-security.js:179-183`).
+Five flag rows decide the effect.
 
-## Outside-cwd command gate (`script_touches_outside_cwd`, `Tell.ts`)
+| Flags | low | medium | high | forbidden |
+|---|---|---|---|---|
+| base | ask | ask | deny | deny |
+| `-y` | allow | allow | deny | deny |
+| `-y --require-approval` | allow | allow | ask | deny |
+| `--require-approval` | ask | ask | ask | deny |
+| `--no-exec` | block | block | block | block |
 
-Independent of the pattern table: with `-y`, any command referencing a path that resolves outside the working directory requires confirmation — reads included (`cat /etc/os-release`, `cat ~/.ssh/id_rsa`, `rm ../outside-file`, `ls --output=/tmp/out`), mirroring the `@path` mention read gate in `mentions.ts`. Path tokens are matched in absolute, home (`~/`, `$HOME`), traversal (`../`, `./`, bare `..`/`~`), after-`=` and quoted forms, then resolved via `is_outside_cwd` (lexical + symlink/realpath — a symlink inside `cwd` pointing outside counts as outside). When cwd IS `$HOME`, `~/x` resolves inside and stays allowed. Non-TTY stdin rejects (fail-closed), same as the high-risk guard.
+Ask shows `[o]nce / [a]lways / [N]o`. Once runs one command. Always runs it and stores `<prefix> *`. Reject stops it. Ask with no TTY denies. Deny and block never prompt. A denial ends the attempt. The model must report it. It must never work around it.
 
-Guard limits: regex heuristics, not a sandbox. Do not rely on it in production/trusted hosts without a container/VM. `--no-exec` always wins over `-y`.
+A clean eval is medium. It runs with `-y` (`test-tell-security.js` runs a clean one-liner under `--yes`). A dirty eval is forbidden. It names network, decode, exec, or secret text. It never runs automatically.
+
+Example: `tell -t '%docs' 'list the source files'` asks every script on the prompt. Add `-y` to run low and medium scripts at once. High scripts still ask in task mode (it forces `--require-approval`); outside task mode they deny without it. Forbidden scripts never run automatically.
+
+## Outside-cwd scope (permission class, lexical)
+
+The working directory changes the class of a write, not of a read. A write
+outside the working directory is high (denied with `-y`, asks only with
+`--require-approval`). A read outside is medium (runs with `-y`, asks
+without it) — `cat /etc/os-release` and `ls --output=/tmp/out` run under
+`-y`. A credential name outside stays forbidden and never runs
+automatically (`cat ~/.ssh/id_rsa`). The scope check is lexical: the
+permission layer is pure and cannot resolve symlinks, so a link inside the
+cwd that points outside reads as inside. `/tmp` counts as inside. The old
+`script_touches_outside_cwd` realpath check now only labels the prompt; it
+no longer decides. Output redaction still masks secret values.
+
+Guard limits: text heuristics, not a sandbox. Do not rely on it in production/trusted hosts without a container/VM. `--no-exec` always wins over `-y`.
+
+## Web differences (same table, strict flag)
+
+The Web uses the same table with the strict flag and the server cwd.
+
+* A system-path read (`cat /etc/hosts`) is forbidden on the Web. It is medium on the CLI.
+* With `-y` alone the Web runs low and medium scripts like the CLI. `--require-approval` turns high from deny into park.
+* An outside write blocks on every stateless route (`/api/execute`, `/api/risk-check`, delegate and chain confirms). It parks in the chain gate. One helper owns the block (`is_web_blocked_script`).
+* Task mode forces `--require-approval`, `--chain` and `--stream` on both hosts. It never forces `-y` on either host. Add `-y` to auto-run safe commands.
+
+Example: `tell-web -t '%docs' 'list the source files'` parks every script on the approval card. Add `-y` to run low and medium scripts at once (high denies). Add `--require-approval` to park high scripts instead of denying them. Forbidden scripts never run automatically.
+
+Credential reads that the classifier cannot resolve (`cat sec*`, `cat *`, recursive `grep -r`) still execute, but command output crosses the redaction boundary: the CLI and Web scan credential-named workspace files (`.env*`, keys, `id_*`, bounded) and mask their values (`[redacted]`) before feedback, log, context and the model turn. The same scan masks provider keys. In the CLI an approval authorizes **execution**, not exfiltration: even an approved high-risk read stays redacted (the Web chain's explicit approval is the documented exception — the confirm card shows the server-kept script and its risk, so its output is shown as executed). Encoding/transforming the value (e.g. `base64` without `-d`, which is itself high-risk) is the remaining documented gap — the deny-list is a speed bump, not a sandbox.
+
+The CLI `@path` mention read gate applies the same sensitive-name predicate (see `docs/cli/mentions.md`): `@.env` asks on a TTY and is denied without one, while `@.env.example` stays allowed.
 
 ## File-mention read gate (`mentions.ts:39-58`, `Tell.ts:845`)
 
@@ -51,16 +77,82 @@ Consequences, all covered by tests:
 
 ## Precedence and safe defaults
 
-* `--no-exec` > `-y` > interactive prompt. Non-TTY never approves.
+* `--no-exec` > `-y` > interactive prompt. Allow effects run without a prompt (even non-TTY); ask effects deny without a TTY.
 * Flag-less invocations delete the default context file, so a poisoned default cannot linger silently.
 * Context names reject path traversal (`sanitize_context_name`); `-n` misuse and bad refs are hard errors before any model call.
+
+## Approval memory (`always`)
+
+The prompt shows three answers. The answers are `once`, `always`, and `reject`.
+
+* `once` runs the current command. It stores nothing.
+* `always` runs the current command. It stores `<prefix> *` in the project `.tellrc` under `[permissions]`.
+* `reject` stops the command. It stores nothing.
+
+The prefix is the command plus its subcommand. `npm ls` stores `npm ls *`. An unknown command stores its first two tokens. A bare name stores nothing. A compound script stores nothing. A substitution stores nothing. A redirect stores nothing.
+
+A stored pattern matches only with more args. `npm ls *` matches `npm ls -la`. It does not match `npm ls`. It does not match `npm install evil`.
+
+A stored pattern never grants `deny` or `block`. A forbidden script never stores. A child never inherits a stored grant. The output redactor still masks secret values.
+
+## Escalation channel (one shot)
+
+A denied `high` command can ask once more. A `forbidden` command cannot ask. A `block` command cannot ask.
+
+The model sends the same `<RUN>` block with one `<ESCALATE>` body. The body holds the justification. An empty body never escalates. A fenced block never escalates.
+
+The denial of a `high` command carries the hint. The denial of a `forbidden` command carries no hint.
+
+One escalation runs per command. The first request with a justification prompts the human. A second request for the same command denies at once. A request with no TTY denies at once.
+
+An escalation answer of `always` runs once. It stores nothing. A decline stops the command. It stores nothing.
+
+The timeline records two lines. The first line is `Escalation requested:` with the justification. The second line is the decision (`Executed command:`, `Command denied:`, `Skipped by user:`).
+
+The Web server follows the same rule end to end. A `high` command with a
+justification parks once per command. The card shows the justification. A
+`forbidden` command with a justification denies. `--no-exec` denies every
+escalation.
+
+Example: `git push --force origin main` denies with `-y`. The model sends `<ESCALATE>hotfix window</ESCALATE>` with the same `<RUN>` block. The CLI prompts once with the justification. The Web parks the command once.
+
+## Child profile (family table, not class cap)
+
+A delegated child runs headless. It cannot ask. The policy is a family table in `decide_child_command` (`packages/core/src/delegation.ts`), not a class cap. The class cap cannot express the mix: `npm install` is `medium` and must deny, while `rm -rf src` is `high` and must pass inside the workspace.
+
+Research allows `read` only. Build allows `read`, `write`, `destructive` (named path, inside the workspace) and `vcs-index` (`git add`, `git switch -c`). Every other family denies in both profiles.
+
+| Family | Research | Build, inside | Examples |
+|---|---|---|---|
+| read | allow | allow | `cat`, `ls`, `git log`, `git status`, `docker ps`, `npm ls` |
+| write | deny | allow | `mkdir`, `touch`, `rm -rf dist`, `chmod -R src` |
+| destructive, named path | deny | allow | `rm -rf src`, `find src -delete` |
+| destructive, broad | deny | deny | `rm -rf .`, `..`, `*`, `~`, `/`, `dist/*`, `find . -delete` |
+| vcs-index | deny | allow | `git add`, `git switch -c` |
+| vcs-history | deny | deny | `git commit`, `git switch` without `-c`, `merge`, `stash` |
+| vcs-remote | deny | deny | `push`, `fetch`, `pull`, `clone` (even read-form `git fetch`) |
+| install | deny | deny | `npm install`, `pip install`, `cargo add`, `npm publish` |
+| network-read | deny | deny | `curl` GET, `wget` GET |
+| network-write | deny | deny | `curl -d`, `scp`, `rsync` to a remote host |
+| privilege | deny | deny | `sudo`, `systemctl`, `chown` (with or without `-R`), `kill`, `ssh` |
+| exfil | deny | deny | `.env`, keys, credentials, `curl … | sh`, `/dev/tcp` |
+| outside | deny | deny | a path outside the workspace (`touch /outside/f`, `cat /etc/hosts`) |
+| opaque, unknown | deny | deny | unterminated quote, `./scripts/deploy.sh`, clean `node -e` |
+
+Three rules shape the table. `chmod -R` inside the workspace counts as `write`, so `chmod -R src` passes in build. `chown` counts as `privilege` with or without `-R`, so `chown root f` denies in build. A launcher prefix never hides the real command: `env FOO=bar rm -rf .` denies as `destructive-broad`, and `env FOO=bar chown root f` denies as `privilege`.
+
+The scope check reuses the permission table (`medium-outside-read`, `high-outside-write`). `/tmp` counts as inside. No `cwd` means no scope check.
+
+The child prompt carries project context (tree plus README/AGENTS text, already capped by `build_project_context`) and a fixed scope sentence: the scope is fixed, an outside command is rejected, a command that needs approval is rejected, the child states the limit so the parent can handle it. Research ends with `FINDINGS:`, `VERIFIED:`, `DENIED:`. Build ends with `CHANGED:`, `VERIFIED:`, `DENIED:`. Each denial names the command and its family.
+
+A denied family never consults the host. An allowed family still needs the host approval (`--no-exec` wins, Web parks high-risk, parent flags hold). The CLI child port carries an empty `always` list (`Tell.ts:1189`), so a parent grant never reaches the child. A denial stops the child (`retry_denied: false`, status `BLOCKED`).
 
 ## Test mapping
 
 | Concern | Test |
 |---------|------|
 | 30+ risky scripts skipped under `--yes` | `test-tell-security.js:143-190` |
-| Local one-liner still runs | `test-tell-security.js:179-183` |
+| Clean one-liner runs under `--yes`, dirty eval never runs | `test-tell-security.js` (clean one-liner), calibration table |
 | Injection policy in system prompt | `assertPromptInjectionPolicy` |
 | Literal user `<RUN>` not executed | `USER_PROMPT_PWN` case |
 | `--no-exec` wins | `test_no_exec_overrides_yes_flag` (both suites) |
@@ -71,7 +163,15 @@ Consequences, all covered by tests:
 | Context label echo (ANSI/OSC/C1/newline in file names) | `test_ctx_echo_strips_control_chars_from_file_names` |
 | `@path` expansion, outside-cwd denial, poisoned-file inertness | `test-tell-mentions.js: TESTS` (22 cases) |
 | Incremental-save no-duplication | `test_incremental_context_saves_do_not_duplicate_turns_on_chain` |
+| `always` stores prefix, matches with args, never bare | `test-core-permission.js` (Phase 3), `test-tell-tellrc.js` (permissions) |
+| Stored grant runs, deny never grants, child isolated | `test-cli-core-adapters.js` (Phase 3) |
+| Escalation once for high, never for forbidden, audit pair | `test-core-escalation.js` (Phase 6: 24 tests) |
+| Child family table, scope, broad, prompt, port, runner | `test-core-delegation-profile.js` (Phase 5: 28 tests) |
+| No host wrapper, task forces approval, labels from classes | `test-cli-core-adapters.js` (Phase 4) |
+| Helper blocks, gate parks high and denies forbidden, CLI/Web parity | `test-web-chain-runtime.js` (Phase 4) |
+| Server blocks through the helper | `test-web-backend.js` (Phase 4) |
+| Block never loosens the guard | `test-fuzz-coverage.js` (Phase 4) |
 
 Run: `npm run test:security`, `npm run test:mentions`, `npm run test` (all suites, builds SDK first). See [development.md](development.md).
 
-Sources: `Tell.ts:368-427` (confirmation UX), `packages/cli/src/core-adapters.ts` (risk seam), `packages/core/src/risk.ts` (rule owner), `src/mentions.ts`, `test/test-tell-security.js`, `test/test-tell-context.js`, `test/test-tell-mentions.js`, `test/test-core-risk.js`. Core reference: [../core/risk.md](../core/risk.md).
+Sources: `Tell.ts` (confirmation UX, direct core calls), `packages/cli/src/core-adapters.ts` (exec/env/config seam, no classifier), `packages/core/src/permission.ts` (class and verdict owner), `packages/web/src/server/chain-runtime.ts` (gate and block owner), `src/mentions.ts`, `test/test-tell-security.js`, `test/test-tell-context.js`, `test/test-tell-mentions.js`, `test/test-core-permission.js`. Core reference: [../core/risk.md](../core/risk.md).

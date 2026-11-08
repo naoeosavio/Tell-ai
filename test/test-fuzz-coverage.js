@@ -392,6 +392,9 @@ const web_chain_store = load_typescript_module(
   path.join(REPO, 'packages', 'web', 'src', 'server', 'chain-store.ts'),
 );
 const web_guards = load_typescript_module(path.join(REPO, 'packages', 'web', 'src', 'server', 'guards.ts'));
+const web_chain_runtime = load_typescript_module(
+  path.join(REPO, 'packages', 'web', 'src', 'server', 'chain-runtime.ts'),
+);
 const cli_tellrc = load_typescript_module(path.join(REPO, 'packages', 'cli', 'src', 'tellrc.ts'));
 const cli_adapters = load_typescript_module(path.join(REPO, 'packages', 'cli', 'src', 'core-adapters.ts'));
 
@@ -805,33 +808,34 @@ describe('fuzz/core: risk classification is total and ordered', () => {
     });
   });
 
-  it('never lets the strict profile be laxer about an interpreter eval', () => {
+  it('never lets the strict profile disagree with permissive on an interpreter eval', () => {
     run_property_over_seeds({
-      name: 'strict risk must cover every permissive interpreter-eval hit',
+      name: 'strict and permissive agree on every interpreter-eval script',
       iterations: 600,
       generate: (rng) => random_script(rng),
       check: (input) => {
         const script = String(input);
         const permissive = core.assess_base_risk(script, 'permissive');
         const strict = core.assess_base_risk(script, 'strict');
-        if (permissive.category === 'interpreter-eval' && !strict.risky) {
-          return `permissive flagged "${script}" (${permissive.reason}) but strict did not`;
+        if (permissive.category === 'interpreter-eval' && permissive.risky !== strict.risky) {
+          return `permissive (${permissive.risky}) and strict (${strict.risky}) disagree on "${script}"`;
         }
         return null;
       },
     });
   });
 
-  it('flags every interpreter eval form in the strict profile', () => {
+  it('flags dirty interpreter eval forms in the strict profile, passes clean ones', () => {
+    for (const script of ['php -r "system(\'id\')"', 'lua -e "os.execute(\'id\')"']) {
+      assert.strictEqual(core.assess_base_risk(script, 'strict').risky, true, `${script} must be risky (strict)`);
+    }
     for (const script of [
-      'php -r "system(\'id\')"',
-      'lua -e "os.execute(\'id\')"',
       'deno eval "console.log(1)"',
       'bun -e "console.log(1)"',
       'python3 -c "print(1)"',
       'node --eval "process.exit(0)"',
     ]) {
-      assert.strictEqual(core.assess_base_risk(script, 'strict').risky, true, `${script} must be risky (strict)`);
+      assert.strictEqual(core.assess_base_risk(script, 'strict').risky, false, `${script} must pass (strict)`);
     }
   });
 
@@ -1013,25 +1017,26 @@ describe('fuzz/web: the chain store stays bounded and idempotent', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Web vs core: differential risk comparison
+// Web vs core: the scope-aware block never loosens the strict profile
 // ---------------------------------------------------------------------------
 
-describe('fuzz/web: the sandbox risk guard delegates to the core owner', () => {
-  it('agrees with the core strict profile on every generated script', () => {
+describe('fuzz/web: the sandbox block delegates to the core owner', () => {
+  it('blocks every strict-risky script, plus outside writes', () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-fuzz-web-'));
     run_property_over_seeds({
-      name: 'web isHighRiskScript must equal the core strict profile',
+      name: 'is_web_blocked_script must cover the core strict profile',
       iterations: 600,
       generate: (rng) => random_script(rng),
       check: (input) => {
         const script = String(input);
-        const web = web_guards.isHighRiskScript(script);
-        const core_strict = core.assess_base_risk(script, 'strict').risky;
-        if (web !== core_strict) {
-          return `web=${web} core=${core_strict} for "${script}"`;
+        if (core.assess_base_risk(script, 'strict').risky && !web_chain_runtime.is_web_blocked_script(script, cwd)) {
+          return `blocked=false for strict-risky "${script}"`;
         }
         return null;
       },
     });
+    assert.strictEqual(web_chain_runtime.is_web_blocked_script('touch /outside/f', cwd), true);
+    assert.strictEqual(web_chain_runtime.is_web_blocked_script('echo hi', cwd), false);
   });
 
   it('keeps the rate limiter bounded under a key flood', () => {
@@ -1040,25 +1045,6 @@ describe('fuzz/web: the sandbox risk guard delegates to the core owner', () => {
       limiter.check(`ip-${index}`);
     }
     assert.ok(limiter.size() <= 10_000, `the rate limiter must stay bounded (size=${limiter.size()})`);
-  });
-});
-
-describe('fuzz/cli: the risk port delegates to the core owner', () => {
-  it('agrees with the core permissive profile on every generated script', () => {
-    run_property_over_seeds({
-      name: 'cli is_high_risk_script must equal the core permissive profile',
-      iterations: 600,
-      generate: (rng) => random_script(rng),
-      check: (input) => {
-        const script = String(input);
-        const cli = cli_adapters.is_high_risk_script(script);
-        const core_permissive = core.assess_base_risk(script, 'permissive').risky;
-        if (cli !== core_permissive) {
-          return `cli=${cli} core=${core_permissive} for "${script}"`;
-        }
-        return null;
-      },
-    });
   });
 });
 

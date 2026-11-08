@@ -11,7 +11,7 @@
 | `format_command_result(script, output, exit_code)` | Dispatches on the exit code: 0 → executed, else failed |
 | `format_command_skipped(script)` | `Skipped by user:\n<script>` |
 | `format_cancelled_command(script)` | `Command cancelled:\n<script>` |
-| `format_command_status(status, script)` | `Command <status>:\n<script>` (denied / awaiting_approval / requested / skipped markers) |
+| `format_command_status(status, script, reason?)` | `Command <status>:\n<script>` (denied / awaiting_approval / requested / skipped markers); a denied record with a reason adds `\nReason: <rule id>` |
 
 ## Round feedback
 

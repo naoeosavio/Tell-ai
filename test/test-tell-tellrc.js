@@ -6,6 +6,7 @@
 // `cli-args` parsing (pure) plus launch_web arg assertions.
 
 const assert = require('node:assert');
+const { describe, it } = require('node:test');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -271,6 +272,65 @@ function test_temperature_validation() {
   assert.strictEqual(resolved.temperature, 1);
 }
 
+// The interval rule is a core constant now (D8): the tellrc layer and the
+// Web flag parser call the same validator, so the two hosts can never
+// accept a different temperature span.
+function test_temperature_validation_uses_core() {
+  const core = require('@tell-ai/core');
+  const tell_src = fs.readFileSync(path.join(CLI_SRC_DIR, 'tellrc.ts'), 'utf8');
+  const web_src = fs.readFileSync(
+    path.join(__dirname, '..', 'packages', 'web', 'src', 'server', 'cli-args.ts'),
+    'utf8',
+  );
+  // No host restates the numbers.
+  assert.ok(!/TEMPERATURE_(MIN|MAX) = /.test(tell_src), 'tellrc.ts must not restate the temperature bounds');
+  assert.ok(
+    !/value >= 0 && value <= 2/.test(web_src),
+    'web cli-args.ts must not restate the temperature interval',
+  );
+  assert.ok(tell_src.includes("from '@tell-ai/core'"), 'tellrc.ts imports the core validator');
+  assert.ok(
+    /validate_temperature\(/.test(web_src) && web_src.includes("from '@tell-ai/core'"),
+    'web cli-args.ts imports the core validator',
+  );
+  // Both boundaries behave identically through the two import paths (the
+  // `Number('') === 0` quirk is part of the shared rule, never a drift).
+  const bounds = [core.TEMPERATURE_MIN, core.TEMPERATURE_MAX];
+  assert.deepStrictEqual(bounds, [0, 2]);
+  for (const raw of [0, 2, 0.5, '1.75', -0.1, 2.01, Number.NaN, Number.POSITIVE_INFINITY, null, '']) {
+    assert.strictEqual(tellrc.validate_temperature(raw), core.validate_temperature(raw), `raw ${String(raw)}`);
+    const web_value = cli_args.parseCliArgs(['--cwd', '/tmp', '--temperature', String(raw)], '/tmp').temperature;
+    assert.strictEqual(web_value, core.validate_temperature(String(raw)), `web parity for raw ${String(raw)}`);
+  }
+}
+
+// Model precedence is `-m` flag > positional alias > env/`.tellrc` > host
+// default (D3): the tellrc layer reads `TELL_MODEL`, so `DEFAULT_MODEL`
+// never reads the variable again, and the positional alias wins over env.
+function test_model_precedence_flag_positional_env() {
+  const tell_src = fs.readFileSync(path.join(CLI_SRC_DIR, 'Tell.ts'), 'utf8');
+  assert.ok(tell_src.includes('const DEFAULT_MODEL = HOST_DEFAULT_MODEL.cli'), 'host default only in DEFAULT_MODEL');
+  assert.ok(
+    !tell_src.includes("process.env['TELL_MODEL'] || HOST_DEFAULT_MODEL"),
+    'DEFAULT_MODEL reads TELL_MODEL a second time',
+  );
+  assert.ok(tell_src.includes('opt_model ?? DEFAULT_MODEL'), 'flag/tellrc model wins over the host default');
+  // env layer: the tellrc resolver reads TELL_MODEL; without it the resolved
+  // model is undefined and DEFAULT_MODEL applies.
+  const saved = process.env.TELL_MODEL;
+  try {
+    delete process.env.TELL_MODEL;
+    const empty = tellrc.resolve_tellrc([], {}, {});
+    assert.strictEqual(empty.model, undefined);
+    const env_layer = tellrc.resolve_tellrc([], {}, { TELL_MODEL: 'z' });
+    assert.strictEqual(env_layer.model, 'z');
+    assert.notStrictEqual(env_layer.model, tellrc.resolve_tellrc([], {}, {}).model);
+  } finally {
+    if (saved !== undefined) process.env.TELL_MODEL = saved;
+    else delete process.env.TELL_MODEL;
+  }
+}
+
 function test_limits_validated() {
   const parsed = tellrc.parse_tellrc('[limits]\nmax_chain_steps = 3\ncontext_chars = 999999999\n', 'test');
   assert.strictEqual(parsed.limits.max_chain_steps, 3);
@@ -283,9 +343,12 @@ function test_limits_validated() {
 function test_limits_delegate_to_runtime_limits() {
   assert.deepStrictEqual(runtime_limits.TELLRC_LIMIT_KEYS.slice().sort(), [
     'context_chars',
+    'delegation_max_rounds',
+    'delegation_repost_chars',
     'exec_timeout_ms',
     'max_buffer_bytes',
     'max_chain_steps',
+    'max_delegations',
     'output_max_bytes',
     'stdin_max_bytes',
     'stdin_timeout_ms',
@@ -299,6 +362,9 @@ function test_limits_delegate_to_runtime_limits() {
     max_chain_steps: runtime_limits.DEFAULT_MAX_CHAIN_STEPS,
     max_buffer_bytes: runtime_limits.DEFAULT_MAX_BUFFER_BYTES,
     output_max_bytes: runtime_limits.DEFAULT_OUTPUT_MAX_BYTES,
+    max_delegations: runtime_limits.DELEGATION_MAX_DELEGATIONS,
+    delegation_repost_chars: runtime_limits.DELEGATION_SUMMARY_MAX_CHARS,
+    delegation_max_rounds: runtime_limits.DELEGATION_MAX_ROUNDS,
   };
   for (const key of runtime_limits.TELLRC_LIMIT_KEYS) {
     assert.strictEqual(runtime_limits.validate_tellrc_limit_value(key, valid_by_key[key]), valid_by_key[key]);
@@ -340,13 +406,54 @@ function test_profile_limits_use_the_same_table() {
   assert.ok(unknown.warnings.some((w) => w.includes('unknown limit nope')));
 }
 
+function test_permissions_parse_and_union() {
+  const parsed = tellrc.parse_tellrc('[permissions]\nnpm ls * = allow\ngit status * = ALLOW\n', 'test');
+  assert.deepStrictEqual(parsed.warnings, []);
+  assert.strictEqual(parsed.permissions['npm ls *'], 'allow');
+  assert.strictEqual(parsed.permissions['git status *'], 'allow');
+  const bad = tellrc.parse_tellrc('[permissions]\nnpm = allow\nnpm ls = deny\nnpm ls * = yes\n', 'test');
+  assert.deepStrictEqual(Object.keys(bad.permissions), []);
+  assert.ok(bad.warnings.some((w) => w.includes('invalid permission')));
+  const user = { ...tellrc.empty_parsed_tellrc('user'), rank: 1, permissions: { 'npm ls *': 'allow' } };
+  const project = { ...tellrc.empty_parsed_tellrc('project'), rank: 2, permissions: { 'git status *': 'allow' } };
+  const resolved = tellrc.resolve_tellrc([user, project], {}, {});
+  assert.strictEqual(resolved.permissions['npm ls *'], 'allow');
+  assert.strictEqual(resolved.permissions['git status *'], 'allow');
+  assert.strictEqual(resolved.provenance['permissions'], 'union');
+}
+
+function test_permissions_append_roundtrip() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tellrc-perm-'));
+  try {
+    assert.strictEqual(tellrc.append_always_pattern(dir, 'npm ls *'), true);
+    const first = fs.readFileSync(path.join(dir, '.tellrc'), 'utf8');
+    assert.ok(first.includes('[permissions]'));
+    assert.ok(first.includes('npm ls * = allow'));
+    assert.strictEqual(tellrc.append_always_pattern(dir, 'npm ls *'), true);
+    const second = fs.readFileSync(path.join(dir, '.tellrc'), 'utf8');
+    assert.strictEqual(second.split('npm ls *').length - 1, 1);
+    assert.strictEqual(tellrc.append_always_pattern(dir, 'npm'), false);
+    assert.strictEqual(tellrc.append_always_pattern(dir, 'npm ls'), false);
+    assert.strictEqual(tellrc.is_valid_always_pattern('npm ls *'), true);
+    assert.strictEqual(tellrc.is_valid_always_pattern('npm'), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
 function test_compose_system_safety_last() {
   const safety = 'safety <RUN> approval injection deny';
   const composed = tellrc.compose_system_prompt(safety, 'Be concise.');
   assert.ok(composed.startsWith('Custom instructions:'));
   assert.ok(composed.endsWith(safety));
   assert.strictEqual(tellrc.compose_system_prompt(safety, ''), safety);
-  const custom = tellrc.tellrc_custom_text({ aliases: {}, deny_commands: [], limits: {}, provenance: {}, warnings: [] });
+  const custom = tellrc.tellrc_custom_text({
+    aliases: {},
+    deny_commands: [],
+    permissions: {},
+    limits: {},
+    provenance: {},
+    warnings: [],
+  });
   assert.strictEqual(custom, '');
 }
 
@@ -405,53 +512,139 @@ function test_web_forwarding_uses_resolved_tellrc() {
   assert.ok(!src.includes('TELL_TOKEN'));
 }
 
-const TESTS = [
-  test_missing_file_is_silent,
-  test_comments_duplicates_unknown_section,
-  test_hash_semicolon_preserved_in_values,
-  test_tilde_expands_only_in_paths,
-  test_nul_rejected,
-  test_size_cap_ignored,
-  test_directory_rejected_for_system_file,
-  test_system_file_cap_and_symlink_gate,
-  test_system_file_ok,
-  test_precedence_matrix,
-  test_deny_union_monotonic,
-  test_profiles_data,
-  test_custom_profile_name_accepted,
-  test_invalid_profile_section_name,
-  test_profile_system_fill_and_precedence,
-  test_profile_system_file_resolved,
-  test_profile_aliases_subsection_and_order,
-  test_profile_alias_subsection_invalid_name,
-  test_alias_resolution_no_mutation,
-  test_temperature_validation,
-  test_limits_validated,
-  test_limits_delegate_to_runtime_limits,
-  test_limits_accept_zero_stdin_deadline_and_full_chain_range,
-  test_profile_limits_use_the_same_table,
-  test_compose_system_safety_last,
-  test_sdk_temperature_propagates,
-  test_web_cli_args_forwarding,
-  test_web_forwarding_uses_resolved_tellrc,
-];
+// ---------------------------------------------------------------------------
+// F1: the Web branch must forward the FULL tellrc custom text (profile
+// system/prompt/style/system-file included), composed by the same helper the
+// direct run composes — one resolver, both hosts.
+// F2: the Web branch must not forward a raw `system_file` path; the project
+// gate loads (or rejects) the file inside the helper.
+// F10: an explicit relative `--system-file` resolves against the CLI cwd
+// (`process.cwd()`), never the sandbox `--cwd`.
+// ---------------------------------------------------------------------------
 
-(async () => {
-  let failures = 0;
-  for (const test_fn of TESTS) {
-    try {
-      await test_fn();
-      console.log(`ok - ${test_fn.name}`);
-    } catch (error) {
-      failures += 1;
-      console.error(`not ok - ${test_fn.name}`);
-      console.error(error);
-    }
+function test_resolve_tellrc_system_text_helper() {
+  assert.strictEqual(typeof tellrc.resolve_tellrc_system_text, 'function', 'the shared system resolver exists');
+}
+
+function test_web_forwarding_includes_profile_system() {
+  const resolved = tellrc.resolve_tellrc([], {}, {});
+  resolved.profile_data = {
+    name: 'node',
+    prompt: 'Be terse.',
+    style: 'short answers',
+    system: 'profile system text',
+    aliases: {},
+    deny_commands: [],
+    limits: {},
+  };
+  const text = tellrc.resolve_tellrc_system_text(resolved, process.cwd());
+  // Same wording as `tellrc_custom_text`: profile system (fill-if-empty),
+  // then prompt, then style.
+  assert.strictEqual(text, 'profile system text\n\nBe terse.\n\nStyle: short answers');
+  // Without profile data, an empty resolved tellrc gives no text.
+  assert.strictEqual(tellrc.resolve_tellrc_system_text(tellrc.resolve_tellrc([], {}, {}), process.cwd()), undefined);
+}
+
+function test_web_forwarding_rejects_project_system_file_escape() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-tellrc-sys-'));
+  try {
+    const outside = path.join(dir, 'outside-sys.md');
+    fs.writeFileSync(outside, 'leaked text', 'utf8');
+    // Project-layer origin: the file must stay inside cwd.
+    const escaping = tellrc.resolve_tellrc([], {}, {});
+    escaping.system_file = path.join(path.basename(dir), 'outside-sys.md');
+    escaping.provenance['system_file'] = path.join(dir, '.tellrc');
+    assert.strictEqual(tellrc.resolve_tellrc_system_text(escaping, dir), undefined);
+    // Same path, user-layer origin (explicit choice, not a project file):
+    // the file loads and composes even though it sits outside cwd.
+    const user_layer = tellrc.resolve_tellrc([], {}, {});
+    user_layer.system_file = outside;
+    user_layer.provenance['system_file'] = path.join(os.homedir(), '.tellrc');
+    const loaded = tellrc.resolve_tellrc_system_text(user_layer, dir);
+    assert.strictEqual(loaded, 'leaked text');
+    // A project file inside cwd still loads.
+    const inside = path.join(dir, 'inside-sys.md');
+    fs.writeFileSync(inside, 'good text', 'utf8');
+    const project_inside = tellrc.resolve_tellrc([], {}, {});
+    project_inside.system_file = 'inside-sys.md';
+    project_inside.provenance['system_file'] = path.join(dir, '.tellrc');
+    assert.strictEqual(tellrc.resolve_tellrc_system_text(project_inside, dir), 'good text');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
-  if (failures > 0) {
-    console.error(`\n${failures} test(s) failed`);
-    process.exitCode = 1;
-  } else {
-    console.log('\ntell tellrc tests passed');
-  }
-})();
+}
+
+function test_web_system_file_uses_cli_cwd_not_sandbox_cwd() {
+  const src = fs.readFileSync(path.join(CLI_SRC_DIR, 'Tell.ts'), 'utf8');
+  // The Web branch calls the shared resolver with the CLI cwd.
+  assert.ok(src.includes('resolve_tellrc_system_text(early_tellrc, process.cwd())'), 'the web helper gets the CLI cwd');
+  assert.ok(!/resolve_tellrc_system_text\([^)]*opts\.cwd/.test(src), 'the sandbox --cwd never enters the helper');
+  // No raw path is forwarded: the temp-file channel carries resolved text only.
+  assert.ok(!src.includes("child_args.push('--system-file', opts.systemFile)"), 'no raw flag path forwarding (F2/F10)');
+  assert.ok(!src.includes('systemFile: web_system_file'), 'no web branch pass-through of a raw path (F2)');
+  const tellrc_src = fs.readFileSync(path.join(CLI_SRC_DIR, 'tellrc.ts'), 'utf8');
+  assert.ok(tellrc_src.includes('path.resolve(cwd || process.cwd(), expanded)'), 'the helper owns cwd resolution');
+}
+
+// D9: the 64 KB cap is one core constant; the tellrc file layer and the Web
+// forwarded-text loader both read it, never a second literal.
+function test_system_file_cap_is_core() {
+  const core = require('@tell-ai/core');
+  assert.strictEqual(core.SYSTEM_FILE_MAX_BYTES, 64 * 1024);
+  const tellrc_src = fs.readFileSync(path.join(CLI_SRC_DIR, 'tellrc.ts'), 'utf8');
+  assert.ok(!/SYSTEM_FILE_MAX_BYTES\s*=\s*64/.test(tellrc_src), 'tellrc reuses the core cap');
+  const web_src = fs.readFileSync(
+    path.join(__dirname, '..', 'packages', 'web', 'src', 'server', 'server.ts'),
+    'utf8',
+  );
+  assert.ok(!web_src.includes('64 * 1024'), 'the web loader reuses the core cap');
+  assert.ok(web_src.includes('SYSTEM_FILE_MAX_BYTES'), 'the web loader names the core constant');
+}
+
+describe('tell tellrc parsing', () => {
+  it('missing file is silent', test_missing_file_is_silent);
+  it('comments duplicates unknown section', test_comments_duplicates_unknown_section);
+  it('hash semicolon preserved in values', test_hash_semicolon_preserved_in_values);
+  it('tilde expands only in paths', test_tilde_expands_only_in_paths);
+  it('nul rejected', test_nul_rejected);
+  it('size cap ignored', test_size_cap_ignored);
+});
+describe('tell tellrc system file', () => {
+  it('directory rejected for system file', test_directory_rejected_for_system_file);
+  it('system file cap and symlink gate', test_system_file_cap_and_symlink_gate);
+  it('system file ok', test_system_file_ok);
+});
+describe('tell tellrc precedence and profiles', () => {
+  it('precedence matrix', test_precedence_matrix);
+  it('deny union monotonic', test_deny_union_monotonic);
+  it('profiles data', test_profiles_data);
+  it('custom profile name accepted', test_custom_profile_name_accepted);
+  it('invalid profile section name', test_invalid_profile_section_name);
+  it('profile system fill and precedence', test_profile_system_fill_and_precedence);
+  it('profile system file resolved', test_profile_system_file_resolved);
+  it('profile aliases subsection and order', test_profile_aliases_subsection_and_order);
+  it('profile alias subsection invalid name', test_profile_alias_subsection_invalid_name);
+  it('alias resolution no mutation', test_alias_resolution_no_mutation);
+});
+describe('tell tellrc temperature model limits', () => {
+  it('temperature validation', test_temperature_validation);
+  it('temperature validation uses core', test_temperature_validation_uses_core);
+  it('model precedence flag positional env', test_model_precedence_flag_positional_env);
+  it('limits validated', test_limits_validated);
+  it('limits delegate to runtime limits', test_limits_delegate_to_runtime_limits);
+  it('limits accept zero stdin deadline and full chain range', test_limits_accept_zero_stdin_deadline_and_full_chain_range);
+  it('profile limits use the same table', test_profile_limits_use_the_same_table);
+  it('compose system safety last', test_compose_system_safety_last);
+  it('sdk temperature propagates', test_sdk_temperature_propagates);
+});
+describe('tell tellrc web forwarding', () => {
+  it('permissions parse and union', test_permissions_parse_and_union);
+  it('permissions append roundtrip', test_permissions_append_roundtrip);
+  it('web cli args forwarding', test_web_cli_args_forwarding);
+  it('web forwarding uses resolved tellrc', test_web_forwarding_uses_resolved_tellrc);
+  it('resolve tellrc system text helper', test_resolve_tellrc_system_text_helper);
+  it('web forwarding includes profile system', test_web_forwarding_includes_profile_system);
+  it('web forwarding rejects project system file escape', test_web_forwarding_rejects_project_system_file_escape);
+  it('web system file uses cli cwd not sandbox cwd', test_web_system_file_uses_cli_cwd_not_sandbox_cwd);
+  it('system file cap is core', test_system_file_cap_is_core);
+});

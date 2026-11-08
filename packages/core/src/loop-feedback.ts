@@ -7,6 +7,8 @@
  * entry, so the Web fallback loop can never drift from the server wording.
  */
 
+import { find_blocks } from './delegation-tags';
+
 /** Follow-up instruction for rounds that may still request a command. */
 export const COMMAND_FEEDBACK_INSTRUCTION =
   'Request another command with <RUN> tags if needed; otherwise answer without <RUN> tags.';
@@ -14,6 +16,24 @@ export const COMMAND_FEEDBACK_INSTRUCTION =
 /** Self-heal preamble prepended to a failed round feedback. */
 export const COMMAND_FEEDBACK_FAILED_PREAMBLE =
   'The command above FAILED. Analyze the error output and try a corrected approach.';
+
+/** Preamble of the denied-command feedback (child retry protocol). */
+export const COMMAND_DENIED_PREAMBLE =
+  'The policy denied the command above. Approval prompts are disabled in this run, so the command was rejected automatically. Do not retry it. Do not work around it.';
+
+/** Hint appended to an escalatable denial (high only, never forbidden). */
+export const ESCALATION_HINT =
+  'You may request approval once with <ESCALATE>justification</ESCALATE> and the same <RUN> block.';
+
+/** Header of the escalation decision event (one per escalated command). */
+export const ESCALATION_HEADER = 'Escalation requested:';
+
+/** Preamble of the skipped-command feedback (child retry protocol). */
+export const COMMAND_SKIPPED_PREAMBLE =
+  'The user declined the command above. Stop this action and explain. Do not reach the same effect through a different command.';
+
+/** Rule reminder appended to the denied-command feedback. */
+export const COMMAND_DENIED_INSTRUCTION = 'Stop and report it in your final answer.';
 
 /** Kind of command outcome a feedback text describes. */
 export type CommandFeedbackKind = 'executed' | 'failed' | 'skipped' | 'cancelled';
@@ -40,6 +60,10 @@ export type CommandFeedbackOptions = {
 export const EXECUTED_HEADER = 'Executed command:';
 /** Header of the cancelled-command record. */
 export const CANCELLED_HEADER = 'Command cancelled:';
+/** Header of the research delegation record. */
+export const RESEARCH_HEADER = 'Research result:';
+/** Header of the build delegation record. */
+export const SUBTASK_HEADER = 'Task result:';
 /** Header of the skipped-command record. */
 export const SKIPPED_HEADER = 'Skipped by user:';
 /** Separator between the script and the output inside a record. */
@@ -122,18 +146,148 @@ export function format_cancelled_command(script: string): string {
 }
 
 /**
+ * Formats the record of one research delegation.
+ *
+ * The summary is host-assembled (never model-assembled stats beyond one line);
+ * callers must pass an already redacted and capped summary. The status is
+ * host-assigned (never model text): when present the header carries it as
+ * `Research result (STATUS):`, otherwise the legacy `Research result:`.
+ *
+ * @param summary - Redacted, capped research summary.
+ * @param stats - Optional single stats line (e.g. `3 commands, exit 0`).
+ * @param status - Optional host status (`DONE` / `IN PROGRESS` / `BLOCKED`).
+ * @returns The research record text.
+ */
+export function format_research_result(summary: string, stats?: string, status?: string): string {
+  const header = status === undefined || status.trim() === '' ? RESEARCH_HEADER : `Research result (${status.trim()}):`;
+  if (stats === undefined || stats.trim() === '') {
+    return `${header}\n${summary}`;
+  } else {
+    return `${header}\n${summary}\n(${stats.trim()})`;
+  }
+}
+
+/**
+ * Formats the record of one build delegation.
+ *
+ * @param summary - Redacted, capped task summary.
+ * @param stats - Optional single stats line.
+ * @param status - Optional host status (`DONE` / `IN PROGRESS` / `BLOCKED`).
+ * @returns The task record text.
+ */
+export function format_subtask_result(summary: string, stats?: string, status?: string): string {
+  const header = status === undefined || status.trim() === '' ? SUBTASK_HEADER : `Task result (${status.trim()}):`;
+  if (stats === undefined || stats.trim() === '') {
+    return `${header}\n${summary}`;
+  } else {
+    return `${header}\n${summary}\n(${stats.trim()})`;
+  }
+}
+
+/**
  * Formats a non-execution status marker for one requested script.
  *
  * Approval/denial/no-executor states carry a `Command <status>:` header with no
- * output — the same wording vocabulary the hosts render. Keeping it here means
- * one module owns every header a timeline can contain.
+ * output — the same wording vocabulary the hosts render. A denial adds a
+ * `Reason:` line when the classifier named the matched rule. Keeping it here
+ * means one module owns every header a timeline can contain.
  *
  * @param status - Command status (`denied`, `awaiting_approval`, `requested`, `skipped`).
  * @param script - Script that was not executed.
+ * @param reason - Optional denial reason (stable rule id).
  * @returns The status marker text.
  */
-export function format_command_status(status: string, script: string): string {
-  return `Command ${status}:\n${script}`;
+export function format_command_status(status: string, script: string, reason?: string): string {
+  const record = `Command ${status}:\n${script}`;
+  return reason === undefined || reason.trim() === '' ? record : `${record}\nReason: ${reason.trim()}`;
+}
+
+/**
+ * Formats the follow-up prompt for one denied command round.
+ *
+ * The child reads the denial and the rule reminder. The round is retried
+ * inside a delegated child only; every other host stops on the denial.
+ * An escalatable denial (high only) carries the one-shot request hint.
+ *
+ * @param script - Script the policy denied.
+ * @param reason - Optional denial reason (stable rule id).
+ * @param escalatable - True appends the escalation hint (high only).
+ * @returns The feedback text.
+ */
+export function format_denied_feedback(script: string, reason?: string, escalatable?: boolean): string {
+  const base = `${format_command_status('denied', script, reason)}\n\n${COMMAND_DENIED_PREAMBLE}\n${COMMAND_DENIED_INSTRUCTION}`;
+  if (escalatable === true) {
+    return `${base}\n${ESCALATION_HINT}`;
+  } else {
+    return base;
+  }
+}
+
+/**
+ * Formats one escalation decision event for the timeline.
+ *
+ * One event per escalated command (audit pair with the later command
+ * status). The host records it before it asks the human.
+ *
+ * @param script - Script the model escalates.
+ * @param justification - Model justification (trimmed, non-empty).
+ * @returns The escalation record text.
+ */
+export function format_escalation_request(script: string, justification: string): string {
+  return `${ESCALATION_HEADER}\n${script}\nJustification:\n${justification.trim()}`;
+}
+
+/**
+ * Extracts one escalation justification from a model answer.
+ *
+ * Reuses the delegation tag scanner (`find_blocks`): tolerant spaces,
+ * case-insensitive, fenced blocks ignored like `<RUN>`. At most one tag
+ * counts (the first non-empty body). An unterminated tag yields null.
+ *
+ * @param text - Model answer.
+ * @returns The trimmed justification, or null when absent.
+ */
+export function extract_escalation_justification(text: string): string | null {
+  const sanitized = text.replace(/```[\s\S]*?```/g, '');
+  const blocks = find_blocks(sanitized, '<ESCALATE>', '</ESCALATE>', true);
+  for (const block of blocks) {
+    const justification = block.body.trim();
+    if (justification !== '') {
+      return justification;
+    }
+  }
+  return null;
+}
+
+/**
+ * Removes every `<ESCALATE>` block from a text.
+ *
+ * @param text - Text to clean.
+ * @returns The text without escalation blocks.
+ */
+export function strip_escalation_tags(text: string): string {
+  let out = '';
+  let cursor = 0;
+  for (const block of find_blocks(text, '<ESCALATE>', '</ESCALATE>', true)) {
+    out += text.slice(cursor, block.start);
+    cursor = block.end;
+  }
+  return `${out}${text.slice(cursor)}`.trim();
+}
+
+/**
+ * Formats the follow-up prompt for one approval-skipped command round.
+ *
+ * The child reads the skip and a request for a different command. The round
+ * is retried inside a delegated child only; every other host stops on the
+ * skip.
+ *
+ * @param script - Script the approval skipped.
+ * @param reason - Optional reason.
+ * @returns The feedback text.
+ */
+export function format_skipped_feedback(script: string, reason?: string): string {
+  return `${format_command_status('skipped', script, reason)}\n\n${COMMAND_SKIPPED_PREAMBLE}`;
 }
 
 /**

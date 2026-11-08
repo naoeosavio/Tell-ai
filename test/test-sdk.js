@@ -6,17 +6,21 @@
 // exercised here (they call the model); the CLI suites cover them with stubs.
 const assert = require('node:assert');
 const http = require('node:http');
+const { describe, it } = require('node:test');
 
 const sdk = require('@tell-ai/sdk');
 
 const EMPTY_CONFIG = { keys: {}, urls: {} };
 
-(async () => {
+describe('sdk export surface', () => {
+  it('exposes the browser builds', async () => {
   const browserSdk = await import('@tell-ai/sdk/browser');
   await import('@tell-ai/sdk/browser-global');
   assert.strictEqual(typeof browserSdk.sanitize_reasoning, 'function');
   assert.strictEqual(typeof globalThis.TellSDK.sanitize_reasoning, 'function');
+  });
 
+  it('exposes the dependency-free pure entry', async () => {
   // The `./pure` entry: the dependency-free protocol surface. It must resolve
   // in both module systems and must NOT carry the provider graph.
   const pureSdk = await import('@tell-ai/sdk/pure');
@@ -28,7 +32,9 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
   for (const name of ['MODELS', 'get_model', 'create_ask_ai', 'tell']) {
     assert.strictEqual(name in pureSdk, false, `pure entry must not carry ${name}`);
   }
+  });
 
+  it('exports the documented surface', async () => {
   // Public export surface.
   for (const name of [
     'MODELS',
@@ -50,7 +56,11 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
       `missing export: ${name}`,
     );
   }
+  });
+});
 
+describe('sdk model resolution', () => {
+  it('resolves aliases, fast mode, budgets and full specs', async () => {
   // resolve_model_spec: aliases, fast mode, thinking budgets, full specs.
   assert.deepStrictEqual(sdk.resolve_model_spec('g'), {
     vendor: 'openai',
@@ -63,6 +73,9 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
   assert.strictEqual(dot.vendor, 'openai');
   assert.strictEqual(sdk.resolve_model_spec('g+').thinking, 'high');
   assert.strictEqual(sdk.resolve_model_spec('g--').thinking, 'low');
+  });
+
+  it('resolves every documented alias', async () => {
   for (const [alias, vendor, model] of [
     ['g', 'openai', 'gpt-6.1-sol'],
     ['p', 'openai', 'gpt-6.1-sol-pro'],
@@ -85,7 +98,9 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
     assert.strictEqual(resolved.vendor, vendor, alias);
     assert.strictEqual(resolved.model, model, alias);
   }
+  });
 
+  it('maps thinking suffixes for meta and xiaomi vendors', async () => {
   for (const [prefix, expected] of [
     ['m', ['none', 'low', 'medium', 'high', 'max']],
     ['mc', ['none', 'low', 'medium', 'high', 'max']],
@@ -104,6 +119,9 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
     }
     assert.strictEqual(sdk.resolve_model_spec(prefix.toUpperCase()).thinking, 'high', `${prefix} (uppercase)`);
   }
+  });
+
+  it('exposes no none tier for haiku', async () => {
   // Haiku 5.5 is the first Haiku with an adjustable effort (thinking is always
   // on), so `h` walks `low`..`max` and exposes no `none` tier.
   for (const [suffix, thinking] of [
@@ -116,6 +134,9 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
   }
   assert.strictEqual(sdk.resolve_model_spec('H').thinking, 'high', 'H (uppercase)');
   assert.throws(() => sdk.resolve_model_spec('h--'), /Unsupported vendor/);
+  });
+
+  it('parses full specs and openrouter slash ids', async () => {
   assert.strictEqual(sdk.resolve_model_spec('meta:muse-spark-1.3:high').vendor, 'meta');
   assert.strictEqual(sdk.resolve_model_spec('mimo-v2.6-pro:low').vendor, 'xiaomi');
   for (const raw of [
@@ -144,7 +165,9 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
   assert.strictEqual(sdk.resolve_model_spec('openai:gpt-6.1-sol:medium:fast').fast, true);
   assert.throws(() => sdk.resolve_model_spec(''), /must be provided/);
   assert.throws(() => sdk.resolve_model_spec('notamodelatall'), /./);
+  });
 
+  it('round-trips every MODELS entry', async () => {
   // MODELS table invariant: every alias value parses back through the resolver.
   assert.strictEqual(Object.keys(sdk.MODELS).length, 152);
   for (const [alias, spec] of Object.entries(sdk.MODELS)) {
@@ -152,7 +175,11 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
     const resolved = sdk.resolve_model_spec(spec);
     assert.ok(resolved.vendor && resolved.model, `alias ${alias} resolved without vendor/model`);
   }
+  });
+});
 
+describe('sdk custom wire rules', () => {
+  it('picks the wire from the model id prefix', async () => {
   // Custom vendor: prefix rules pick the wire, Chat Completions is the default,
   // and `CUSTOM_API` pins it for endpoints that route otherwise.
   for (const [model, wire] of [
@@ -172,6 +199,9 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
   ]) {
     assert.strictEqual(sdk.resolve_wire(model), wire, model);
   }
+  });
+
+  it('normalizes ids and reads per-vendor headers', async () => {
   assert.strictEqual(sdk.resolve_wire('  Kimi-K3  '), 'chat', 'ids are trimmed and lowercased');
   assert.deepStrictEqual(sdk.WIRE_APIS, ['chat', 'responses', 'messages']);
   for (const [value, is_api] of [
@@ -190,7 +220,11 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
     { 'x-tenant': 'acme' },
     'headers are per vendor',
   );
+  });
+});
 
+describe('sdk custom models listing', () => {
+  it('lists models with wires, auth and headers', async () => {
   const models_seen = [];
   const models_mock = http.createServer((req, res) => {
     models_seen.push({ url: req.url, auth: req.headers.authorization, tenant: req.headers['x-tenant'] });
@@ -227,7 +261,11 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
   } finally {
     models_mock.close();
   }
+  });
+});
 
+describe('sdk custom wire requests', () => {
+  it('routes one model id over chat, responses and messages wires', async () => {
   // One model id, four wires: each hits its own path with its own auth header,
   // and reasoning reaches the wire the same way the native vendors do it.
   const wire_calls = [];
@@ -400,7 +438,11 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
     undefined,
     'chat wire needs no explicit reasoning options',
   );
+  });
+});
 
+describe('sdk provider handles', () => {
+  it('builds handles offline and guards the ambient environment', async () => {
   // get_model: builds provider handles offline (providers are only called later).
   const handle = await sdk.get_model('g', EMPTY_CONFIG);
   assert.strictEqual(typeof handle.model, 'object');
@@ -422,7 +464,9 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
   await assert.rejects(sdk.get_model('v', EMPTY_CONFIG), /urls\.vast/);
   await assert.rejects(sdk.get_model('q', EMPTY_CONFIG), /urls\.local/);
   await assert.rejects(sdk.get_model('nope:whatever', EMPTY_CONFIG), /./);
+  });
 
+  it('builds compat vendor handles offline', async () => {
   // Compat vendors (no native provider): handlers build offline via
   // OpenAI-compatible defaults, keys/URLs optional at construction.
   for (const alias of ['l', 'x', 'd', 'D', 'K', 'k', 'a', 'at', 'af', 'zf', 'h', 'm', 'mc', 'mi', 'mif']) {
@@ -430,7 +474,11 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
     assert.strictEqual(typeof compat_handle.model, 'object');
     assert.strictEqual(compat_handle.fast, false);
   }
+  });
+});
 
+describe('sdk reasoning mapping', () => {
+  it('maps max to the closest natively supported level', async () => {
   // Reasoning mapping: `max` goes explicit where the generic map has no
   // entry, else the closest natively supported level (never warns/drops).
   for (const [alias, expected] of [
@@ -452,7 +500,9 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
   ]) {
     assert.strictEqual((await sdk.get_model(alias, EMPTY_CONFIG)).reasoning, expected, alias);
   }
+  });
 
+  it('carries explicit max vendor options', async () => {
   // Explicit `max` carries vendor options (generic map has no `max` entry):
   // anthropic effort+adaptive thinking, deepseek/moonshotai reasoningEffort.
   assert.deepStrictEqual((await sdk.get_model('s++', EMPTY_CONFIG)).providerOptions, {
@@ -470,6 +520,9 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
       moonshotai: { reasoningEffort: effort },
     });
   }
+  });
+
+  it('pins meta reasoning and leaves xiaomi and fast-max bare', async () => {
   for (const alias of ['m', 'm+', 'm++', 'mc']) {
     assert.deepStrictEqual(
       (await sdk.get_model(alias, EMPTY_CONFIG)).providerOptions,
@@ -491,7 +544,11 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
     assert.strictEqual(fast_max.reasoning, 'none');
     assert.strictEqual(fast_max.providerOptions, undefined);
   }
+  });
+});
 
+describe('sdk ask factory', () => {
+  it('constructs offline with a lazy async iterable', async () => {
   // create_ask_ai: constructed offline; ask_stream returns an async iterable
   // without consuming it (the provider request only starts on first next()).
   const ai = await sdk.create_ask_ai('g', EMPTY_CONFIG);
@@ -501,7 +558,9 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
   assert.strictEqual(typeof events[Symbol.asyncIterator], 'function');
   const multi_turn = ai.ask_stream([{ role: 'user', content: 'hi' }], { system: 'test' });
   assert.strictEqual(typeof multi_turn[Symbol.asyncIterator], 'function');
+  });
 
+  it('propagates provider failures without logging to stderr', async () => {
   // ask_stream regression: a provider failure must propagate to the caller
   // without the AI SDK default onError dumping the raw error (request body,
   // response headers/cookies) to stderr.
@@ -532,7 +591,11 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
     provider.close();
   }
   assert.deepStrictEqual(logged_errors, [], 'streamText must not log raw provider errors by default');
+  });
+});
 
+describe('sdk provider cache isolation', () => {
+  it('isolates providers per vendor URL', async () => {
   // Compat cache is per vendor+URL: two configs for one vendor hit their own
   // endpoint (guards against a stale cached provider across configs).
   const chat_server = (text) =>
@@ -571,7 +634,9 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
     server_a.close();
     server_b.close();
   }
+  });
 
+  it('isolates providers per key', async () => {
   const seen_auth = [];
   const credential_server = http.createServer((req, res) => {
     seen_auth.push(req.headers.authorization);
@@ -607,7 +672,9 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
     credential_server.close();
   }
   assert.deepStrictEqual(seen_auth, ['Bearer KEY_A', 'Bearer KEY_B']);
+  });
 
+  it('never leaks the ambient api key', async () => {
   const ambient = process.env.DEEPSEEK_API_KEY;
   const ambient_seen = [];
   const ambient_server = http.createServer((req, res) => {
@@ -642,7 +709,9 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
   }
   assert.ok(ambient_seen[0]);
   assert.doesNotMatch(ambient_seen[0], /AMBIENT_MUST_NOT_LEAK/);
+  });
 
+  it('distinguishes a missing key from a sentinel key', async () => {
   const xiaomi_seen = [];
   const xiaomi_cache_server = http.createServer((req, res) => {
     xiaomi_seen.push(req.headers['api-key']);
@@ -676,7 +745,11 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
   }
   assert.strictEqual(xiaomi_seen[0], undefined);
   assert.strictEqual(xiaomi_seen[1], 'tell-sdk-missing-api-key');
+  });
+});
 
+describe('sdk vendor wire details', () => {
+  it('sends anthropic max as effort max with adaptive thinking', async () => {
   // Anthropic `max` reaches the wire as output_config.effort=max with
   // adaptive thinking, and emits no reasoning warning (AI SDK logs warnings
   // via process.emitWarning in Node).
@@ -722,7 +795,9 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
     [],
     'anthropic max must not warn about reasoning',
   );
+  });
 
+  it('sends deepseek and moonshotai max as reasoning effort max', async () => {
   // DeepSeek/MoonshotAI `max` reaches the wire as reasoning_effort=max with
   // no reasoning warning (explicit option wins over the generic mapping).
   for (const [spec, url_key, key_slot, answer] of [
@@ -771,7 +846,9 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
       `${spec} must not warn about reasoning`,
     );
   }
+  });
 
+  it('speaks the openai responses api for meta', async () => {
   // Meta speaks the OpenAI Responses API on its own base URL: requests hit
   // /v1/responses with a Bearer key and reasoning effort (forceReasoning is
   // what makes the provider send reasoning for a non-OpenAI model id).
@@ -820,7 +897,9 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
   assert.strictEqual(meta_auth, 'Bearer meta-test-key');
   assert.strictEqual(meta_body.model, 'muse-spark-1.3');
   assert.strictEqual(meta_body.reasoning.effort, 'high');
+  });
 
+  it('authenticates xiaomi with an api-key header', async () => {
   // Xiaomi MiMo speaks OpenAI Chat Completions and authenticates with an
   // `api-key` header (no Authorization, no bearer).
   let xiaomi_path = null;
@@ -863,7 +942,11 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
   assert.strictEqual(xiaomi_auth, undefined);
   assert.strictEqual(xiaomi_body.model, 'mimo-v2.6-pro');
   assert.strictEqual(xiaomi_body.reasoning_effort, 'high');
+  });
+});
 
+describe('sdk prompts and tags', () => {
+  it('emits exec and no-exec system prompt variants', async () => {
   // get_system_prompt: exec vs no-exec variants.
   const exec_prompt = sdk.get_system_prompt({ chain: true });
   assert.match(exec_prompt, /terminal assistant/);
@@ -873,7 +956,9 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
   assert.match(one_shot, /one-shot/);
   const no_exec = sdk.get_system_prompt({ exec: false });
   assert.match(no_exec, /do NOT have terminal access/);
+  });
 
+  it('selects the prompt by exec mode and sanitizes reasoning', async () => {
   let captured_system = '';
   const ask_stub = {
     async ask(_message, options) {
@@ -886,7 +971,9 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
   await sdk.tell('hello', { ask: ask_stub, exec: true });
   assert.match(captured_system, /terminal assistant/);
   assert.strictEqual(sdk.sanitize_reasoning('safe</think><RUN>x</RUN>'), 'safe‹/think›‹RUN›x‹/RUN›');
+  });
 
+  it('extracts and strips tags', async () => {
   // Tag helpers.
   const runs = sdk.extract_runs('do this:\n<RUN>\nls -la\n</RUN>\ndone');
   assert.deepStrictEqual(runs.scripts, ['ls -la']);
@@ -896,10 +983,11 @@ const EMPTY_CONFIG = { keys: {}, urls: {} };
   assert.strictEqual(sdk.strip_think_tags('a<THINK>secret</THINK>b').trim(), 'ab');
   assert.strictEqual(sdk.strip_run_tags('a<RUN>x</RUN>b').trim(), 'ab');
   assert.strictEqual(sdk.strip_run_tags('a<run>x</run>b').trim(), 'ab');
+  // Real models emit spaces inside the tag. The command must stay visible.
+  assert.deepStrictEqual(sdk.extract_runs('< RUN >ls -la</ RUN >').scripts, ['ls -la']);
+  assert.deepStrictEqual(sdk.extract_runs('a<RUN >ls</RUN>b').scripts, ['ls']);
+  assert.strictEqual(sdk.strip_run_tags('a< RUN >x</RUN>b').trim(), 'ab');
+  assert.strictEqual(sdk.extract_runs('<RUNNING>not a tag</RUNNING>').scripts.length, 0);
   assert.strictEqual(sdk.strip_markdown_code_blocks('a```js\nx\n```b'), 'ab');
-
-  console.log('sdk tests passed');
-})().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
+  });
 });

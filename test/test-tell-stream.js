@@ -10,7 +10,9 @@
 // for log/context/`<RUN>` extraction is byte-identical to the non-stream path.
 
 const assert = require('node:assert');
+const { describe, it } = require('node:test');
 const { EventEmitter } = require('node:events');
+const { Readable } = require('node:stream');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -79,7 +81,18 @@ const tellrc_source = ts.transpileModule(
   { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } },
 ).outputText;
 
-function fake_stdin(text) {
+function fake_stdin(text, opts = {}) {
+  if (opts.tty === true) {
+    // Interactive stdin: a real Readable with isTTY set, so the readline
+    // prompt answers from the scripted list (`y` approves, `n` declines).
+    // Answers are pre-pushed: readline buffers them until asked.
+    const stdin = new Readable({ read() {} });
+    stdin.isTTY = true;
+    for (const answer of opts.answers || []) {
+      stdin.push(`${answer}\n`);
+    }
+    return stdin;
+  }
   const stdin = new EventEmitter();
   stdin.isTTY = false;
   setImmediate(() => {
@@ -162,7 +175,7 @@ async function run_tell(args, response, opts = {}) {
   const fake_process = {
     argv: ['node', 'Tell.js', ...args],
     env: sanitizedFakeEnv(home),
-    stdin: fake_stdin(opts.stdin || ''),
+    stdin: fake_stdin(opts.stdin || '', opts),
     stdout: { isTTY: false, write: write_stdout },
     stderr: { isTTY: false, write: write_stderr },
     cwd: () => work,
@@ -262,7 +275,9 @@ async function run_tell(args, response, opts = {}) {
       };
     }
     if (name === './env') {
-      return { load_sdk_config: async () => ({ keys: {}, urls: {} }) };
+      // Any vendor key resolves: the model port is mocked and never sends it.
+      const fake_keys = new Proxy({}, { get: (_target, key) => `sk-test-${String(key)}` });
+      return { load_sdk_config: async () => ({ keys: fake_keys, urls: {} }) };
     }
     if (name === './systemPrompt') {
       return { get_system_prompt: (options) => sdk.get_system_prompt(options) };
@@ -391,7 +406,7 @@ async function test_stream_keeps_full_response_in_log_and_context() {
 }
 
 async function test_stream_chain_streams_each_round() {
-  const result = await run_tell(['d', '--stream', '--chain', 'check'], 'ignored', {
+  const result = await run_tell(['d', '--stream', '--chain', '-y', 'check'], 'ignored', {
     streamEvents: [
       [
         { type: 'text', text: 'Checking now.\n' },
@@ -399,6 +414,7 @@ async function test_stream_chain_streams_each_round() {
       ],
       [{ type: 'text', text: 'All good.' }],
     ],
+    execStdout: 'OK\n',
   });
   assert.strictEqual(result.streamCalls.length, 2);
   assert_includes(result.stdout, 'Checking now.');
@@ -406,8 +422,7 @@ async function test_stream_chain_streams_each_round() {
   // The final visible answer is not printed twice.
   const occurrences = result.stdout.split('All good.').length - 1;
   assert.strictEqual(occurrences, 1, 'final streamed answer must appear exactly once');
-  assert_includes(result.stderr, 'Command skipped by user.');
-  assert.deepStrictEqual(result.execCalls, []);
+  assert.deepStrictEqual(result.execCalls, ['echo hi']);
 }
 
 async function test_stream_commands_still_detected_and_run() {
@@ -416,17 +431,115 @@ async function test_stream_commands_still_detected_and_run() {
       [{ type: 'text', text: run_block('echo hi') }],
       [{ type: 'text', text: 'Done.' }],
     ],
+    execStdout: 'HIDDEN_OUT\n',
   });
   assert.deepStrictEqual(result.execCalls, ['echo hi']);
-  // The raw stream shows the <RUN> markup, and the final answer only once.
-  assert_includes(result.stdout, run_block('echo hi'));
+  // Tags and command output are hidden by default; the final answer appears once.
+  assert_not_includes(result.stdout, '<RUN>');
+  assert_not_includes(result.stdout, 'HIDDEN_OUT');
+  assert_not_includes(result.stderr, 'HIDDEN_OUT');
   const occurrences = result.stdout.split('Done.').length - 1;
   assert.strictEqual(occurrences, 1, 'final answer must be streamed exactly once');
+}
+
+async function test_chain_tty_decline_skips_and_resumes() {
+  const result = await run_tell(['d', '--stream', '--chain', 'run it'], [
+    '<RUN>\necho hi\n</RUN>',
+    'All good.',
+  ], { tty: true, answers: ['n'] });
+  // Base flags ask a low command; the TTY decline records `skipped`
+  // (not `denied`) and chain mode resumes with the repeat ban.
+  assert_includes(result.stderr, 'Command requested:');
+  assert_includes(result.stderr, 'Command skipped by user.');
+  assert.strictEqual(result.tellCalls.length, 2, 'one run plus one resume');
+  assert_includes(result.tellMessages[1], 'Skipped by user:');
+  assert_includes(result.tellMessages[1], 'Do not request the command above again.');
+  assert.deepStrictEqual(result.execCalls, []);
+  assert_includes(result.stdout, 'All good.');
+}
+
+async function test_chain_tty_accept_runs_high_with_approval() {
+  const result = await run_tell(['d', '--stream', '--chain', '-y', '--require-approval', 'run it'], [
+    '<RUN>\nsudo ls /\n</RUN>',
+    'Done.',
+  ], { tty: true, answers: ['y'], execStdout: 'OK\n' });
+  // Supervised mode asks a high command; the TTY accept approves and runs it.
+  assert_includes(result.stderr, 'High-risk command requested');
+  assert.deepStrictEqual(result.execCalls, ['sudo ls /']);
+  assert.strictEqual(result.tellCalls.length, 2, 'one run plus the follow-up turn');
+  assert_includes(result.stdout, 'Done.');
+}
+async function test_chain_denial_ends_attempt_without_resume() {
+  const result = await run_tell(['d', '--stream', '--chain', 'run it'], [
+    '<RUN>\nrm -rf /\n</RUN>',
+    'Cannot run that.',
+  ]);
+  assert_includes(result.stderr, 'Command skipped by user.');
+  assert.strictEqual(result.tellCalls.length, 2, 'one run plus the plain-text final answer');
+  assert_includes(result.tellMessages[1], 'Skipped by user:');
+  assert_includes(result.tellMessages[1], 'without <RUN>, <DELEGATE> or <SUBTASK> tags.');
+  assert_not_includes(result.tellMessages[1], 'Do not request the command above again.');
+  assert_includes(result.stdout, 'Cannot run that.');
+}
+
+async function test_tags_flag_shows_raw_markup() {
+  const result = await run_tell(['d', '--stream', '--tags', '-y', 'run it'], 'ignored', {
+    streamEvents: [
+      [{ type: 'text', text: '<RU' }, { type: 'text', text: 'N>\necho hi\n</RUN>Done.' }],
+    ],
+  });
+  assert.deepStrictEqual(result.execCalls, ['echo hi']);
+  assert_includes(result.stdout, '<RUN>');
+  assert_includes(result.stdout, '</RUN>');
+  assert_includes(result.stdout, 'Done.');
+}
+
+async function test_default_tag_hider_handles_split_deltas() {
+  const result = await run_tell(['d', '--stream', 'hello'], 'ignored', {
+    streamEvents: [
+      [
+        { type: 'text', text: 'before <DEL' },
+        { type: 'text', text: 'EGATE>hidden objective</DEL' },
+        { type: 'text', text: 'EGATE>after' },
+      ],
+    ],
+  });
+  assert.strictEqual(result.stdout, 'before after\n');
+}
+
+async function test_output_flag_shows_command_output() {
+  const result = await run_tell(['d', '--stream', '--output', '-y', 'run it'], 'ignored', {
+    streamEvents: [[{ type: 'text', text: run_block('echo hi') }, { type: 'text', text: 'Done.' }]],
+    execStdout: 'SHOWN_OUT\n',
+  });
+  assert.deepStrictEqual(result.execCalls, ['echo hi']);
+  assert_includes(result.stderr, 'SHOWN_OUT');
+  assert_not_includes(result.stdout, '<RUN>');
 }
 
 // ---------------------------------------------------------------------
 // Reasoning without streaming (`--think` alone)
 // ---------------------------------------------------------------------
+
+// The CLI reads reasoning with the core extractor (D4): a printed span must
+// equal what the core turn wiring itself treated as reasoning, and the CLI
+// adapter must not restate the regex.
+async function test_think_extraction_matches_core() {
+  const THINK_OPEN = '<' + 'think>';
+  const THINK_CLOSE = '<' + '/think>';
+  const raw = `${THINK_OPEN}reasoned span\nwith lines /detail and trailing${THINK_CLOSE}\nanswer text`;
+  const expected = core.extract_think_content(raw);
+  assert.strictEqual(expected, 'reasoned span\nwith lines /detail and trailing');
+  const result = await run_tell(['d', '--think', 'hello'], raw);
+  assert_includes(result.stderr, 'reasoned span');
+  assert_not_includes(result.stderr, 'answer text');
+  const adapters_src = fs.readFileSync(
+    path.join(__dirname, '..', 'packages', 'cli', 'src', 'core-adapters.ts'),
+    'utf8',
+  );
+  assert.ok(adapters_src.includes('extract_think_content'), 'core-adapters delegates to the core extractor');
+  assert.ok(!adapters_src.includes('.exec(response)'), 'core-adapters owns no second think regex');
+}
 
 async function test_think_without_stream_prints_reasoning_on_stderr() {
   const result = await run_tell(['d', '--think', 'hello'], '<think>reasoned here</think>\nanswer');
@@ -448,39 +561,41 @@ async function test_without_stream_prints_answer_once() {
   assert_includes(result.stderr, 'Thinking...');
 }
 
+async function test_default_hides_tags_from_live_stream() {
+  const result = await run_tell(['d', '--stream', '-y', 'run'], `${run_block('echo hi')}Visible answer`, {
+    execStdout: 'hi\n',
+  });
+  assert.strictEqual(result.streamCalls.length, 1);
+  assert.deepStrictEqual(result.execCalls, ['echo hi']);
+  assert_includes(result.stdout, 'Visible answer');
+  assert_not_includes(result.stdout, '<RUN>');
+  assert_not_includes(result.stdout, '</RUN>');
+}
+
 // ---------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------
 
-const TESTS = [
-  test_stream_prints_text_to_stdout_once,
-  test_stream_think_prints_reasoning_to_stderr,
-  test_stream_reasoning_cannot_inject_run_tags,
-  test_stream_appends_single_newline,
-  test_stream_keeps_full_response_in_log_and_context,
-  test_stream_chain_streams_each_round,
-  test_stream_commands_still_detected_and_run,
-  test_think_without_stream_prints_reasoning_on_stderr,
-  test_without_think_reasoning_stays_hidden,
-  test_without_stream_prints_answer_once,
-];
+describe('tell stream output', () => {
+  it('prints text to stdout once', test_stream_prints_text_to_stdout_once);
+  it('prints reasoning to stderr with think', test_stream_think_prints_reasoning_to_stderr);
+  it('blocks reasoning from injecting run tags', test_stream_reasoning_cannot_inject_run_tags);
+  it('appends a single newline', test_stream_appends_single_newline);
+  it('keeps the full response in log and context', test_stream_keeps_full_response_in_log_and_context);
+  it('streams each chain round', test_stream_chain_streams_each_round);
+  it('detects and runs commands', test_stream_commands_still_detected_and_run);
+  it('declines on a TTY, skips and resumes', test_chain_tty_decline_skips_and_resumes);
+  it('accepts on a TTY and runs high with approval', test_chain_tty_accept_runs_high_with_approval);
+  it('ends the attempt on denial without resume', test_chain_denial_ends_attempt_without_resume);
+  it('shows raw markup with --tags', test_tags_flag_shows_raw_markup);
+  it('handles split deltas in the tag hider', test_default_tag_hider_handles_split_deltas);
+  it('shows command output with --output', test_output_flag_shows_command_output);
+});
 
-(async () => {
-  let failures = 0;
-  for (const test_fn of TESTS) {
-    try {
-      await test_fn();
-      console.log(`ok - ${test_fn.name}`);
-    } catch (error) {
-      failures += 1;
-      console.error(`not ok - ${test_fn.name}`);
-      console.error(error);
-    }
-  }
-  if (failures > 0) {
-    console.error(`\n${failures} test(s) failed`);
-    process.exitCode = 1;
-  } else {
-    console.log('\ntell stream tests passed');
-  }
-})();
+describe('tell think without streaming', () => {
+  it('matches the core extractor', test_think_extraction_matches_core);
+  it('prints reasoning on stderr with think', test_think_without_stream_prints_reasoning_on_stderr);
+  it('hides reasoning without think', test_without_think_reasoning_stays_hidden);
+  it('prints the answer once without streaming', test_without_stream_prints_answer_once);
+  it('hides tags from the live stream by default', test_default_hides_tags_from_live_stream);
+});

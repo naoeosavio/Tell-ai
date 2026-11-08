@@ -1,5 +1,125 @@
 # Changelog
 
+## Unreleased — child project context (task_063 Phase 5)
+
+### Behavior changes
+- The child runner receives the bounded project block (`build_project_context` plus `format_child_project_context`, built once per run). The child approval still carries an empty `always` list, so a parent grant never reaches the child.
+
+### Tests
+- `test-core-delegation-profile.js` › project context rides the system prompt.
+
+## Unreleased — host convergence (task_063 Phase 4)
+
+### Behavior changes
+- The thin wrappers are gone (`assess_cli_risk`, `is_high_risk_script`, `cli_risk_port`). `Tell.ts` calls the core directly: `create_base_risk_port` for the runtime ports, `assess_base_risk` for the skip reason, `classify_script` for the prompt labels. One table, one call site per use.
+- Task mode forces `--require-approval` like the Web host and the help text state: a high command asks on a TTY instead of denying at once. Without a TTY it still denies. `-y` is still never forced.
+- The prompt label now uses the graded class with the host cwd: an outside write labels high-risk like its verdict does.
+
+### Tests
+- `test-cli-core-adapters.js` › no wrapper surface, core verdict pins, task-mode approval force.
+- `test-fuzz-coverage.js` › the scope-aware Web block never loosens the guard.
+
+## Unreleased — approval prompt and memory (task_063 Phase 3)
+
+### Behavior changes
+- The prompt shows three answers. The answers are once, always, and reject. Once runs the current command. Always runs the current command and stores the prefix. Reject stops the command.
+- The project `.tellrc` stores the prefix under `[permissions]`. The form is `<prefix> * = allow`. A bare name never stores. A stored pattern never grants deny or block. A child never inherits a stored grant.
+
+### Tests
+- `test-cli-core-adapters.js` › stored grant runs, cross-grant asks, deny invariant, once/always store.
+- `test-tell-tellrc.js` › permissions parse, union, append roundtrip.
+
+## Unreleased — verdict-based approval (task_063 Phase 2)
+
+### Behavior changes
+- The CLI approval port realizes the core `decide_permission` verdict: `allow` runs without asking, `deny` and `block` stop without asking, only `ask` prompts. `ExecMode`/`can_auto_approve` are gone; flags resolve once into `{ enabled, auto, approve_high }` (`auto` from `-y`, `approve_high` from `--require-approval`, task mode forces exec but never `-y`).
+- An ask with no TTY denies (missing channel fails closed). Plain outside reads run with `-y` (medium); outside writes and credential reads stay denied. The old realpath outside gate only labels the prompt now; symlink escapes are a known lexical-scope gap (redaction still masks secrets).
+
+### Tests
+- `test-cli-core-adapters.js` › gate input mapping, 20-cell port matrix, non-TTY fail-closed, lexical scope grade.
+- `test-tell-security.js` › outside reads run, outside writes/credentials deny, `-y` denial ends the chain without resume.
+- `test-tell-stream.js` › multi-round streaming with `-y`, denial ends the attempt with a final-answer fetch.
+
+### Fixes
+- A denied command ends the chain attempt: the CLI resumes only after a user-declined (`skipped`) command, never after a policy denial. The denial text now states that approval prompts are disabled in the run. Tests: `test-tell-security.js` › no-exec chain stops after the denial.
+
+## Unreleased — live audit 60 fixes (task 060)
+
+### Fixes
+- A missing provider key stops the CLI before the model call: `Missing API key for google. Set GOOGLE_API_KEY or GEMINI_API_KEY, or create ~/.config/google.token.` The provider error no longer hides the cause. Tested live; the helper test is `test-core-sdk-config.js` › `missing_vendor_key`.
+- A skipped high-risk command states the matched rule: `Command skipped by user. Reason: privilege escalation wrapper (sudo/doas/pkexec).` A policy denial uses the denial reason instead. Test: `test-tell-security.js` › `resume respects the total cap`.
+
+## Unreleased — delegation line and context summary
+
+### Fixes
+- The compact `Delegando … (kind: …)` line is now transient: the child approval prompt clears it before printing, and the line is cleared when the child finishes. Before, the prompt text landed on the indicator line and the trailing erase cleared the wrong line. The line still prints with `--delegation` as a normal line. Test: `test-tell-task.js` › `test_task_delegation_flag_shows_indicator_and_record`.
+- The post-run context summary now prints `Resumindo contexto...` while it runs, so the process does not look hung after the `Using task:` line. The summary is skipped when the newest turn alone exceeds the context cap: truncation keeps the newest turn and drops the summary, so the model call had no effect. Test: `test-tell-task.js` › `test_task_huge_turn_skips_summarize`.
+- A resumed chain round after a declined command now says `Do not request the command above again.`, so the model stops spending rounds on the script the user skipped. Test: `test-tell-stream.js` › `test_chain_resume_forbids_repeating_the_declined_command`.
+- With `--delegation`, a child event prints its real status and the matched rule: `denied (shell-process-substitution): <script>` instead of `skipped: <script>`. `Skipped by user:` records are unchanged. Test: `test-tell-task.js` › `test_task_delegation_denied_reason_shown`.
+
+## Unreleased — quiet output flags (LOG-TASK-55 follow-up)
+
+### Behavior changes
+- The live output is quiet by default in task mode and chain: the stream filter hides `<RUN>`/`<DELEGATE>`/`<SUBTASK>` blocks, executed-command output is not printed, and delegation indicators/records are silent. Execution, extraction, log, context and approvals are unchanged.
+- `--tags` shows the protocol markup; `--output` shows parent/child command output; `--delegation` shows the child acting live (commands, outputs, text) until the result record; the default keeps only the compact `Delegando … (kind: …)` indicator, like `Thinking...`. Task mode no longer forces `-y`: without it every command asks (non-TTY denies), with `-y` safe commands auto-run. Tests: `test-tell-stream.js` (default filter, split deltas, `--tags`, `--output`), `test-tell-task.js` (quiet default, each flag, no-`-y` denial, live child activity), core `on_child_event`.
+
+
+## Unreleased — live audit 55 (LOG-TASK-55)
+
+### Fixes
+- A failed run before `main.txt` exists (bad model spec, provider error, crash before the first save) now releases the atomically claimed task directory: an invisible empty `task-NNN-*` no longer consumes a number. Test: `test-tell-task.js` › `test_invalid_model_leaves_no_task_dir`.
+- `@path` mentions now gate credential names like commands do: `@.env`, `@secret.key`, `@.git/...` ask on a TTY and are denied without one; a safe-named symlink to a sensitive file is caught by the realpath check; `.env.example` stays allowed. `-y` and task mode never bypass the gate. Tests: `test-tell-mentions.js` › sensitive mention cases.
+- Command output crosses the workspace-secret redactor: values from credential-named files are masked (`[redacted]`) before feedback, log and context, covering globs the classifier cannot resolve (`cat sec*`, `grep -r`). Tests: `test-tell-security.js` › obfuscated vectors + redaction.
+
+
+## Unreleased — CLI sensitive reads (task 055)
+
+### Behavior changes
+- Phase 5 (strict-total): the CLI now asks before running interpreter one-liners (`node -e`, `python3 -c`), `env` launches, `base64 -d`, `${…}`/`$(…)`/backtick expansions and `curl|wget … | sh` pipes — `-y` no longer auto-runs them (TTY asks, non-TTY denies). Accepted cost: noisier prompts; no opt-in flag.
+- Credential-file reads (`cat .env`, `~/.config/*.token`, keys, `git show HEAD:.env`) are now high-risk in the CLI: `-y` no longer auto-runs them, even inside the cwd — TTY asks with `High-risk command requested`, non-TTY denies. This ends the old permissive divergence (same rule as the Web, which blocks outright).
+- Empty model replies save no `Assistant:` turn (no more `Assistant:\n` bloat on empty resume continuations).
+
+## Unreleased — delegation limits (task 054)
+
+### Features
+- New flags `--max-delegations 0..2` and `--delegation-repost 512..8192` (env `TELL_MAX_DELEGATIONS` / `TELL_DELEGATION_REPOST_CHARS`, tellrc `max_delegations` / `delegation_repost_chars`, forwarded to `tell-web`). Budget via `resolve_max_delegations` (chain `< 2` always 0); runtime + runner share the cap; third tag warns on stderr + log.
+- Briefing per delegation from the turno that emitted the tag; `Status:` line and 8 Ki `Context-at-delegation` cap in `delegate-*.txt`/`subtask-*.txt`; `--task %id -n` full-wipes children but keeps the directory and an empty `main.txt`.
+- Tests: budget + warning, briefing in `tellMessages`, status in file, reset wipe, repost target, `--max-delegations 0`, custom repost (33 pass).
+
+## Unreleased — review fixes (task 053)
+
+### Fixes
+- `tell -w -t` no longer claims the task directory in the CLI process: the Web resolves and creates the same id from the same prompt and cwd, so the anchor exists and `--cwd` no longer produces a phantom task. Test: `test-tell-task.js` › `test_task_web_forwards_flags`.
+- Only the first delegation tag runs; extra tags now print a warning (`Only the first delegation tag runs; N extra tags ignored`). Test: `test_task_extra_tag_warns`.
+- A tag inside a literal `<think>` block never runs. Test: `test_task_think_tag_is_inert`.
+- Context writes are atomic (temp file + rename); two runs on one task keep the last writer's turns (documented shortcut, no run lock).
+- Also covered: hash-name resume, poisoned context, high-risk child under `-y`, delete-and-recreate numbering.
+
+## Unreleased — live hardening (task 053)
+
+### Fixes
+- A read-only or unwritable `~/.ai` no longer aborts the run with `Model error`: the conversation log is best-effort and prints `conversation log disabled` once. Test: `test-tell-task.js` › `test_log_write_failure_does_not_abort`.
+- Concurrent `-t` runs reserved the same task number (`task-001-a` and `task-001-b`). The task directory is now claimed atomically (`mkdir`, retry on `EEXIST`) and the claim is removed when a create fails before writing `main.txt`. Test: `test-tell-task.js` › `test_task_concurrent_creates_keep_distinct_numbers`.
+
+## Unreleased — task mode (task 051)
+
+### Features
+- `-t, --task [ref]`: resolves `task-NNN-name` (next free number or a resume), forces `--chain --stream --require-approval` (`-y` is opt-in since the quiet-output follow-up), and uses `~/.ai/tell_context/task-NNN-name/main.txt` as the context. A prompt without a ref creates `task-NNN-<hash8>`.
+- Each delegation writes `delegate-NNN.txt` (research) or `subtask-NNN.txt` (build) beside `main.txt` with `Objective:`, `Context-at-delegation:` and `Result:` (redacted, 16 Ki chars cap).
+- `-n` with `--task %id -n` truncates only `main.txt`; the number and the child records survive.
+- `-t` is extracted before commander, so `tell -t fix the build` is a prompt and `tell -t %ref` is a task reference.
+
+### Behavior changes
+- Delegation is task-only: without `-t`, `--chain` keeps the baseline prompt of commit `09269bb` (no `<DELEGATE>`/`<SUBTASK>` section, no runner, inert tag). Tests: `test/test-tell-task.js`, `test/test-tell-security.js`.
+
+## Unreleased — CLI delegation (task 050 Fase 3)
+
+### Features
+- `CliModelIO.silent`: mute child port (no Thinking, no stdout/stderr, no on_raw); parent shows dim indicator cleaned on finish.
+- `run_response_loop` injects `create_delegation_runner` (silent model, host executor/approval/risk, inherited --no-exec, redact from pre-lock secrets) when --chain is active; prompt gets the core-owned `delegation_prompt_section('both')` appended after the SDK prompt.
+- `remember_delegation` mirrors one record to timeline/log (never storage); `remember_assistant` strips delegation tags.
+
+
 ## v0.7.1 — 2026-10-20
 
 ### Fixes

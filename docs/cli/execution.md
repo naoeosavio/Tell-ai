@@ -11,7 +11,7 @@ The model proposes commands by wrapping them in `<RUN>…</RUN>` tags. The core 
 5. `onCommandOutput`/`onCommandSkip` → legacy result lines (`Executed command:` / `Command failed:` / `Skipped by user:` / `Command execution disabled — not run:`) appended to the log, mirrored to the timeline, optional context save.
 6. Non-chain (`max_rounds: 1`): commands ran but visible text is empty → one more model call with tags stripped, break. Chain (`max_rounds: 8`): declined commands resume with conversation-plus-instruction feedback until clean, skipped, or capped.
 
-`visible` is printed to stdout; command output is echoed to stderr (dimmed when TTY) and embedded in the feedback string, never printed to stdout directly.
+`visible` is printed to stdout (protocol tag blocks are filtered by default; `--tags` shows them). Command output is embedded in the feedback string — never printed to stdout directly — and is echoed to stderr only with `--output` (dimmed when TTY); it stays in the log/context either way.
 
 ## Per-command outcomes (mirrored from runtime callbacks)
 
@@ -24,7 +24,7 @@ Per command (single `<RUN>` block per round; only the first block runs):
 
 ## Confirmation (`confirm_command` + approval port)
 
-* Risk labels come from the core permissive classifier (`is_high_risk_script` in `src/core-adapters.ts`): high-risk → `High-risk command requested`, outside-cwd → `Command touches paths outside the working directory`, else `Command requested`; script echoed to stderr. Authorization flows through `create_cli_approval` (safe auto-risk scripts approve without prompting; declines record `skipped`).
+* Risk labels come from the core permission table (`classify_script` in `Tell.ts` with the host cwd): high or forbidden → `High-risk command requested`, outside-cwd → `Command touches paths outside the working directory`, else `Command requested`; script echoed to stderr. Authorization flows through `create_cli_approval` (allow effects run without prompting; declines record `skipped`).
 * `-y` approves only non-high-risk scripts that stay inside the working directory. High-risk with `-y` still prompts.
 * Outside-cwd gate (`script_touches_outside_cwd`): with `-y`, any command referencing a path that resolves outside the working directory (reads included, mirroring the `@path` mention gate) needs confirmation. Tokens matched: absolute `/…`, `~/…`, `$HOME/…`, `../…`, `./…`, bare `..`/`~`, after `=`, inside quotes; resolution reuses `is_outside_cwd` from `mentions.ts` (lexical + symlink/realpath). When cwd IS `$HOME`, `~/x` resolves inside and stays allowed.
 * `--require-approval` makes the approval posture explicit: combined with `-y` the behavior is unchanged (safe commands auto-run, high-risk asks); alone every command asks, same as the default. It never weakens the gate and is forwarded by `-w`/`--web` to seed the sandbox's Require Approval toggle.
@@ -44,12 +44,20 @@ tell --no-exec d "run ls"  # never executes
 
 Core permissive classification (`assess_base_risk`, `packages/core/src/risk.ts`) normalizes backslash-newlines and whitespace, then matches: `sudo/doas/pkexec`, `rm -rf` (any `-rf` flag combo), `git clean -[xfd]`, `mkfs/shutdown/reboot`, `dd … of=`, `chmod|chown` on privileged paths (non-recursive included; recursive `-R` anywhere), `curl|wget|base64 … | sh|bash|python|perl|ruby|php|node`, process substitution `<(curl|wget|base64…)` / `sh … <(…)`, network/decode-coupled interpreter one-liners (`node|python|perl|ruby|php -e/-c/-r … http…|urllib|requests|socket|base64|eval|exec|system|popen`), `curl|wget|base64 … ;|&&|| … interpreter`, `crontab` / `systemctl --user enable`, writes/redirects into `/etc /boot /dev /proc /sys /usr /bin /sbin /lib* /var/spool/cron /etc/cron* ~/.config/autostart ~/.local/share/systemd/user` via `cp|mv|ln|sed -i|tee|>`. Full pattern table in [security.md](security.md).
 
-Deliberately allowed: local-only interpreter one-liners such as `node -e "console.log(1)"` — only network/decode-coupled inline code is high-risk (asserted in `test-tell-security.js:179-183`).
+Deliberately allowed is only what no rule names: `echo` in `cwd`, `git status`, a read your project owns (see [project context limits](#limits)). Every interpreter one-liner now needs confirmation, even a local-only one: `node -e "console.log(1)"` matches the `interpreter-eval` rule in the CLI profile too. [security.md](security.md) keeps the full table, and `test-tell-security.js` asserts the skip (`node -e "console.log(1)"` needs a TTY).
 
 ## Limits
 
 * One command per round (first `<RUN>` block only).
 * Each command: 120s timeout, 32MiB output cap.
-* Chain mode: at most 8 command rounds per invocation (see [chain-mode.md](chain-mode.md)).
+* Chain mode: at most `--max-chain` model turns per invocation (default 8, max 128; see [chain-mode.md](chain-mode.md)).
+
+## Delegation precedence (`<DELEGATE>` / `<SUBTASK>` win over `<RUN>`)
+
+Task-only (`-t`, `--task`): the parent prompt gains the core-owned delegation section (appended after the SDK prompt) only in task mode. Without `-t`, the prompt keeps the baseline of commit `09269bb` and an emitted tag is inert text. At most one delegation tag per answer: the first runs, and an extra tag prints a warning. Tags inside a literal `<think>` block are inert. When a delegation tag and `<RUN>` appear together, the delegation wins and the `<RUN>` is recorded `Skipped by user:`, never executed.
+
+* `<DELEGATE>` (research) uses the child family table (`decide_child_command` in `packages/core/src/delegation.ts`): research allows `read` only. `cat`, `ls`, `git log`, `git status`, `docker ps` and `npm ls` pass. `npm install`, `git add`, `git commit`, `curl` GET, writes, `vcs-remote` (even read-form `git fetch`), secrets, broad targets, outside paths and opaque parses deny with or without `-y`. The full table lives in [security.md](security.md).
+* `<SUBTASK>` (build) uses the same table: build allows `read`, `write`, `destructive` (named path, inside) and `vcs-index` (`git add`, `git switch -c`). It denies install, history, remote, network, privilege (including `chown` without `-R`), exfil, broad, outside and unknown. `rm -rf dist` and `chmod -R src` pass inside. `rm -rf .`, `npm install`, `git commit`, `curl` GET and a write outside the workspace deny. The Web parks the allowed child script on a nested approval instead of denying: server chain `childPending` (confirm by decision id, same 409/403/cancel semantics as the parent slot) and the stateless `POST /api/delegate` parks on `202 awaiting_approval` (resume via `POST /api/delegate/:decisionId/confirm`, single summary at the end). Denied-with-motive (`denied`, never `skipped`) now only covers family denial, `--no-exec`, high-risk, concurrency/budget exhaustion and TTL/restart expiry.
+* The parent only receives `Research result (STATUS):` / `Task result (STATUS):` (repost target 2 Ki, `--delegation-repost` adjustable; summary wins only when shorter, else the redacted original climbs) plus one host-assembled stats line. Child caps: up to 32 rounds (`TELL_DELEGATION_MAX_ROUNDS`/tellrc `delegation_max_rounds`, `0..128`), ≤8 KiB per command, 64 Ki storage, ≤4 KiB objective, 2 Ki briefing context. Parent budget: fixed 2 whenever the chain has `>= 2` rounds, else 0 (`--max-chain 1` → 0, tag stays inert; `--max-delegations 0..2` overrides, `0` disables). Status is host-assigned (`DONE` / `IN PROGRESS` / `BLOCKED`); the spent tag warns deterministically. Delegation does not wait for `PolicyDecision` (policy-sandbox exception, revocable).
 
 Sources: `packages/cli/src/core-adapters.ts`, `packages/cli/src/Tell.ts` (`run_response_loop`), `packages/core/src/loop.ts`. Core reference: [../core/exec.md](../core/exec.md), [../core/risk.md](../core/risk.md), [../core/loop.md](../core/loop.md).

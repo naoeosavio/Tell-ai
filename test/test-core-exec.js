@@ -64,6 +64,18 @@ describe('sanitize_exec_env', () => {
     assert.strictEqual(redact('leaked sk-abc here'), 'leaked [redacted] here');
     assert.strictEqual(redact('nothing secret'), 'nothing secret');
   });
+
+  it('masks the encoded and squashed forms of a secret', () => {
+    const secret = 'CANARY56_KEY';
+    const redact = core.create_secret_redactor([secret]);
+    assert.strictEqual(redact(secret), '[redacted]');
+    assert.strictEqual(redact(Buffer.from(secret).toString('base64')), '[redacted]');
+    assert.strictEqual(redact(Buffer.from(secret).toString('base64').replace(/=+$/, '')), '[redacted]');
+    assert.strictEqual(redact(Buffer.from(secret).toString('hex')), '[redacted]');
+    assert.strictEqual(redact(Buffer.from(secret).toString('hex').toUpperCase()), '[redacted]');
+    assert.strictEqual(redact('C A N A R Y 5 6 _ K E Y'), '[redacted]');
+    assert.strictEqual(redact('plain text'), 'plain text');
+  });
 });
 
 describe('create_node_executor basics', () => {
@@ -228,5 +240,39 @@ describe('redaction boundary and denied approvals', () => {
     assert.strictEqual(result.commands[0].status, 'denied');
     assert.strictEqual(result.commands[0].reason, 'disabled');
     assert.strictEqual(result.commands[0].source, '--no-exec');
+  });
+});
+
+describe('collect_sensitive_file_secrets (workspace redaction sources)', () => {
+  it('collects .env values and key-file lines, skips .env.example and symlinks', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-secret-scan-'));
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-secret-out-'));
+    try {
+      fs.mkdirSync(path.join(dir, 'nested'));
+      fs.writeFileSync(path.join(dir, '.env'), 'CANARY=super-secret-55\nSHORT=1\n# comment\n', 'utf8');
+      fs.writeFileSync(path.join(dir, '.env.example'), 'ALLOWED=1\n', 'utf8');
+      fs.writeFileSync(path.join(dir, 'secret.key'), 'key-canary-55\n', 'utf8');
+      fs.writeFileSync(path.join(dir, 'nested', 'private.pem'), 'nested-secret-55\n', 'utf8');
+      fs.writeFileSync(path.join(outside, 'outside.key'), 'outside-canary-55\n', 'utf8');
+      fs.symlinkSync(path.join(outside, 'outside.key'), path.join(dir, 'link.key'));
+
+      const values = core.collect_sensitive_file_secrets(dir);
+      assert.ok(values.includes('super-secret-55'), JSON.stringify(values));
+      assert.ok(values.includes('key-canary-55'), JSON.stringify(values));
+      assert.ok(values.includes('nested-secret-55'), JSON.stringify(values));
+      assert.ok(!values.includes('ALLOWED'), JSON.stringify(values));
+      assert.ok(!values.includes('1'), JSON.stringify(values));
+      assert.ok(!values.includes('outside-canary-55'), JSON.stringify(values));
+
+      const redact = core.create_secret_redactor(values);
+      const masked = redact('CANARY=super-secret-55\nkey=false\nnested-secret-55');
+      assert.strictEqual(redact('1'), '1');
+      assert.ok(!masked.includes('super-secret-55'), masked);
+      assert.ok(!masked.includes('nested-secret-55'), masked);
+      assert.ok(masked.includes(core.EXEC_REDACTED_MARKER), masked);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
   });
 });

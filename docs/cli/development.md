@@ -38,9 +38,9 @@ npm run ci             # build + lint + format check + test
 > single source of truth. The `auth`/`routes` suites spawn a real server via
 > `tsx` and need its `node_modules` installed.
 >
-> Intentional divergences (test-pinned, do not "dedupe"): `isHighRiskScript`
-> blocks all interpreter `-c`/`-e`, `env`, `base64 -d` and shell expansions
-> (the CLI allows local one-liners by design); the frontend executes only the
+> Intentional divergences (test-pinned, do not "dedupe"): the CLI grades a
+> system-path read as medium (outside read) while the Web forbids it
+> (strict flag); the frontend executes only the
 > first `<RUN>` script by design (with an explicit warning about extras) while
 > extraction itself delegates to the SDK `extract_runs` via
 > `@tell-ai/sdk/browser` (the SDK resolves a block only when it owns a closing
@@ -76,7 +76,7 @@ bun run test            # all suites
 ## Touch points for contributors
 
 * New flag: `CliOptions` + `build_program` + `build_context_plan`/`run_tell` wiring + `format_missing_prompt_error` if it affects required input; add cases to both suites.
-* New high-risk shape: one `RiskRule` in `packages/core/src/risk.ts` (profile flags: common / `permissive_only` / `strict_only`) + one entry in `docs/cli/security.md` table + one `riskyScripts` line in the security suite. Keep local-only one-liners allowed unless they gain a network/decode token. Document the rule in [../core/risk.md](../core/risk.md).
+* New high-risk shape: one `RiskRule` in `packages/core/src/risk.ts` (profile flags: common / `permissive_only`) + one entry in `docs/cli/security.md` table + one `riskyScripts` line in the security suite. No new `strict_only` rules: since Phase 5 every rule that fires in the Web profile also fires in the CLI (prompt-then-allow), so the only remaining divergence is `permissive_only`. Document the rule in [../core/risk.md](../core/risk.md).
 * Context semantics: `ContextPlan` is the contract — update `docs/cli/context.md` alongside `resolve_context_ref`/`build_context_plan`.
 * Mention semantics: `expand_mentions` + `is_outside_cwd` are the contract — update `docs/cli/mentions.md` alongside `src/mentions.ts`, and add cases to `test/test-tell-mentions.js`.
 * Model/alias changes live in the SDK (`packages/sdk/src/models.ts`); the CLI only calls `resolve_model_spec`/`model_label`. Never read `process.env` from the SDK.

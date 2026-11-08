@@ -39,12 +39,12 @@ const MODEL_TABLE: Record<string, string> = {
   'p++': 'openai:gpt-6.1-sol-pro:max',
   P: 'openai:gpt-6.1-sol-pro:high',
 
-  't--': 'openai:gpt-5.6-terra:none',
-  't-': 'openai:gpt-5.6-terra:low',
-  t: 'openai:gpt-5.6-terra:medium',
-  't+': 'openai:gpt-5.6-terra:high',
-  't++': 'openai:gpt-5.6-terra:max',
-  T: 'openai:gpt-5.6-terra:high',
+  't--': 'openai:gpt-6.1-terra:none',
+  't-': 'openai:gpt-6.1-terra:low',
+  t: 'openai:gpt-6.1-terra:medium',
+  't+': 'openai:gpt-6.1-terra:high',
+  't++': 'openai:gpt-6.1-terra:max',
+  T: 'openai:gpt-6.1-terra:high',
 
   'c--': 'openai:gpt-6-luna:none',
   'c-': 'openai:gpt-6-luna:low',
@@ -170,9 +170,9 @@ const MODEL_TABLE: Record<string, string> = {
 
   k: 'moonshotai:kimi-k2.7-code:none',
 
-  'K-': 'moonshotai:kimi-k3:low',
-  K: 'moonshotai:kimi-k3:high',
-  'K+': 'moonshotai:kimi-k3:max',
+  'K-': 'moonshotai:kimi-k3.1-pro:low',
+  K: 'moonshotai:kimi-k3.1-pro:high',
+  'K+': 'moonshotai:kimi-k3.1-pro:max',
 
   'm--': 'meta:muse-spark-1.3:none',
   'm-': 'meta:muse-spark-1.3:low',

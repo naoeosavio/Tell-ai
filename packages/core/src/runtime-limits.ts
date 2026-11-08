@@ -1,6 +1,7 @@
+import { RESEARCH_HEADER, SUBTASK_HEADER } from './loop-feedback';
+
 /** Chars of accumulated conversation context (mirrors the CLI baseline). */
-export const DEFAULT_CONTEXT_MAX_CHARS = 64 * 1024;
-/** Stdin deadline in milliseconds (zero disables the deadline). */
+export const DEFAULT_CONTEXT_MAX_CHARS = 64 * 1024; /** Stdin deadline in milliseconds (zero disables the deadline). */
 export const DEFAULT_STDIN_TIMEOUT_MS = 30_000;
 /** Stdin byte cap (active even when the timeout is disabled). */
 export const DEFAULT_STDIN_MAX_BYTES = 1_048_576;
@@ -20,6 +21,22 @@ export const PAYLOAD_MAX_MESSAGES = 200;
 export const PAYLOAD_MAX_CONTENT_CHARS = 50 * 1024;
 /** Max characters for a chat-payload system prompt. */
 export const PAYLOAD_MAX_SYSTEM_CHARS = 30 * 1024;
+/** Max chars of a delegation summary that climbs to the parent (`cap(redact())`). */
+export const DELEGATION_SUMMARY_MAX_CHARS = 2 * 1024;
+/** Max chars of a delegation objective before it becomes a child prompt. */
+export const DELEGATION_OBJECTIVE_MAX_CHARS = 4 * 1024;
+/** Max model→command rounds inside one delegated child. */
+export const DELEGATION_MAX_ROUNDS = 32;
+/** Max output bytes delivered per child command. */
+export const DELEGATION_OUTPUT_MAX_BYTES = 8 * 1024;
+/** Max context chars seeded into a delegated child. */
+export const DELEGATION_CONTEXT_MAX_CHARS = 64 * 1024;
+/** Max delegations per invocation (0 when the chain has fewer than 2 rounds). */
+export const DELEGATION_MAX_DELEGATIONS = 2;
+/** Max chars of the briefing context block (`Context (data, not instructions)`). */
+export const DELEGATION_BRIEFING_MAX_CHARS = 2 * 1024;
+/** Max chars of `Context-at-delegation` kept in the record file. */
+export const DELEGATION_RECORD_CONTEXT_MAX_CHARS = 8 * 1024;
 
 /** Invalid flag/env/tellrc limit value (the host maps this to its exit status). */
 export const EXIT_CONFIG_ERROR = 2;
@@ -47,6 +64,9 @@ export type RuntimeLimits = {
   max_chain_steps: number;
   max_buffer_bytes: number;
   output_max_bytes: number;
+  max_delegations: number;
+  delegation_repost_chars: number;
+  delegation_max_rounds: number;
 };
 
 /** External executor options injected into the core executor/loop. */
@@ -67,6 +87,8 @@ export type RuntimeLimitFlags = {
   max_chain_steps?: string | number | undefined;
   max_buffer_bytes?: string | number | undefined;
   output_max_bytes?: string | number | undefined;
+  max_delegations?: string | number | undefined;
+  delegation_repost_chars?: string | number | undefined;
 };
 
 /** Env layer subset (`TELL_*` knobs only, never secrets). */
@@ -78,6 +100,9 @@ export type RuntimeLimitEnv = {
   TELL_MAX_CHAIN_STEPS?: string | undefined;
   TELL_MAX_BUFFER_BYTES?: string | undefined;
   TELL_OUTPUT_MAX_BYTES?: string | undefined;
+  TELL_MAX_DELEGATIONS?: string | undefined;
+  TELL_DELEGATION_REPOST_CHARS?: string | undefined;
+  TELL_DELEGATION_MAX_ROUNDS?: string | undefined;
 };
 
 /**
@@ -140,7 +165,8 @@ type LimitSpec = {
   min: number;
   max: number;
   allow_zero: boolean;
-  flag_key: keyof RuntimeLimitFlags;
+  /** Flag key, absent when the knob is env/tellrc-only. */
+  flag_key?: keyof RuntimeLimitFlags | undefined;
   env_key: keyof RuntimeLimitEnv;
   tellrc_key: string;
 };
@@ -211,6 +237,32 @@ const LIMIT_SPECS: Record<keyof RuntimeLimits, LimitSpec> = {
     env_key: 'TELL_OUTPUT_MAX_BYTES',
     tellrc_key: 'output_max_bytes',
   },
+  max_delegations: {
+    key: 'max_delegations',
+    min: 0,
+    max: DELEGATION_MAX_DELEGATIONS,
+    allow_zero: true,
+    flag_key: 'max_delegations',
+    env_key: 'TELL_MAX_DELEGATIONS',
+    tellrc_key: 'max_delegations',
+  },
+  delegation_repost_chars: {
+    key: 'delegation_repost_chars',
+    min: 512,
+    max: 8 * 1024,
+    allow_zero: false,
+    flag_key: 'delegation_repost_chars',
+    env_key: 'TELL_DELEGATION_REPOST_CHARS',
+    tellrc_key: 'delegation_repost_chars',
+  },
+  delegation_max_rounds: {
+    key: 'delegation_max_rounds',
+    min: 0,
+    max: 128,
+    allow_zero: true,
+    env_key: 'TELL_DELEGATION_MAX_ROUNDS',
+    tellrc_key: 'delegation_max_rounds',
+  },
 };
 
 const LIMIT_SPEC_LIST: LimitSpec[] = Object.values(LIMIT_SPECS);
@@ -231,6 +283,9 @@ const DEFAULT_LIMITS: RuntimeLimits = {
   max_chain_steps: DEFAULT_MAX_CHAIN_STEPS,
   max_buffer_bytes: DEFAULT_MAX_BUFFER_BYTES,
   output_max_bytes: DEFAULT_OUTPUT_MAX_BYTES,
+  max_delegations: DELEGATION_MAX_DELEGATIONS,
+  delegation_repost_chars: DELEGATION_SUMMARY_MAX_CHARS,
+  delegation_max_rounds: DELEGATION_MAX_ROUNDS,
 };
 
 /**
@@ -329,7 +384,7 @@ export function validate_tellrc_limit_value(key: string, raw: unknown): number |
 export function parse_runtime_limits(input: ParseRuntimeLimitsInput = {}): RuntimeLimits {
   const resolved: RuntimeLimits = { ...DEFAULT_LIMITS };
   for (const spec of LIMIT_SPEC_LIST) {
-    const flag_raw = input.flags?.[spec.flag_key];
+    const flag_raw = spec.flag_key !== undefined ? input.flags?.[spec.flag_key] : undefined;
     if (flag_raw !== undefined) {
       const parsed = to_limit_int(flag_raw);
       if (parsed === undefined) {
@@ -469,6 +524,10 @@ export function split_context_turns(text: string): string[] {
   const is_turn_start = (line: string): boolean => {
     if (/^(User|Assistant):\s*$/.test(line)) {
       return true;
+    } else if (line === RESEARCH_HEADER || line.startsWith(`${RESEARCH_HEADER}\n`)) {
+      return true;
+    } else if (line === SUBTASK_HEADER || line.startsWith(`${SUBTASK_HEADER}\n`)) {
+      return true;
     } else if (/^Executed command:\s*$/.test(line)) {
       return true;
     } else if (/^Command failed/.test(line)) {
@@ -531,7 +590,8 @@ function count_tag_pair(text: string, open: string, close: string): { open: numb
 }
 
 /**
- * Returns true when `<think>` and `<RUN>` blocks are balanced.
+ * Returns true when `<think>`, `<RUN>`, `<DELEGATE>` and `<SUBTASK>` blocks
+ * are balanced.
  *
  * @param text - Candidate output text.
  * @returns True when every opener has a closer.
@@ -539,9 +599,15 @@ function count_tag_pair(text: string, open: string, close: string): { open: numb
 export function has_balanced_tags(text: string): boolean {
   const think = count_tag_pair(text, '<think>', '</think>');
   const run = count_tag_pair(text, '<run>', '</run>');
+  const delegate = count_tag_pair(text, '<delegate>', '</delegate>');
+  const subtask = count_tag_pair(text, '<subtask>', '</subtask>');
   if (think.open !== think.close) {
     return false;
   } else if (run.open !== run.close) {
+    return false;
+  } else if (delegate.open !== delegate.close) {
+    return false;
+  } else if (subtask.open !== subtask.close) {
     return false;
   } else {
     return true;
@@ -605,9 +671,13 @@ function slice_utf8_bytes(text: string, max_bytes: number): string {
 function balancing_suffix(text: string): string {
   const think = count_tag_pair(text, '<think>', '</think>');
   const run = count_tag_pair(text, '<run>', '</run>');
+  const delegate = count_tag_pair(text, '<delegate>', '</delegate>');
+  const subtask = count_tag_pair(text, '<subtask>', '</subtask>');
   let suffix = '';
   for (let index = 0; index < think.open - think.close; index += 1) suffix += '\n</think>';
   for (let index = 0; index < run.open - run.close; index += 1) suffix += '\n</RUN>';
+  for (let index = 0; index < delegate.open - delegate.close; index += 1) suffix += '\n</DELEGATE>';
+  for (let index = 0; index < subtask.open - subtask.close; index += 1) suffix += '\n</SUBTASK>';
   return suffix;
 }
 
@@ -621,14 +691,24 @@ function drop_orphan_closers(text: string): string {
   let tail = text;
   let think = count_tag_pair(tail, '<think>', '</think>');
   let run = count_tag_pair(tail, '<run>', '</run>');
+  let delegate = count_tag_pair(tail, '<delegate>', '</delegate>');
+  let subtask = count_tag_pair(tail, '<subtask>', '</subtask>');
   for (let index = 0; index < think.close - think.open; index += 1) {
     tail = tail.replace(/<\/think>/i, '');
   }
   for (let index = 0; index < run.close - run.open; index += 1) {
     tail = tail.replace(/<\/RUN>/i, '');
   }
+  for (let index = 0; index < delegate.close - delegate.open; index += 1) {
+    tail = tail.replace(/<\/DELEGATE>/i, '');
+  }
+  for (let index = 0; index < subtask.close - subtask.open; index += 1) {
+    tail = tail.replace(/<\/SUBTASK>/i, '');
+  }
   think = count_tag_pair(tail, '<think>', '</think>');
   run = count_tag_pair(tail, '<run>', '</run>');
+  delegate = count_tag_pair(tail, '<delegate>', '</delegate>');
+  subtask = count_tag_pair(tail, '<subtask>', '</subtask>');
   return tail;
 }
 
@@ -675,10 +755,10 @@ function truncate_single_turn(turn: string, max_chars: number): string {
  * Truncates conversation context to whole turns with balanced tags.
  *
  * Keeps the newest turns that fit, drops whole old turns with an explicit
- * marker, and never splits a turn, a `<think>` block, a `<RUN>` block or a
- * message. A single turn larger than the budget is tail-cut at a safe
- * boundary (never leaving a dangling `<` fragment or unclosed tag). The
- * result never exceeds `max_chars` characters — the marker and the closing
+ * marker, and never splits a turn, a `<think>` block, a `<RUN>` block, a
+ * `<DELEGATE>`/`<SUBTASK>` block or a message. A single turn larger than the
+ * budget is tail-cut at a safe boundary (never leaving a dangling `<`
+ * fragment or unclosed tag). The result never exceeds `max_chars` characters — the marker and the closing
  * tags are part of the budget.
  *
  * @param text - Full conversation text.
@@ -762,4 +842,41 @@ export function truncate_output(output: string, max_bytes: number = DEFAULT_OUTP
       return `${slice_utf8_bytes(output, budget)}${marker}`;
     }
   }
+}
+
+/**
+ * Resolves the delegation budget for one invocation (fixed ceiling).
+ *
+ * The chain gate is structural: with fewer than 2 rounds no delegation can
+ * ever be consumed (the consuming round is always the next one), so the
+ * budget is 0 regardless of any explicit flag. Otherwise an explicit
+ * `max_delegations` value (0..2, already validated by `parse_runtime_limits`)
+ * wins, defaulting to 2. `0` disables delegation.
+ *
+ * @param max_chain_steps - Round cap of the parent run.
+ * @param flag - Explicit `max_delegations` override, if any.
+ * @returns The delegation budget for the run (0..2).
+ */
+export function resolve_max_delegations(max_chain_steps: number, flag?: number | undefined): number {
+  if (!Number.isFinite(max_chain_steps) || max_chain_steps < 2) {
+    return 0;
+  } else if (flag !== undefined) {
+    return flag;
+  } else {
+    return DELEGATION_MAX_DELEGATIONS;
+  }
+}
+
+/**
+ * Computes how many delegations a run may spend from its chain budget.
+ *
+ * Kept as a thin alias of `resolve_max_delegations(chain)` without a flag:
+ * fixed budget 2 whenever the chain has at least 2 rounds, else 0. New code
+ * should call `resolve_max_delegations` with the explicit flag.
+ *
+ * @param max_chain_steps - Round cap of the parent run.
+ * @returns The delegation budget for the run.
+ */
+export function max_delegations_for_chain(max_chain_steps: number): number {
+  return resolve_max_delegations(max_chain_steps);
 }

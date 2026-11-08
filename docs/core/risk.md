@@ -13,24 +13,25 @@ assess_base_risk('sudo rm -rf /', 'permissive');
 
 | Profile | Host | Behavior |
 |---------|------|----------|
-| `permissive` (default) | CLI | Local-only interpreter one-liners pass; only network/decode-coupled eval is risky |
-| `strict` | Web | Any interpreter `-c`/`-e`, `env` launches, `base64 -d` and shell expansions are risky |
+| `permissive` (default) | CLI | Any interpreter `-c`/`-e`, `env` launches, `base64 -d`, shell expansions and credential-file reads are high-risk (explicit confirm) |
+| `strict` | Web | Same shapes as permissive (blocked outright) |
 
-Common rules run in both profiles. `permissive_only` rules keep the CLI divergences verbatim (broad download pipes, process substitution, network-gated interpreter eval, direct privileged `chmod`); `strict_only` rules keep the Web divergences verbatim (any interpreter eval, `env`, `base64 -d`, shell expansions). The divergence is test-pinned — do not "dedupe". `create_base_risk_port(profile)` wraps the classifier as a `RiskPort` for runtime injection.
+Common rules run in both profiles, including credential-file reads, interpreter eval flags, `env`, `base64 -d`, shell expansions and the narrow download pipe. `permissive_only` rules keep the only remaining CLI divergences verbatim (broad download pipes, process substitution, network-gated interpreter eval, direct privileged `chmod`). No `strict_only` rule remains since Phase 5 — do not add one. `create_base_risk_port(profile)` wraps the classifier as a `RiskPort` for runtime injection.
 
 ## Rules
 
 Scripts are compacted first (backslash-newlines → spaces, whitespace collapsed), then matched:
 
-* Common (both): `sudo/doas/pkexec`, `sh -c` strings, `curl/wget/nc/ssh/ftp` clients, `printenv`, `/proc` access, `rm -rf` (any `-rf` flag combo), `git clean -f`, `mkfs/shutdown/reboot`, `dd … of=`, recursive `chmod/chown -R /`, `crontab` / `systemctl --user enable`, `cp/mv/ln` + `sed -i` + `tee` + redirects into privileged paths (`/etc /boot /dev /proc /sys /usr /bin /sbin /lib* /var/spool/cron /etc/cron* ~/.config/autostart ~/.local/share/systemd/user`).
+* Common (both): `sudo/doas/pkexec`, `sh -c` strings, `curl/wget/nc/ssh/ftp` clients, `printenv`, `/proc` access, `rm -rf` (any `-rf` flag combo), `git clean -f`, `mkfs/shutdown/reboot`, `dd … of=`, recursive `chmod/chown -R /`, `crontab` / `systemctl --user enable`, `cp/mv/ln` + `sed -i` + `tee` + redirects into privileged paths (`/etc /boot /dev /proc /sys /usr /bin /sbin /lib* /var/spool/cron /etc/cron* ~/.config/autostart ~/.local/share/systemd/user`), and credential-file access (`.env*` except `.env.example`, `*.key`/`*.pem`/`*.p12`, `id_rsa`/`id_dsa`/`id_ecdsa`/`id_ed25519`, `.git/**`, `.tell/**`, `.aws/credentials`, `~/.config/*.token`). The credential rule is tested against a dequoted copy of the script and covers the shell spellings of the same read: quote splicing (`cat '.en'v`), brace expansion (`cat {a.txt,.env}`), dotfile globs (`.en?`, `.env*`, `.*`), key globs (`*.key`, `id_*`) and ANSI-C quoting (`$'\x2eenv'`). Unresolved globs (`cat sec*`, `cat *`) remain a documented speed-bump limit; the executor boundary masks credential-file values in the output the model receives (`collect_sensitive_file_secrets` + `create_secret_redactor`), so a bypass does not forward the value. The credential rule keeps command execution at parity with the file API: a model cannot read a secret through a command without explicit approval (CLI) or at all (Web), so it cannot silently send it to the provider.
 * Permissive-only: download piped into a shell/interpreter, `<(curl|wget|base64…)` process substitution, `sh … <(…)` readers, network/decode-coupled interpreter one-liners (`-e/-c/-r … http…|urllib|requests|socket|base64|eval|exec|system|popen`), download chained into an interpreter.
 * Strict-only: any interpreter eval flag (`python3|node|deno|bun|perl|ruby|php|lua` with `-c`/`-e`/`-r`/`--eval`/`eval`), bare `env`, `base64 -d/--decode`, `${…}` brace expansion, `$(…)` substitution, backtick pipelines.
+* Common (both profiles since Phase 5): any interpreter eval flag, bare `env`, `base64 -d/--decode`, `${…}` brace expansion, `$(…)` substitution, backtick pipelines, narrow download pipe (`curl|wget … | sh`). No `strict_only` rule remains; only `permissive_only` still diverges.
 
 Highest severity wins (`high` beats `medium`); the winning rule's category is reported; every match contributes its reasons and flags (deduplicated). No match → `{ risky: false, severity: 'low', category: 'general', reasons: [], flags: [] }`.
 
 ## Consumers
 
-* CLI (`packages/cli/src/core-adapters.ts`): `assess_cli_risk` (permissive) + `is_high_risk_script` (thin boolean preserving the historical contract). High-risk or outside-cwd scripts need explicit confirmation even with `-y`. Full UX: `../cli/security.md`.
-* Web (`packages/web/src/server/guards.ts`): stricter gate drives Require Approval; classification failure is fail-closed (manual approval).
+* CLI (`Tell.ts` calls the core directly): `create_base_risk_port` (permissive) for the runtime ports, `assess_base_risk` for the skip reason, `classify_script` for the prompt labels. No host wrapper decides the class. Full UX: `../cli/security.md`.
+* Web (`packages/web/src/server/chain-runtime.ts`): `classify_web_script` (strict, host cwd) for the gate class, `is_web_blocked_script` for the stateless block checks. No `guards.ts` classifier remains.
 
 Sources: `packages/core/src/risk.ts`, `src/runtime-api.ts:147-183` (`RiskAssessment`/`RiskPort`), `packages/cli/src/core-adapters.ts:59-74`, `test/test-core-risk.js`.

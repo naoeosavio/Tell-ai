@@ -68,3 +68,26 @@ describe('load_env_layer', () => {
     assert.deepStrictEqual(layer, {});
   });
 });
+
+describe('validate_temperature (D8)', () => {
+  it('accepts the 0..2 interval including a numeric string', () => {
+    assert.strictEqual(core.validate_temperature(0), 0);
+    assert.strictEqual(core.validate_temperature(2), 2);
+    assert.strictEqual(core.validate_temperature(0.7), 0.7);
+    assert.strictEqual(core.validate_temperature('1.5'), 1.5);
+  });
+
+  it('rejects anything outside the interval or non-numeric', () => {
+    assert.strictEqual(core.validate_temperature(-0.1), undefined);
+    assert.strictEqual(core.validate_temperature(2.01), undefined);
+    assert.strictEqual(core.validate_temperature(Number.NaN), undefined);
+    assert.strictEqual(core.validate_temperature(Number.POSITIVE_INFINITY), undefined);
+    assert.strictEqual(core.validate_temperature(null), undefined);
+    assert.strictEqual(core.validate_temperature('hot'), undefined);
+  });
+
+  it('exposes the interval as constants (one owner, never restated)', () => {
+    assert.strictEqual(core.TEMPERATURE_MIN, 0);
+    assert.strictEqual(core.TEMPERATURE_MAX, 2);
+  });
+});

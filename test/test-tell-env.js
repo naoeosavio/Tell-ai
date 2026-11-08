@@ -2,6 +2,7 @@
 // `process.env` and the `~/.config/<vendor>.token` files, so the wiring from
 // `CUSTOM_*` to `SDKConfig` is pinned here. No network, no LLM calls.
 const assert = require('node:assert');
+const { after, describe, it } = require('node:test');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -18,6 +19,10 @@ const envSource = ts.transpileModule(
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tell-env-'));
 const home = path.join(dir, 'home');
 fs.mkdirSync(home, { recursive: true });
+
+after(() => {
+  fs.rmSync(dir, { recursive: true, force: true });
+});
 
 /**
  * Runs `load_sdk_config()` with an isolated HOME and the given environment, by
@@ -46,7 +51,8 @@ async function load_config(env = {}) {
 // this file's Object — compare on plain JSON copies instead.
 const plain = (value) => (value === undefined ? undefined : JSON.parse(JSON.stringify(value)));
 
-(async () => {
+describe('cli env config', () => {
+  it('leaves custom knobs out when CUSTOM_* are absent', async () => {
   // Absent CUSTOM_* env vars leave the optional knobs out of the config
   // entirely, so `get_model` keeps raising its own missing-env errors.
   const bare = await load_config({});
@@ -56,7 +62,9 @@ const plain = (value) => (value === undefined ? undefined : JSON.parse(JSON.stri
   assert.ok(!('wires' in bare), 'no wires key when CUSTOM_API is unset');
   assert.ok(!('headers' in bare), 'no headers key when CUSTOM_HEADERS is unset');
   assert.strictEqual(bare.urls.openai, 'https://api.openai.com/v1');
+  });
 
+  it('maps all five CUSTOM_* knobs', async () => {
   const full = await load_config({
     CUSTOM_BASE_URL: 'https://gateway.internal/v1',
     CUSTOM_API_KEY: 'CUSTOM_KEY',
@@ -69,7 +77,9 @@ const plain = (value) => (value === undefined ? undefined : JSON.parse(JSON.stri
   assert.deepStrictEqual(plain(full.models), { custom: 'kimi-k3' });
   assert.deepStrictEqual(plain(full.wires), { custom: 'messages' });
   assert.deepStrictEqual(plain(full.headers), { custom: { 'x-tenant': 'acme' } });
+  });
 
+  it('treats whitespace as unset and normalizes the wire', async () => {
   // Whitespace-only values are "unset", and the wire override is normalized.
   const padded = await load_config({
     CUSTOM_BASE_URL: '  https://gateway.internal/v1  ',
@@ -79,11 +89,15 @@ const plain = (value) => (value === undefined ? undefined : JSON.parse(JSON.stri
   assert.strictEqual(padded.urls.custom, 'https://gateway.internal/v1');
   assert.deepStrictEqual(plain(padded.wires), { custom: 'responses' });
   assert.ok(!('headers' in padded), 'blank CUSTOM_HEADERS must not create an empty map');
+  });
 
+  it('stringifies non-string header values', async () => {
   // Non-string header values are stringified, so `{ "x-count": 1 }` is usable.
   const numeric_headers = await load_config({ CUSTOM_HEADERS: '{"x-count":1,"x-on":true}' });
   assert.deepStrictEqual(plain(numeric_headers.headers), { custom: { 'x-count': '1', 'x-on': 'true' } });
+  });
 
+  it('accepts the three wire names case-insensitively', async () => {
   for (const [value, expected] of [
     ['chat', 'chat'],
     ['messages', 'messages'],
@@ -93,14 +107,18 @@ const plain = (value) => (value === undefined ? undefined : JSON.parse(JSON.stri
   ]) {
     assert.deepStrictEqual(plain((await load_config({ CUSTOM_API: value })).wires), { custom: expected }, value);
   }
+  });
+  it('rejects unknown CUSTOM_API values', async () => {
   for (const value of ['completions', 'google', 'anthropic', 'CHAT/completions']) {
     await assert.rejects(load_config({ CUSTOM_API: value }), /CUSTOM_API must be one of/, value);
   }
-
+  });
+  it('rejects non-object CUSTOM_HEADERS', async () => {
   for (const value of ['x-tenant=acme', '[1,2]', 'null', '"text"']) {
     await assert.rejects(load_config({ CUSTOM_HEADERS: value }), /CUSTOM_HEADERS must be a JSON object/);
   }
-
+  });
+  it('falls back to the custom.token file', async () => {
   // Token-file fallback, matching every other vendor.
   fs.mkdirSync(path.join(home, '.config'), { recursive: true });
   fs.writeFileSync(path.join(home, '.config', 'custom.token'), '  TOKEN_KEY  \n');
@@ -108,10 +126,5 @@ const plain = (value) => (value === undefined ? undefined : JSON.parse(JSON.stri
   assert.strictEqual((await load_config({ CUSTOM_API_KEY: 'ENV_KEY' })).keys.custom, 'ENV_KEY');
   fs.rmSync(path.join(home, '.config', 'custom.token'));
   assert.strictEqual((await load_config({})).keys.custom, undefined);
-
-  fs.rmSync(dir, { recursive: true, force: true });
-  console.log('cli env tests passed');
-})().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
+  });
 });

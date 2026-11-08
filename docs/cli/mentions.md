@@ -28,6 +28,10 @@ Directory trees go 3 levels deep (`TREE_MAX_DEPTH`), skip `node_modules`, `.git`
 
 A target outside the working directory needs interactive confirmation **even with `-y`** (`confirm_outside_read`, same readline/timeout pattern as `confirm_command`, 120s auto-reject). Without a TTY the read is denied (fail-closed). The check covers the lexical path and its `realpath` target, so a symlink inside the cwd pointing outside still prompts. This never conflicts with `--ctx @N`: context refs are flag values, never prompt tokens.
 
+## Sensitive-name gate (`LOG-TASK-55`)
+
+A mention that names a credential file is gated exactly like a command that reads it: `.env*` (except `.env.example`), `*.key`, `*.pem`, `*.p12`/`*.pfx`, `id_rsa`/`id_dsa`/`id_ecdsa`/`id_ed25519`, `.git/**`, `.tell/**`, `.aws/credentials` and `~/.config/*.token` show `Sensitive file requested:` and need interactive confirmation (`confirm_sensitive_read`, same 120s auto-reject). Without a TTY the read is denied and the token stays in the prompt. `-y` and task mode do not bypass it. The `realpath` target is checked too, so a safe-named symlink to `.env` is denied. Before this gate, `tell @.env` inlined the secret into the prompt and sent it to the provider even though `cat .env` was already gated.
+
 ## Ordering
 
 `run_tell` builds `raw_prompt` from the `--ctx` prompt text + the (already stdin-combined) user prompt, then `full_prompt = await expand_mentions(raw_prompt, process.cwd(), …)`. The expanded text is therefore what lands in `first_prompt`, `timeline[0]`, the history log, and the saved context file. Expansion applies to positional text, `-i` stdin, and multi-word `--ctx` alike. Injected file content is prompt data: only model-emitted `<RUN>` blocks are ever scanned, so a file containing `<RUN>echo PWN</RUN>` never auto-executes (test `test_cli_poisoned_file_content_does_not_execute`).

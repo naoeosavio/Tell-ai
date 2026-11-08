@@ -2,17 +2,20 @@ import * as os from 'os';
 import * as path from 'path';
 import {
   type ApprovalPort,
-  assess_base_risk,
   type CommandExecutor,
   type CoreConfig,
-  create_base_risk_port,
   create_core_runtime,
   create_node_executor,
+  decide_permission,
+  DEFAULT_STORAGE_KEY,
+  derive_always_prefix,
   EXEC_DEFAULT_TIMEOUT_MS,
+  extract_think_content,
   LOOP_MAX_ROUNDS,
+  matches_always_pattern,
+  MemoryStorageAdapter,
   type ModelPort,
   type RiskAssessment,
-  type RiskPort,
   type RuntimeCallbacks,
   resolve_core_config,
   SENSITIVE_ENV_NAMES,
@@ -30,11 +33,23 @@ export type { CoreConfig, RuntimeCallbacks, TellResult };
 /** Readline confirmation budget in milliseconds (mirrors the exec timeout, as before). */
 export const READLINE_CONFIRM_TIMEOUT_MS = EXEC_DEFAULT_TIMEOUT_MS;
 
-/** Effective execution mode, resolved once from the flags (fail-closed). */
-export type ExecMode = 'no-exec' | 'confirm-all' | 'auto-risk';
+/** Input for the CLI permission gate (resolved once from the flags). */
+export type CliExecInput = {
+  /** False when `--no-exec` is present (blocks every class first). */
+  enabled?: boolean | undefined;
+  /** True when `-y` is present (low and medium run). */
+  auto?: boolean | undefined;
+  /** True when `--require-approval` is present (high asks). */
+  approve_high?: boolean | undefined;
+  /** Stored `<prefix> *` patterns from the project `.tellrc` (ask only). */
+  always?: readonly string[] | undefined;
+};
+
+/** Answer of the CLI prompt (once runs one command, always stores it). */
+export type CliConfirmAnswer = 'once' | 'always' | 'reject';
 
 /** User confirmation callback (readline prompt in the CLI, stubbed in tests). */
-export type CliConfirmFn = (script: string) => Promise<boolean>;
+export type CliConfirmFn = (script: string, justification?: string) => Promise<boolean | CliConfirmAnswer>;
 
 /** Flag subset resolved once into a `CoreConfig` (keys stay in `env.ts`). */
 export type CliCoreConfigFlags = {
@@ -45,42 +60,6 @@ export type CliCoreConfigFlags = {
   /** Per-command timeout override in milliseconds. */
   exec_timeout_ms?: number | undefined;
 };
-
-/**
- * Classifies one script through the core base rules (CLI permissive profile).
- *
- * Local interpreter one-liners stay allowed by design; only
- * network/decode-coupled eval is risky — the same matrix the CLI always
- * enforced, now owned by `@tell-ai/core`.
- *
- * @param script - Command script to classify.
- * @returns The base `RiskAssessment` (never an action verdict).
- */
-export function assess_cli_risk(script: string): RiskAssessment {
-  return assess_base_risk(script, 'permissive');
-}
-
-/**
- * Returns true when a script matches the CLI high-risk matrix.
- *
- * Thin boolean over `assess_cli_risk`, preserving the historical
- * `is_high_risk_script` contract (prompts, auto-risk gating).
- *
- * @param script - Command script to classify.
- * @returns True when the script needs explicit confirmation.
- */
-export function is_high_risk_script(script: string): boolean {
-  return assess_cli_risk(script).risky;
-}
-
-/**
- * Creates the CLI risk port (permissive profile) for runtime wiring.
- *
- * @returns A `RiskPort` observing through the core base classifier.
- */
-export function cli_risk_port(): RiskPort {
-  return create_base_risk_port('permissive');
-}
 
 /**
  * Deletes sensitive variables from the current process environment.
@@ -182,53 +161,118 @@ export function create_cli_executor(defaults?: { timeout_ms?: number; max_output
 }
 
 /**
- * Decides whether one script needs interactive confirmation.
+ * Resolves the CLI flags once into the permission gate input.
  *
- * Pure helper behind both the readline prompt and the approval port:
- * `auto-risk` runs safe inside-cwd scripts directly and asks for
- * high-risk or outside-cwd ones; `confirm-all` always asks.
+ * Task mode forces `exec` through its own call (it never reaches
+ * `--no-exec`); `-y` only sets `auto` and never approves high commands.
  *
- * @param script - Command script to decide about.
- * @param mode - Effective execution mode.
- * @param cwd - Working directory outside checks resolve against.
- * @returns True when the script may run without asking.
+ * @param flags - Commander `exec`/`yes`/`requireApproval` subset.
+ * @returns The gate input for `create_cli_approval`.
  */
-export function can_auto_approve(script: string, mode: ExecMode, cwd: string): boolean {
-  if (mode !== 'auto-risk') {
-    return false;
-  } else if (is_high_risk_script(script)) {
-    return false;
-  } else if (script_touches_outside_cwd(script, cwd)) {
-    return false;
-  } else {
-    return true;
-  }
+export function resolve_cli_exec_input(flags: {
+  exec?: boolean | undefined;
+  yes?: boolean | undefined;
+  requireApproval?: boolean | undefined;
+}): CliExecInput {
+  return {
+    enabled: flags.exec !== false,
+    auto: flags.yes === true,
+    approve_high: flags.requireApproval === true,
+  };
 }
 
 /**
- * Creates the CLI approval port over an injected confirmation callback.
+ * Creates the CLI approval port over the core permission verdict.
  *
- * `no-exec` is always `denied` (the caller prints the disabled notice and
- * never executes); safe auto-risk scripts are `approved` without asking;
- * anything else follows the callback, with a decline recorded as `skipped`
- * (matching the historical "Skipped by user" wording). The future policy
- * engine remains the only source of `PolicyDecision`.
+ * The core `decide_permission` owns the class and the effect; this port only
+ * realizes it. `allow` runs without asking. `deny` and `block` stop without
+ * asking. `ask` checks the stored `always` list first, then follows the
+ * callback. An `always` answer stores `<prefix> *` and runs once. A decline
+ * is `skipped`. An ask with no TTY is `denied`: a missing channel fails
+ * closed, as DSH does with an unavailable answerer. The host never decides
+ * the class again. A stored pattern never grants `deny` or `block`.
+ * A `high` denial with a model justification escalates once per script:
+ * the port prompts the human a single time; a second request for the same
+ * script denies. Forbidden and block never escalate.
  *
- * @param mode - Effective execution mode.
+ * @param input - Effective gate input (`enabled`, `auto`, `approve_high`, `always`).
  * @param confirm - Interactive confirmation (readline in the CLI).
- * @param cwd - Working directory outside checks resolve against.
+ * @param cwd - Working directory the scope check resolves against.
+ * @param is_tty - TTY override for tests (default reads `process.stdin`).
+ * @param on_always - Called with the stored pattern after an `always` answer.
  * @returns An `ApprovalPort` authorizing one requested script.
  */
-export function create_cli_approval(mode: ExecMode, confirm: CliConfirmFn, cwd?: string): ApprovalPort {
-  return async (request: { script: string; risk?: RiskAssessment }): Promise<'approved' | 'denied' | 'skipped'> => {
-    if (mode === 'no-exec') {
-      return 'denied';
-    } else if (can_auto_approve(request.script, mode, cwd ?? process.cwd())) {
+export function create_cli_approval(
+  input: CliExecInput,
+  confirm: CliConfirmFn,
+  cwd?: string,
+  is_tty?: boolean,
+  on_always?: (pattern: string) => void,
+): ApprovalPort {
+  const escalated = new Set<string>();
+  return async (request: {
+    script: string;
+    risk?: RiskAssessment;
+    escalation?: string | undefined;
+  }): Promise<'approved' | 'denied' | 'skipped'> => {
+    const verdict = decide_permission({
+      script: request.script,
+      auto: input.auto,
+      approve_high: input.approve_high,
+      enabled: input.enabled,
+      cwd: cwd ?? process.cwd(),
+    });
+    if (verdict.effect === 'allow') {
       return 'approved';
-    } else if (await confirm(request.script)) {
-      return 'approved';
+    } else if (verdict.effect === 'deny' || verdict.effect === 'block') {
+      const justification = request.escalation?.trim() ?? '';
+      if (verdict.effect !== 'deny' || verdict.class !== 'high' || justification === '') {
+        return 'denied';
+      }
+      const key = request.script.trim();
+      if (escalated.has(key)) {
+        return 'denied';
+      }
+      escalated.add(key);
+      const tty = is_tty ?? process.stdin?.isTTY === true;
+      if (!tty) {
+        return 'denied';
+      }
+      const answer = await confirm(request.script, justification);
+      if (answer === true || answer === 'once' || answer === 'always') {
+        return 'approved';
+      } else {
+        return 'skipped';
+      }
     } else {
-      return 'skipped';
+      const stored = input.always ?? [];
+      for (const pattern of stored) {
+        if (matches_always_pattern(request.script, pattern)) {
+          return 'approved';
+        }
+      }
+      const tty = is_tty ?? process.stdin?.isTTY === true;
+      if (!tty) {
+        return 'denied';
+      }
+      const answer = await confirm(request.script);
+      if (answer === true || answer === 'once') {
+        return 'approved';
+      } else if (answer === 'always') {
+        const pattern = derive_always_prefix(request.script);
+        if (pattern !== null) {
+          try {
+            on_always?.(pattern);
+          } catch {
+            // A failed store still runs once; the next ask prompts again.
+          }
+        } else {
+          // No stored prefix: an unstoreable script still runs once.
+        }
+        return 'approved';
+      } else {
+        return 'skipped';
+      }
     }
   };
 }
@@ -261,21 +305,15 @@ export type CliModelIO = {
   stream: boolean;
   /** Dim reasoning on stderr (mirrors `--think`). */
   think: boolean;
+  /** Hide `<RUN>`/`<DELEGATE>`/`<SUBTASK>` blocks from the live stream (default off = show). */
+  hide_tags?: boolean;
   /** Receives the full raw response of every round (feeds log/timeline). */
   on_raw?: (response: string) => void;
   /** Sampling temperature 0..2, forwarded only when present. */
   temperature?: number;
+  /** Silent port for delegation children (no stdout/stderr writes, no `on_raw`). */
+  silent?: boolean;
 };
-
-/**
- * Pulls the reasoning text out of a raw `<think>...</think>` response.
- *
- * @param response - Raw model response.
- * @returns Trimmed reasoning content, or empty string when absent.
- */
-function extract_think(response: string): string {
-  return /<think>([\s\S]*?)<\/think>/i.exec(response)?.[1]?.trim() ?? '';
-}
 
 /**
  * Sanitizes a wrapped `<think>` reasoning span for terminal display.
@@ -318,7 +356,9 @@ function print_reasoning(reasoning: string): void {
  * @returns The raw model response (sanitized reasoning span).
  */
 async function ask_silently(ai: AskInstance, message: string, system: string, io: CliModelIO): Promise<string> {
-  process.stderr.write('\x1b[2mThinking...\x1b[0m');
+  if (io.silent !== true) {
+    process.stderr.write('\x1b[2mThinking...\x1b[0m');
+  }
   let response: string;
   try {
     response = await ai.ask(
@@ -326,16 +366,107 @@ async function ask_silently(ai: AskInstance, message: string, system: string, io
       io.temperature !== undefined ? { system, stream: false, temperature: io.temperature } : { system, stream: false },
     );
   } finally {
-    process.stderr.write('\r\x1b[K');
+    if (io.silent !== true) {
+      process.stderr.write('\r\x1b[K');
+    }
   }
   response = sanitize_wrapped_reasoning(response);
+  if (io.silent === true) {
+    return response;
+  }
   if (io.think) {
-    print_reasoning(extract_think(response));
+    print_reasoning(extract_think_content(response));
   } else {
     // Reasoning stays hidden without --think.
   }
   io.on_raw?.(response);
   return response;
+}
+
+/** Protocol tags whose live text is hidden by default (`--tags` shows them). */
+const HIDDEN_STREAM_TAGS = ['run', 'delegate', 'subtask'] as const;
+/** Longest opener (`<delegate>` / `<subtask>`), used for cross-chunk tails. */
+const MAX_STREAM_OPENER = Math.max(...HIDDEN_STREAM_TAGS.map((tag) => tag.length + 2));
+
+/** Streaming filter that drops protocol tag blocks while keeping prose. */
+type TagHider = {
+  /** Feeds a delta and returns the visible prefix. */
+  push(chunk: string): string;
+  /** Returns the remaining visible text (an unclosed tag is dropped). */
+  flush(): string;
+};
+
+/**
+ * Builds a stateful filter for the live stream.
+ *
+ * The model emits `<RUN>`, `<DELEGATE>` and `<SUBTASK>` blocks as protocol, not
+ * prose. Hiding them by default removes the duplicate command copy (the
+ * approval prompt keeps the script) and the delegation objective noise. The
+ * filter is deliberately simple: case-insensitive opener/closer pairs, a small
+ * tail buffer for tags split across deltas, and no markdown-fence awareness —
+ * a literal tag inside a fence is hidden too (use `--tags` to see it).
+ *
+ * @returns A push/flush filter.
+ */
+function create_tag_hider(): TagHider {
+  let buffer = '';
+  let closer: string | null = null;
+
+  const find_opener = (text: string): { at: number; length: number } | null => {
+    const lower = text.toLowerCase();
+    let best: { at: number; length: number } | null = null;
+    for (const tag of HIDDEN_STREAM_TAGS) {
+      const opener = `<${tag}>`;
+      const at = lower.indexOf(opener);
+      if (at !== -1 && (best === null || at < best.at)) {
+        best = { at, length: opener.length };
+      }
+    }
+    return best;
+  };
+
+  return {
+    push(chunk: string): string {
+      buffer += chunk;
+      let out = '';
+      for (;;) {
+        if (closer !== null) {
+          const at = buffer.toLowerCase().indexOf(closer);
+          if (at === -1) {
+            // Discard hidden content, keeping only a possible partial closer.
+            const keep = Math.max(0, closer.length - 1);
+            if (buffer.length > keep) {
+              buffer = buffer.slice(buffer.length - keep);
+            }
+            return out;
+          }
+          buffer = buffer.slice(at + closer.length);
+          closer = null;
+        } else {
+          const opener = find_opener(buffer);
+          if (opener === null) {
+            // Emit text but keep a tail that could start a split opener.
+            const keep = Math.max(0, MAX_STREAM_OPENER - 1);
+            if (buffer.length > keep) {
+              out += buffer.slice(0, buffer.length - keep);
+              buffer = buffer.slice(buffer.length - keep);
+            }
+            return out;
+          }
+          out += buffer.slice(0, opener.at);
+          const tag = buffer.slice(opener.at + 1, opener.at + opener.length - 1).toLowerCase();
+          buffer = buffer.slice(opener.at + opener.length);
+          closer = `</${tag}>`;
+        }
+      }
+    },
+    flush(): string {
+      const out = closer === null ? buffer : '';
+      buffer = '';
+      closer = null;
+      return out;
+    },
+  };
 }
 
 /**
@@ -357,7 +488,9 @@ async function ask_streaming(ai: AskInstance, message: string, system: string, i
   let is_indicator_active = true;
   let is_reasoning_open = false;
   let text = '';
+  let visible = '';
   let reasoning = '';
+  const hider = io.hide_tags === true ? create_tag_hider() : null;
 
   const clear_indicator = (): void => {
     if (!is_indicator_active) {
@@ -399,18 +532,30 @@ async function ask_streaming(ai: AskInstance, message: string, system: string, i
         clear_indicator();
         close_reasoning_line();
         text += event.text;
-        process.stdout.write(event.text);
+        const chunk = hider === null ? event.text : hider.push(event.text);
+        if (chunk !== '') {
+          visible += chunk;
+          process.stdout.write(chunk);
+        }
       } else {
         // reasoning_end: nothing to print, just close the dim block.
         close_reasoning_line();
       }
     }
   } finally {
+    if (hider !== null) {
+      const tail = hider.flush();
+      if (tail !== '') {
+        visible += tail;
+        process.stdout.write(tail);
+      }
+    }
     clear_indicator();
     close_reasoning_line();
   }
 
-  if (text && !text.endsWith('\n')) {
+  const printed = hider === null ? text : visible;
+  if (printed && !printed.endsWith('\n')) {
     process.stdout.write('\n');
   } else {
     // Already terminated (or empty) — no extra newline.
@@ -436,7 +581,9 @@ async function ask_streaming(ai: AskInstance, message: string, system: string, i
 export function create_cli_model(ai: AskInstance, io: CliModelIO): ModelPort {
   return {
     async ask(message: string, options: { system: string; stream: false }): Promise<string> {
-      if (io.stream) {
+      if (io.silent === true) {
+        return ask_silently(ai, message, options.system, io);
+      } else if (io.stream) {
         return ask_streaming(ai, message, options.system, io);
       } else {
         return ask_silently(ai, message, options.system, io);
@@ -448,28 +595,15 @@ export function create_cli_model(ai: AskInstance, io: CliModelIO): ModelPort {
 /**
  * Creates an in-memory storage port seeded with previous context.
  *
- * `load` serves the seed (the context file content, so the core prompt
- * composition matches the legacy `Previous context:` wrapper byte for
- * byte); per-turn writes stay in memory while the CLI mirrors its own log
- * and context files through the runtime callbacks.
+ * Delegates to the core `MemoryStorageAdapter` (single storage owner): the
+ * seed rides the default context key, so `load` serves the context file
+ * content and the core prompt composition matches the legacy `Previous
+ * context:` wrapper byte for byte. Per-turn writes stay in memory while the
+ * CLI mirrors its own log and context files through the runtime callbacks.
  *
  * @param seed - Previous context text (empty when no context applies).
  * @returns A `StoragePort` for the core runtime.
  */
 export function create_cli_memory_storage(seed: string): StoragePort {
-  let current = seed;
-  return {
-    async load(_key: string): Promise<string> {
-      return current;
-    },
-    async save(_key: string, value: string): Promise<void> {
-      current = value;
-    },
-    async clear(_key: string): Promise<void> {
-      current = '';
-    },
-    async appendLog(_key: string, entry: string): Promise<void> {
-      current += entry;
-    },
-  };
+  return new MemoryStorageAdapter(undefined, { [DEFAULT_STORAGE_KEY]: seed });
 }

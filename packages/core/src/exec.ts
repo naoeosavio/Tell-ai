@@ -4,6 +4,7 @@ import path from 'path';
 
 import type { CancellationToken, CommandExecutor, ExecutorOptions, ExecutorResult, Redactor } from './runtime-api';
 import { DEFAULT_EXEC_TIMEOUT_MS, DEFAULT_MAX_BUFFER_BYTES } from './runtime-limits';
+import { is_sensitive_rel_path } from './read-only';
 
 /** Explicit shell for every executed script (mirrors the CLI executor). */
 export const EXEC_SHELL = '/bin/bash';
@@ -90,6 +91,51 @@ export const SENSITIVE_ENV_SUFFIX =
  * the model has to read, so such values are dropped instead of masked.
  */
 export const EXEC_MIN_SECRET_LENGTH = 4;
+/** Min secret length that also gets the encoded and squashed masks. */
+const EXEC_ENCODED_MIN_SECRET_LENGTH = 8;
+/** Min alphanumeric size of a squashed secret before the whole text is masked. */
+const EXEC_SQUASH_MIN_SECRET_LENGTH = 10;
+
+/**
+ * Removes every non-alphanumeric character from a value.
+ *
+ * A dump tool can separate the characters of a secret (`od -An -c`). The
+ * squashed form keeps the characters in order.
+ *
+ * @param value - Text to squash.
+ * @returns The alphanumeric characters only.
+ */
+function squash_alphanumeric(value: string): string {
+  return value.replace(/[^A-Za-z0-9]/g, '');
+}
+
+/**
+ * Builds the encoded forms of one secret value.
+ *
+ * The forms cover base64 (padded and unpadded), base64url and hexadecimal
+ * (lower and upper). An encoder can emit any of these forms.
+ *
+ * @param secret - Raw secret value.
+ * @returns Encoded forms that differ from the raw value (deduplicated).
+ */
+function encoded_secret_forms(secret: string): string[] {
+  const forms: string[] = [];
+  const add = (candidate: string): void => {
+    if (candidate !== secret && candidate.length > 0 && !forms.includes(candidate)) {
+      forms.push(candidate);
+    } else {
+      // Duplicate or empty form — skip it.
+    }
+  };
+  const base64 = Buffer.from(secret, 'utf8').toString('base64');
+  add(base64);
+  add(base64.replace(/=+$/, ''));
+  add(base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''));
+  const hex = Buffer.from(secret, 'utf8').toString('hex');
+  add(hex);
+  add(hex.toUpperCase());
+  return forms;
+}
 
 /**
  * True when a URL-shaped value carries inline credentials.
@@ -185,23 +231,60 @@ export function resolve_exec_cwd(cwd?: string): string {
 /**
  * Creates a redactor masking known secret values.
  *
- * Each non-empty secret value found verbatim in a script or output is
- * replaced with `EXEC_REDACTED_MARKER`. Values shorter than
- * `EXEC_MIN_SECRET_LENGTH` are ignored: masking them would replace almost
- * every character and destroy the output. Non-secret content is preserved.
+ * Each secret value found verbatim in a script or output is replaced with
+ * `EXEC_REDACTED_MARKER`. Values shorter than `EXEC_MIN_SECRET_LENGTH` are
+ * ignored: masking them would replace almost every character and destroy the
+ * output. A value of `EXEC_ENCODED_MIN_SECRET_LENGTH` or more also masks its
+ * base64 and hexadecimal forms. If the text holds a squashed copy of a longer
+ * secret, the redactor masks the whole text; `od -An -c` and similar dump
+ * tools emit that form. Non-secret content is preserved.
  *
  * @param secrets - Secret values to mask (empty or too short entries are ignored).
  * @returns A `Redactor` for the runtime redaction boundary.
  */
 export function create_secret_redactor(secrets: readonly string[]): Redactor {
   const values = secrets.filter((secret) => secret.length >= EXEC_MIN_SECRET_LENGTH);
+  const masks: string[] = [];
+  const squashed: string[] = [];
+  for (const secret of values) {
+    if (!masks.includes(secret)) {
+      masks.push(secret);
+    } else {
+      // Duplicate value — the first copy is enough.
+    }
+    if (secret.length >= EXEC_ENCODED_MIN_SECRET_LENGTH) {
+      for (const form of encoded_secret_forms(secret)) {
+        if (!masks.includes(form)) {
+          masks.push(form);
+        } else {
+          // Duplicate encoded form — skip it.
+        }
+      }
+      const flat = squash_alphanumeric(secret);
+      if (flat.length >= EXEC_SQUASH_MIN_SECRET_LENGTH && !squashed.includes(flat)) {
+        squashed.push(flat);
+      } else {
+        // Short or duplicate squashed form — no whole-text mask.
+      }
+    } else {
+      // Short value — literal masking only.
+    }
+  }
   return (value: string): string => {
     let redacted = value;
-    for (const secret of values) {
-      if (redacted.includes(secret)) {
-        redacted = redacted.split(secret).join(EXEC_REDACTED_MARKER);
+    for (const mask of masks) {
+      if (redacted.includes(mask)) {
+        redacted = redacted.split(mask).join(EXEC_REDACTED_MARKER);
       } else {
-        // Secret absent — nothing to mask.
+        // Form absent — nothing to mask.
+      }
+    }
+    const flat = squash_alphanumeric(redacted);
+    for (const form of squashed) {
+      if (flat.includes(form)) {
+        return EXEC_REDACTED_MARKER;
+      } else {
+        // No spaced or reformatted copy of this secret.
       }
     }
     return redacted;
@@ -228,6 +311,132 @@ export function collect_exec_secrets(env: Record<string, string | undefined>): s
     }
   }
   return secrets;
+}
+
+/** Max sensitive files scanned in the workspace for redaction sources. */
+export const SENSITIVE_SCAN_MAX_FILES = 64;
+/** Max bytes read from one sensitive file for redaction sources. */
+export const SENSITIVE_SCAN_MAX_BYTES = 64 * 1024;
+/** Max directory depth walked by the sensitive-file scan. */
+export const SENSITIVE_SCAN_MAX_DEPTH = 3;
+/** Directories never descended into by the sensitive-file scan. */
+const SENSITIVE_SCAN_SKIP_DIRS: ReadonlySet<string> = new Set(['node_modules', 'dist', '.git']);
+/** Longest single line kept as a secret candidate. */
+const SENSITIVE_SCAN_MAX_LINE = 512;
+/** Min length for a value whose key name does not look sensitive (avoid masking `true`/`3000`). */
+const SENSITIVE_SCAN_PLAIN_VALUE_MIN = 12;
+/** Min length for a standalone line in a key file (PEM body, raw key). */
+const SENSITIVE_SCAN_LINE_MIN = 8;
+
+/**
+ * Extracts the secret-looking values from one sensitive file's text.
+ *
+ * `KEY=value` lines contribute the value (quotes stripped) when the key name
+ * looks sensitive or the value is long; other lines contribute themselves
+ * when they look like payload (key material, tokens) and not like a PEM
+ * header or a comment. Values shorter than `EXEC_MIN_SECRET_LENGTH` are
+ * skipped by `create_secret_redactor`.
+ *
+ * @param text - File content (already byte-capped).
+ * @returns The candidate secret strings.
+ */
+function extract_file_secret_values(text: string): string[] {
+  const values: string[] = [];
+  for (const raw_line of text.split(/\r?\n/)) {
+    const line = raw_line.trim();
+    if (line === '' || line.startsWith('#')) {
+      // Blank line or comment — no candidate value.
+    } else {
+      const equals = line.indexOf('=');
+      if (equals !== -1) {
+        const key = line.slice(0, equals).trim();
+        const value = line
+          .slice(equals + 1)
+          .trim()
+          .replace(/^['"]|['"]$/g, '');
+        // A sensitive-named key (API_KEY, TOKEN, SECRET, PASSWORD, URL with
+        // inline credentials) keeps its short value; other keys need a
+        // long/unusual value before it is treated as a secret, so `true`,
+        // `development` or `3000` are not shredded out of every output.
+        if (value !== '' && (is_sensitive_env(key, value) || value.length >= SENSITIVE_SCAN_PLAIN_VALUE_MIN)) {
+          values.push(value);
+        }
+      } else if (
+        line.length >= SENSITIVE_SCAN_LINE_MIN &&
+        line.length <= SENSITIVE_SCAN_MAX_LINE &&
+        !line.startsWith('-----')
+      ) {
+        values.push(line);
+      }
+    }
+  }
+  return values;
+}
+
+/**
+ * Collects secrets from credential-named files under a workspace.
+ *
+ * A command can reach `.env`/keys through shell globs or recursive scans even
+ * when the literal name never appears in the script (the lexical rules are a
+ * speed bump). Masking the file contents in the output the model receives is
+ * the second line: the executor boundary redacts these values the same way it
+ * redacts provider keys. Bounded (depth 3, 64 files, 64 KiB each), skips
+ * symlinks and `node_modules`/`dist`/`.git`, and never follows the network.
+ *
+ * @param cwd - Workspace root to scan.
+ * @returns The candidate secret values (deduplicated).
+ */
+export function collect_sensitive_file_secrets(cwd: string): string[] {
+  const base = path.resolve(cwd);
+  const secrets = new Set<string>();
+  let files = 0;
+
+  const scan_dir = (dir: string, depth: number): void => {
+    if (depth > SENSITIVE_SCAN_MAX_DEPTH || files >= SENSITIVE_SCAN_MAX_FILES) {
+      return;
+    } else {
+      let entries: fs.Dirent[];
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (files >= SENSITIVE_SCAN_MAX_FILES) {
+          return;
+        } else if (entry.isSymbolicLink()) {
+          // Never follow links: the scan must not escape the workspace.
+        } else if (entry.isDirectory()) {
+          if (!SENSITIVE_SCAN_SKIP_DIRS.has(entry.name)) {
+            scan_dir(path.join(dir, entry.name), depth + 1);
+          }
+        } else if (entry.isFile()) {
+          const full = path.join(dir, entry.name);
+          const rel = path.relative(base, full);
+          if (is_sensitive_rel_path(rel)) {
+            try {
+              const fd = fs.openSync(full, 'r');
+              try {
+                const buffer = Buffer.alloc(SENSITIVE_SCAN_MAX_BYTES);
+                const read = fs.readSync(fd, buffer, 0, SENSITIVE_SCAN_MAX_BYTES, null);
+                for (const value of extract_file_secret_values(buffer.subarray(0, read).toString('utf8'))) {
+                  secrets.add(value);
+                }
+                files += 1;
+              } finally {
+                fs.closeSync(fd);
+              }
+            } catch {
+              // Unreadable file: skip it, the run continues.
+            }
+          }
+        }
+      }
+    }
+  };
+
+  scan_dir(base, 0);
+  return [...secrets];
 }
 
 /**

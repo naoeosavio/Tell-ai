@@ -229,7 +229,7 @@ Paths resolve against the current directory. Absolute paths work, but anything o
 
 ## Chain mode (`--chain`)
 
-The assistant can run commands, see their output, and continue with follow-up commands until it reaches a final answer. Up to 8 command rounds.
+The assistant can run commands, see their output, and continue with follow-up commands until it reaches a final answer. Up to `--max-chain` model turns (default 8, max 128).
 
 ```bash
 tell --chain "find out why the build is failing and fix it"
@@ -251,6 +251,21 @@ tell --stream --think "why does this race condition happen?"
 `--think` prints the model reasoning dimmed on stderr and works with or without
 `--stream` (without streaming, it is printed once the response arrives). Without
 it, a live `Thinking...` indicator shows until the first answer token.
+
+By default the live output is quiet: `<RUN>`/`<DELEGATE>`/`<SUBTASK>` blocks,
+executed-command output and the child's activity/result are hidden. The
+minimal `Delegando pesquisa… (research: …)` / `Delegando sub-tarefa… (build: …)`
+indicator remains, like `Thinking...`. Opt in, like `--think`:
+
+```bash
+tell --stream --tags "..."        # show the protocol markup
+tell --stream --output "..."      # show executed command output
+tell -t --delegation "..."        # show the child acting live + result record
+tell -t -y "..."                  # auto-run safe commands (default task mode asks)
+```
+
+The saved context, run log, model feedback and execution are never affected by
+these display flags.
 
 ## Persistent context (`-c`, `--ctx`, `-n`)
 

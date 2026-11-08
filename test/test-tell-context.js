@@ -17,6 +17,7 @@
 // `-n` = reset modifier, requires `%id` (`--ctx %id -n`).
 
 const assert = require('node:assert');
+const { describe, it } = require('node:test');
 const { EventEmitter } = require('node:events');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -251,7 +252,9 @@ async function run_tell(args, response, opts = {}) {
       };
     }
     if (name === './env') {
-      return { load_sdk_config: async () => ({ keys: {}, urls: {} }) };
+      // Any vendor key resolves: the model port is mocked and never sends it.
+      const fake_keys = new Proxy({}, { get: (_target, key) => `sk-test-${String(key)}` });
+      return { load_sdk_config: async () => ({ keys: fake_keys, urls: {} }) };
     }
     if (name === './systemPrompt') {
       return { get_system_prompt: (options) => sdk.get_system_prompt(options) };
@@ -1169,73 +1172,65 @@ async function test_invalid_temperature_flag_warns_once() {
   }
 }
 
-// ---------------------------------------------------------------------
-// Runner
-// ---------------------------------------------------------------------
-
-const TESTS = [
-  test_bare_context_round_trip_within_same_dir_and_model,
-  test_bare_context_isolated_across_models_same_dir,
-  test_no_flag_invocation_clears_default_context,
-  test_ctx_bare_is_default_context,
-  test_ctx_multiword_value_is_default_context_with_prompt,
-  test_name_reset_starts_fresh_even_if_name_exists,
-  test_name_reset_invalid_name_is_hard_error,
-  test_name_reset_path_traversal_name_rejected,
-  test_ctx_flag_does_not_combine_with_others,
-  test_context_hash_prefix_resolves_unique_match,
-  test_context_hash_prefix_ambiguous_errors,
-  test_context_index_recency_resolution,
-  test_context_index_out_of_range_is_hard_error,
-  test_named_context_resumable_via_ctx,
-  test_ctx_name_creates_when_missing_then_resumes,
-  test_ctx_invalid_single_token_is_hard_error,
-  test_ctx_ref_with_prompt_text_uses_addressed_context,
-  test_ctx_percent_hex_prefix_resumes_unique_or_creates,
-  test_ctx_bare_single_token_is_default_prompt,
-  test_ctx_bare_token_with_positional_is_hard_error,
-  test_ctx_percent_ref_with_positional_prompt_is_valid,
-  test_ctx_echo_strips_control_chars_from_file_names,
-  test_context_list_shows_saved_entries,
-  test_history_listing_shows_conversations,
-  test_history_at_ref_reprints_context,
-  test_history_hash_ref_reprints_session,
-  test_history_search_finds_context_and_conversation,
-  test_history_invalid_refs_error_with_totals,
-  test_history_empty_term_exit_zero_and_no_match_exit_one,
-  test_history_dangling_symlink_is_skipped_not_crash,
-  test_history_echo_strips_ansi_and_control_chars,
-  test_history_order_stable_on_equal_mtime,
-  test_history_and_context_stores_are_private,
-  test_history_malformed_session_name_falls_back,
-  test_history_echo_strips_c1_control_chars,
-  test_history_repairs_legacy_world_readable_store,
-  test_history_unit_print_search_results_empty_and_basic,
-  test_multiword_prompt_with_default_context_flag,
-  test_short_numeric_prompt_reaches_the_model,
-  test_no_exec_overrides_yes_flag,
-  test_poisoned_named_context_does_not_autoexecute,
-  test_incremental_context_saves_do_not_duplicate_turns_on_chain,
-  test_tellrc_warnings_print_exactly_once,
-  test_invalid_temperature_flag_warns_once,
-];
-
-(async () => {
-  let failures = 0;
-  for (const test_fn of TESTS) {
-    try {
-      await test_fn();
-      console.log(`ok - ${test_fn.name}`);
-    } catch (error) {
-      failures += 1;
-      console.error(`not ok - ${test_fn.name}`);
-      console.error(error);
-    }
-  }
-  if (failures > 0) {
-    console.error(`\n${failures} test(s) failed`);
-    process.exitCode = 1;
-  } else {
-    console.log('\ntell context tests passed');
-  }
-})();
+describe('tell context core round trip and isolation', () => {
+  it('bare context round trip within same dir and model', test_bare_context_round_trip_within_same_dir_and_model);
+  it('bare context isolated across models same dir', test_bare_context_isolated_across_models_same_dir);
+  it('no flag invocation clears default context', test_no_flag_invocation_clears_default_context);
+});
+describe('tell context ctx ref shapes', () => {
+  it('ctx bare is default context', test_ctx_bare_is_default_context);
+  it('ctx multiword value is default context with prompt', test_ctx_multiword_value_is_default_context_with_prompt);
+  it('name reset starts fresh even if name exists', test_name_reset_starts_fresh_even_if_name_exists);
+  it('name reset invalid name is hard error', test_name_reset_invalid_name_is_hard_error);
+  it('name reset path traversal name rejected', test_name_reset_path_traversal_name_rejected);
+});
+describe('tell context flag validation', () => {
+  it('ctx flag does not combine with others', test_ctx_flag_does_not_combine_with_others);
+});
+describe('tell context addressing with ctx ref', () => {
+  it('context hash prefix resolves unique match', test_context_hash_prefix_resolves_unique_match);
+  it('context hash prefix ambiguous errors', test_context_hash_prefix_ambiguous_errors);
+  it('context index recency resolution', test_context_index_recency_resolution);
+  it('context index out of range is hard error', test_context_index_out_of_range_is_hard_error);
+  it('named context resumable via ctx', test_named_context_resumable_via_ctx);
+  it('ctx name creates when missing then resumes', test_ctx_name_creates_when_missing_then_resumes);
+  it('ctx invalid single token is hard error', test_ctx_invalid_single_token_is_hard_error);
+  it('ctx ref with prompt text uses addressed context', test_ctx_ref_with_prompt_text_uses_addressed_context);
+  it('ctx percent hex prefix resumes unique or creates', test_ctx_percent_hex_prefix_resumes_unique_or_creates);
+  it('ctx bare single token is default prompt', test_ctx_bare_single_token_is_default_prompt);
+  it('ctx bare token with positional is hard error', test_ctx_bare_token_with_positional_is_hard_error);
+  it('ctx percent ref with positional prompt is valid', test_ctx_percent_ref_with_positional_prompt_is_valid);
+  it('ctx echo strips control chars from file names', test_ctx_echo_strips_control_chars_from_file_names);
+  it('context list shows saved entries', test_context_list_shows_saved_entries);
+});
+describe('tell context history listing and search', () => {
+  it('history listing shows conversations', test_history_listing_shows_conversations);
+  it('history at ref reprints context', test_history_at_ref_reprints_context);
+  it('history hash ref reprints session', test_history_hash_ref_reprints_session);
+  it('history search finds context and conversation', test_history_search_finds_context_and_conversation);
+  it('history invalid refs error with totals', test_history_invalid_refs_error_with_totals);
+  it('history empty term exit zero and no match exit one', test_history_empty_term_exit_zero_and_no_match_exit_one);
+});
+describe('tell context hardening', () => {
+  it('history dangling symlink is skipped not crash', test_history_dangling_symlink_is_skipped_not_crash);
+  it('history echo strips ansi and control chars', test_history_echo_strips_ansi_and_control_chars);
+  it('history order stable on equal mtime', test_history_order_stable_on_equal_mtime);
+  it('history and context stores are private', test_history_and_context_stores_are_private);
+  it('history malformed session name falls back', test_history_malformed_session_name_falls_back);
+  it('history echo strips c1 control chars', test_history_echo_strips_c1_control_chars);
+  it('history repairs legacy world readable store', test_history_repairs_legacy_world_readable_store);
+  it('history unit print search results empty and basic', test_history_unit_print_search_results_empty_and_basic);
+});
+describe('tell context prompt handling', () => {
+  it('multiword prompt with default context flag', test_multiword_prompt_with_default_context_flag);
+  it('short numeric prompt reaches the model', test_short_numeric_prompt_reaches_the_model);
+});
+describe('tell context execution safety', () => {
+  it('no exec overrides yes flag', test_no_exec_overrides_yes_flag);
+  it('poisoned named context does not autoexecute', test_poisoned_named_context_does_not_autoexecute);
+  it('incremental context saves do not duplicate turns on chain', test_incremental_context_saves_do_not_duplicate_turns_on_chain);
+});
+describe('tell context tellrc warnings', () => {
+  it('tellrc warnings print exactly once', test_tellrc_warnings_print_exactly_once);
+  it('invalid temperature flag warns once', test_invalid_temperature_flag_warns_once);
+});

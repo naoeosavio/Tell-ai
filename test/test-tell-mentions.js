@@ -14,6 +14,7 @@
 // `--yes`, poisoned file content never auto-executes).
 
 const assert = require('node:assert');
+const { describe, it } = require('node:test');
 const { EventEmitter } = require('node:events');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -556,7 +557,9 @@ async function run_tell(args, response, opts = {}) {
       };
     }
     if (name === './env') {
-      return { load_sdk_config: async () => ({ keys: {}, urls: {} }) };
+      // Any vendor key resolves: the model port is mocked and never sends it.
+      const fake_keys = new Proxy({}, { get: (_target, key) => `sk-test-${String(key)}` });
+      return { load_sdk_config: async () => ({ keys: fake_keys, urls: {} }) };
     }
     if (name === './systemPrompt') {
       return { get_system_prompt: (options) => sdk.get_system_prompt(options) };
@@ -674,50 +677,95 @@ async function test_cli_directory_mention_lists_tree() {
 }
 
 // ---------------------------------------------------------------------
-// Runner
+// Sensitive files (non-TTY guard: secrets never expand without a TTY)
 // ---------------------------------------------------------------------
 
-const TESTS = [
-  test_file_mention_injects_content_block,
-  test_mention_at_string_start_has_no_leading_space_bug,
-  test_mid_sentence_mention_keeps_single_space,
-  test_multiple_mentions_expand_in_order,
-  test_directory_mention_lists_tree_and_skips_junk,
-  test_directory_tree_stops_at_three_levels,
-  test_missing_mention_warns_and_passes_through,
-  test_binary_mention_warns_and_passes_through,
-  test_large_file_truncates_with_marker,
-  test_escaped_at_is_literal,
-  test_trailing_punctuation_trimmed_and_restored,
-  test_email_like_text_does_not_expand,
-  test_is_outside_cwd_lexical_cases,
-  test_symlink_inside_pointing_outside_counts_as_outside,
-  test_absolute_outside_path_denied_without_tty,
-  test_fifo_is_not_read,
-  test_cli_file_mention_reaches_model_log_and_context,
-  test_cli_missing_mention_warns_but_prompt_continues,
-  test_cli_outside_cwd_denied_even_with_yes,
-  test_cli_poisoned_file_content_does_not_execute,
-  test_cli_mention_combines_with_stdin_and_ctx_prompt,
-  test_cli_directory_mention_lists_tree,
-];
-
-(async () => {
-  let failures = 0;
-  for (const test_fn of TESTS) {
+async function test_sensitive_file_mention_denied_without_tty() {
+  if (process.stdin.isTTY) return;
+  const dir = make_work_dir();
+  try {
+    fs.writeFileSync(path.join(dir, '.env'), 'CANARY55=super-secret-55\n', 'utf8');
+    const guard = silence_stderr();
     try {
-      await test_fn();
-      console.log(`ok - ${test_fn.name}`);
-    } catch (error) {
-      failures += 1;
-      console.error(`not ok - ${test_fn.name}`);
-      console.error(error);
+      const out = await mentions.expand_mentions('leia @.env por favor', dir);
+      assert_includes(out, '@.env');
+      assert_not_includes(out, 'File: .env');
+      assert_not_includes(out, 'super-secret-55');
+      assert_includes(guard.captured(), 'sensitive file');
+    } finally {
+      guard.restore();
     }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
-  if (failures > 0) {
-    console.error(`\n${failures} test(s) failed`);
-    process.exitCode = 1;
-  } else {
-    console.log('\ntell mentions tests passed');
+}
+
+async function test_sensitive_symlink_mention_denied_without_tty() {
+  if (process.stdin.isTTY) return;
+  const dir = make_work_dir();
+  try {
+    fs.writeFileSync(path.join(dir, '.env'), 'CANARY55=super-secret-55\n', 'utf8');
+    fs.symlinkSync(path.join(dir, '.env'), path.join(dir, 'safe-name.txt'));
+    const guard = silence_stderr();
+    try {
+      const out = await mentions.expand_mentions('leia @safe-name.txt', dir);
+      assert_includes(out, '@safe-name.txt');
+      assert_not_includes(out, 'super-secret-55');
+      assert_includes(guard.captured(), 'sensitive file');
+    } finally {
+      guard.restore();
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
-})();
+}
+
+async function test_env_example_mention_stays_allowed() {
+  const dir = make_work_dir();
+  try {
+    fs.writeFileSync(path.join(dir, '.env.example'), 'ALLOWED=1\n', 'utf8');
+    const guard = silence_stderr();
+    try {
+      const out = await mentions.expand_mentions('leia @.env.example', dir);
+      assert_includes(out, 'File: .env.example');
+      assert_includes(out, 'ALLOWED=1');
+      assert_not_includes(guard.captured(), 'sensitive file');
+    } finally {
+      guard.restore();
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+describe('tell mentions unit (layer A)', () => {
+  it('file mention injects content block', test_file_mention_injects_content_block);
+  it('mention at string start has no leading space bug', test_mention_at_string_start_has_no_leading_space_bug);
+  it('mid sentence mention keeps single space', test_mid_sentence_mention_keeps_single_space);
+  it('multiple mentions expand in order', test_multiple_mentions_expand_in_order);
+  it('directory mention lists tree and skips junk', test_directory_mention_lists_tree_and_skips_junk);
+  it('directory tree stops at three levels', test_directory_tree_stops_at_three_levels);
+  it('missing mention warns and passes through', test_missing_mention_warns_and_passes_through);
+  it('binary mention warns and passes through', test_binary_mention_warns_and_passes_through);
+  it('large file truncates with marker', test_large_file_truncates_with_marker);
+  it('escaped at is literal', test_escaped_at_is_literal);
+  it('trailing punctuation trimmed and restored', test_trailing_punctuation_trimmed_and_restored);
+  it('email like text does not expand', test_email_like_text_does_not_expand);
+  it('is outside cwd lexical cases', test_is_outside_cwd_lexical_cases);
+  it('symlink inside pointing outside counts as outside', test_symlink_inside_pointing_outside_counts_as_outside);
+  it('absolute outside path denied without tty', test_absolute_outside_path_denied_without_tty);
+  it('fifo is not read', test_fifo_is_not_read);
+});
+describe('tell mentions sensitive files', () => {
+  it('sensitive file mention denied without tty', test_sensitive_file_mention_denied_without_tty);
+  it('sensitive symlink mention denied without tty', test_sensitive_symlink_mention_denied_without_tty);
+  it('env example mention stays allowed', test_env_example_mention_stays_allowed);
+});
+describe('tell mentions integration (layer B)', () => {
+  it('cli file mention reaches model log and context', test_cli_file_mention_reaches_model_log_and_context);
+  it('cli missing mention warns but prompt continues', test_cli_missing_mention_warns_but_prompt_continues);
+  it('cli outside cwd denied even with yes', test_cli_outside_cwd_denied_even_with_yes);
+  it('cli poisoned file content does not execute', test_cli_poisoned_file_content_does_not_execute);
+  it('cli mention combines with stdin and ctx prompt', test_cli_mention_combines_with_stdin_and_ctx_prompt);
+  it('cli directory mention lists tree', test_cli_directory_mention_lists_tree);
+});

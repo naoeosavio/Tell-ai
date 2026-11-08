@@ -11,6 +11,12 @@ export default defineConfig(() => {
         '@': path.resolve(__dirname, '.'),
       },
     },
+    build: {
+      // esbuild 0.28 cannot lower destructuring to safari14 (part of Vite's
+      // default ESBUILD_MODULES_TARGET); pin to es2020 (same as the server
+      // tsup target) so no downlevel transform is attempted.
+      target: 'es2020',
+    },
     // No custom dev-server tweaks: default HMR + file watching.
   };
 });

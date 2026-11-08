@@ -4,6 +4,7 @@
 // output plus the "Executed command" feedback card render.
 // Usage: node test/test-web-live-task039.js
 const assert = require('node:assert');
+const { describe, it } = require('node:test');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -128,16 +129,18 @@ async function validate_model(model) {
   }
 }
 
-(async () => {
-  assert.ok(fs.existsSync(DIST_SERVER), 'web bundle missing (run the web build first)');
-  const only = (process.env['LIVE_MODEL'] || '').trim().toLowerCase();
-  const targets = only ? MODELS.filter((m) => m.name === only) : MODELS;
-  assert.ok(targets.length > 0, `unknown LIVE_MODEL=${only}`);
+const only = (process.env['LIVE_MODEL'] || '').trim().toLowerCase();
+const targets = only ? MODELS.filter((m) => m.name === only) : MODELS;
+
+describe('web live validation', () => {
+  it('targets known models and a built web bundle', () => {
+    assert.ok(fs.existsSync(DIST_SERVER), 'web bundle missing (run the web build first)');
+    assert.ok(targets.length > 0, `unknown LIVE_MODEL=${only}`);
+  });
+
   for (const model of targets) {
-    await validate_model(model);
+    it(`drives the chat and approves one RUN command (${model.name})`, async () => {
+      await validate_model(model);
+    });
   }
-  console.log('\nAll live Web validations passed.');
-})().catch((error) => {
-  console.error(`LIVE VALIDATION FAILED: ${error.message}`);
-  process.exitCode = 1;
 });

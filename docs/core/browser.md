@@ -61,7 +61,7 @@ Same iteration, wording, cancellation and fail-closed stops as Node — only the
 
 `runtime_options` is a `Partial<TellRuntimeOptions>`: the loop reads only the cancellation token from it (the ports live in the injected runner), so a browser host passes `{ runtime_options: {} }` — or `{ runtime_options: { cancellation } }` — and never has to invent a `model` it does not have.
 
-Cancellation is split across the two boundaries: the loop checks the token from `runtime_options.cancellation` at every round boundary, and forwards it to the injected runner (`single_turn.run(message, { cancellation })`), which owns the executor boundary. A browser host that injects its own single-turn must honour the `override.cancellation` it receives — that is what stops a command after a cancel, exactly as on Node.
+Cancellation is split across the two boundaries: the loop checks the token from `runtime_options.cancellation` at every turn boundary, and forwards it to the injected runner (`single_turn.run(message, { cancellation })`), which owns the executor boundary. A browser host that injects its own single-turn must honour the `override.cancellation` it receives — that is what stops a command after a cancel, exactly as on Node.
 
 ## `create_core_runtime` (`src/runtime.ts`)
 
